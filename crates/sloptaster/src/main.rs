@@ -111,6 +111,7 @@ fn main() {
 
         cx.on_app_quit(|cx| {
             window_registry::quitting(cx);
+            review::flush_viewed(cx);
             diagnostics::flush();
             async {}
         })

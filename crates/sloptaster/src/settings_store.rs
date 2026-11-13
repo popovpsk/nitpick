@@ -173,8 +173,10 @@ pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) {
         log::error!("settings: save failed: {err}");
         let message = tr().settings_save_failed(&err.to_string());
         if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
-                window.push_notification(Notification::error(message), cx);
+            cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, cx| {
+                    window.push_notification(Notification::error(message), cx);
+                });
             });
         }
     }

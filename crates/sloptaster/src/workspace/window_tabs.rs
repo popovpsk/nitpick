@@ -73,15 +73,23 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                                 .ghost()
                                 .xsmall()
                                 .icon(IconName::Close)
-                                .on_click(move |_, _, cx| {
+                                .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
-                                    let _ = close_handle
-                                        .update(cx, |_, window, _| window.remove_window());
+                                    if active {
+                                        window.remove_window();
+                                    } else {
+                                        let _ = close_handle
+                                            .update(cx, |_, window, _| window.remove_window());
+                                    }
                                 }),
                         ),
                 )
-                .on_mouse_down(MouseButton::Middle, move |_, _, cx| {
-                    let _ = close_handle.update(cx, |_, window, _| window.remove_window());
+                .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
+                    if active {
+                        window.remove_window();
+                    } else {
+                        let _ = close_handle.update(cx, |_, window, _| window.remove_window());
+                    }
                 })
                 .on_click(move |_, _, cx| {
                     let _ = handle.update(cx, |_, window, _| window.activate_window());

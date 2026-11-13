@@ -4,10 +4,10 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
-    StyledExt as _,
+    StyledExt as _, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
-    diff::{Diff, DiffAnnotation, DiffHoverHighlight},
+    diff::{Diff, DiffHoverHighlight},
     h_flex, h_resizable, resizable_panel,
     spinner::Spinner,
     v_flex,
@@ -272,7 +272,7 @@ impl ReviewView {
             return empty_state(tr().no_changes.clone(), cx);
         }
         let view = cx.entity();
-        let annotations: Vec<DiffAnnotation> = self.annotations.as_ref().clone();
+        let annotations = self.annotations.clone();
         let header_view = view.clone();
         let annotation_view = view.clone();
         let add_view = view.clone();
@@ -307,7 +307,7 @@ impl ReviewView {
                                 })
                             })
                     })
-                    .annotations(annotations)
+                    .annotations(annotations.iter().cloned())
                     .render_annotation(move |annotation, window, cx| {
                         comments::render_annotation(&annotation_view, annotation, window, cx)
                     })
@@ -374,8 +374,20 @@ impl Render for ReviewView {
             .key_context("Review")
             .size_full()
             .min_h_0()
-            .on_action(cx.listener(|this, _: &NextFile, _, cx| this.step_file(1, cx)))
-            .on_action(cx.listener(|this, _: &PreviousFile, _, cx| this.step_file(-1, cx)))
+            .on_action(cx.listener(|this, _: &NextFile, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_file(1, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PreviousFile, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_file(-1, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleViewed, _, cx| {
                 if let Some(file) = this.current_file {
                     this.toggle_file_viewed(file, cx);

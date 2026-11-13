@@ -28,4 +28,8 @@ window options and opening windows (`main.rs`).
 - The start screen preselects the remote default branch as the target and the checked-out
   branch as the source, and keeps the previous picks across a refresh.
 - The merge request list needs a GitLab URL and token in settings and a remote whose host
-  matches that URL; the project path comes from the remote URL.
+  matches that URL; the project path comes from the remote URL. Branch and MR loads each keep
+  one task, so a refresh cancels the previous load instead of racing it. MR rows (title,
+  subtitle, lowercase filter key) are built once per load, not per frame.
+- Closing a window tab: the current window closes through the click's own `window`, since
+  `WindowHandle::update` on the window being dispatched fails.

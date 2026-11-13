@@ -18,6 +18,23 @@ A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "
 
 Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https://www.gpui.rs/) (`gpui-pre` + `gpui-component`).
 
+## Keys
+
+| Where | Key | Action |
+| --- | --- | --- |
+| File tree | `↑`/`↓`, `j`/`k` | Move and open the file |
+| File tree | `←`/`→`, `h`/`l` | Collapse / expand the folder |
+| File tree | `space`, `v` | Toggle viewed (a folder toggles every file in it) |
+| File tree | `n` / `p` | Next / previous file |
+| Review | `⌥↓` / `⌥↑` | Next / previous file |
+| Review | `⌘B` | Show / hide the file tree |
+| Review | `⌘1` / `⌘2` | Focus the tree / the diff |
+| Review | `⌘R` | Refresh (refetch the merge request and its comments) |
+| Comment box | `⌘⏎` | Send |
+| Window | `⌘O`, `⌘N`, `⌘,` | Open repository, new review, settings |
+
+On Windows and Linux use `Ctrl` for `⌘`.
+
 ## Build
 
 ```bash

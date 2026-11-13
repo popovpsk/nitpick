@@ -15,23 +15,23 @@ use gpui_component::{
 };
 use ui_resources::Icons;
 
-use super::{Busy, ComposerTarget, ReviewView};
+use super::{Busy, ComposerTarget, DiscussionView, NoteView, ReviewView};
 use crate::localization::tr;
 
 pub fn render_annotation(
     view: &Entity<ReviewView>,
     annotation: &DiffAnnotation,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     match annotation.id() {
         ElementId::NamedInteger(name, ix) if name.as_ref() == "discussion" => {
-            let discussion = view.read(cx).discussions.get(*ix as usize).cloned();
-            match discussion {
+            let discussions = view.read(cx).discussions();
+            match discussions.get(*ix as usize) {
                 Some(discussion) => div()
                     .px_3()
                     .py_1p5()
-                    .child(render_discussion(view, &discussion, window, cx))
+                    .child(render_discussion(view, *ix as usize, discussion, cx))
                     .into_any_element(),
                 None => div().into_any_element(),
             }
@@ -47,28 +47,19 @@ pub fn render_annotation(
 
 fn render_discussion(
     view: &Entity<ReviewView>,
-    discussion: &gitlab::Discussion,
-    _window: &mut Window,
-    cx: &mut App,
+    ix: usize,
+    discussion: &DiscussionView,
+    cx: &App,
 ) -> AnyElement {
     let s = tr();
     let theme = cx.theme();
-    let resolvable = discussion.is_resolvable();
-    let resolved = discussion.is_resolved();
+    let resolved = discussion.resolved;
     let replying = matches!(
         &view.read(cx).composer,
         Some(c) if matches!(&c.target, ComposerTarget::Reply(id) if *id == discussion.id)
     );
-    let notes = discussion
-        .notes
-        .iter()
-        .filter(|n| !n.system)
-        .map(|note| render_note(note, cx))
-        .collect::<Vec<_>>();
-    let id = discussion.id.clone();
     let reply_view = view.clone();
     let resolve_view = view.clone();
-    let resolve_id = discussion.id.clone();
     v_flex()
         .max_w(px(820.))
         .gap_2()
@@ -82,29 +73,31 @@ fn render_discussion(
         })
         .bg(theme.popover)
         .text_color(theme.popover_foreground)
-        .children(notes)
+        .children(discussion.notes.iter().map(|note| render_note(note, cx)))
         .when(replying, |el| el.child(render_composer(view, cx)))
         .child(
             h_flex()
                 .gap_1()
                 .when(!replying, |el| {
                     el.child(
-                        Button::new(ElementId::Name(format!("reply-{id}").into()))
+                        Button::new(ElementId::NamedInteger("reply".into(), ix as u64))
                             .ghost()
                             .xsmall()
                             .icon(Icon::new(Icons::Reply))
                             .label(s.reply.clone())
                             .on_click(move |_, window, cx| {
-                                let id = id.clone();
                                 reply_view.update(cx, |this, cx| {
-                                    this.open_composer(ComposerTarget::Reply(id), window, cx)
+                                    if let Some(id) = this.discussions.get(ix).map(|d| d.id.clone())
+                                    {
+                                        this.open_composer(ComposerTarget::Reply(id), window, cx)
+                                    }
                                 });
                             }),
                     )
                 })
-                .when(resolvable, |el| {
+                .when(discussion.resolvable, |el| {
                     el.child(
-                        Button::new(ElementId::Name(format!("resolve-{resolve_id}").into()))
+                        Button::new(ElementId::NamedInteger("resolve".into(), ix as u64))
                             .ghost()
                             .xsmall()
                             .icon(Icon::new(Icons::CircleCheckBig))
@@ -114,9 +107,11 @@ fn render_discussion(
                                 s.resolve.clone()
                             })
                             .on_click(move |_, window, cx| {
-                                let id = resolve_id.clone();
                                 resolve_view.update(cx, |this, cx| {
-                                    this.set_resolved(id, !resolved, window, cx)
+                                    if let Some(id) = this.discussions.get(ix).map(|d| d.id.clone())
+                                    {
+                                        this.set_resolved(id, !resolved, window, cx)
+                                    }
                                 });
                             }),
                     )
@@ -128,34 +123,24 @@ fn render_discussion(
         .into_any_element()
 }
 
-fn render_note(note: &gitlab::Note, cx: &App) -> AnyElement {
+fn render_note(note: &NoteView, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let time = note
-        .created_at
-        .get(..16)
-        .unwrap_or(&note.created_at)
-        .replace('T', " ");
     v_flex()
         .gap_1()
         .child(
             h_flex()
                 .gap_2()
                 .items_baseline()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_semibold()
-                        .child(note.author.name.clone()),
-                )
+                .child(div().text_sm().font_semibold().child(note.author.clone()))
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child(format!("@{} · {time}", note.author.username)),
+                        .child(note.meta.clone()),
                 ),
         )
         .child(div().text_sm().child(TextView::markdown(
-            ElementId::Name(format!("note-{}", note.id).into()),
+            ElementId::NamedInteger("note".into(), note.id),
             note.body.clone(),
         )))
         .into_any_element()
@@ -196,6 +181,7 @@ fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
                         .ghost()
                         .small()
                         .label(s.cancel.clone())
+                        .disabled(posting)
                         .on_click(move |_, _, cx| {
                             cancel_view.update(cx, |this, cx| this.cancel_composer(cx))
                         }),
@@ -217,40 +203,39 @@ fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
 }
 
 pub fn open_general_sheet(
-    this: &mut ReviewView,
+    _this: &mut ReviewView,
     window: &mut Window,
     cx: &mut Context<ReviewView>,
 ) {
     let view = cx.entity();
-    let _ = this;
-    window.open_sheet(cx, move |sheet, window, cx| {
+    window.open_sheet(cx, move |sheet, _window, cx| {
         let s = tr();
         let review = view.read(cx);
         let composing = matches!(
             review.composer.as_ref().map(|c| &c.target),
             Some(ComposerTarget::General)
         );
-        let discussions: Vec<gitlab::Discussion> = review.general_discussions().cloned().collect();
-        let empty = discussions.is_empty();
+        let (discussions, general) = review.general_discussions();
+        let empty = general.is_empty();
         let mut list = v_flex().gap_3();
-        for discussion in &discussions {
-            let outdated = discussion.position().is_some();
+        for &ix in general {
+            let Some(discussion) = discussions.get(ix) else {
+                continue;
+            };
             list = list.child(
                 v_flex()
                     .gap_1()
-                    .when(outdated, |el| {
+                    .when_some(discussion.location.clone(), |el, location| {
                         el.child(
                             h_flex()
                                 .gap_1()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(Tag::warning().small().child(s.outdated.clone()))
-                                .children(discussion.position().and_then(|p| {
-                                    p.new_path.clone().or_else(|| p.old_path.clone())
-                                })),
+                                .child(location),
                         )
                     })
-                    .child(render_discussion(&view, discussion, window, cx)),
+                    .child(render_discussion(&view, ix, discussion, cx)),
             );
         }
         let new_view = view.clone();

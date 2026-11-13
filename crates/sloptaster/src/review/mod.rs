@@ -2,17 +2,17 @@ mod comments;
 mod diff_panel;
 pub mod model;
 mod tree_panel;
+mod viewed;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::anyhow;
 use git_repo::{PullOutcome, Repo};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyBinding, SharedString, Subscription, Task, UniformListScrollHandle, Window,
-    actions,
+    AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Task,
+    UniformListScrollHandle, Window, actions,
 };
 use gpui_component::{
     WindowExt as _,
@@ -22,11 +22,13 @@ use gpui_component::{
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
-use review_core::{FileStatus, Progress, Side, ViewedStore};
+use review_core::{FileStatus, Progress, Side};
 
 use crate::localization::tr;
-use crate::settings_store::{DiffLayout, settings, update_settings};
+use crate::settings_store::{DiffLayout, SettingsStore, settings, update_settings};
 pub use model::{LoadedReview, MrContext, ReviewSource};
+use viewed::SharedViewed;
+pub use viewed::flush_all as flush_viewed;
 
 actions!(
     review,
@@ -65,7 +67,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("p", PreviousFile, Some("ReviewTree")),
         KeyBinding::new("alt-down", NextFile, Some("Review")),
         KeyBinding::new("alt-up", PreviousFile, Some("Review")),
-        KeyBinding::new("alt-v", ToggleViewed, Some("Review")),
         KeyBinding::new("cmd-1", FocusTree, Some("Review")),
         KeyBinding::new("ctrl-1", FocusTree, Some("Review")),
         KeyBinding::new("cmd-2", FocusDiff, Some("Review")),
@@ -122,6 +123,63 @@ pub struct Composer {
     _submit: Subscription,
 }
 
+#[derive(Clone)]
+pub struct NoteView {
+    pub id: u64,
+    pub author: SharedString,
+    pub meta: SharedString,
+    pub body: SharedString,
+}
+
+#[derive(Clone)]
+pub struct DiscussionView {
+    pub id: String,
+    pub notes: Vec<NoteView>,
+    pub resolvable: bool,
+    pub resolved: bool,
+    pub position: Option<gitlab::Position>,
+    pub location: Option<SharedString>,
+}
+
+impl DiscussionView {
+    fn from_gitlab(discussion: &gitlab::Discussion) -> Option<Self> {
+        let notes: Vec<NoteView> = discussion
+            .notes
+            .iter()
+            .filter(|n| !n.system)
+            .map(|note| {
+                let time = note
+                    .created_at
+                    .get(..16)
+                    .unwrap_or(&note.created_at)
+                    .replace('T', " ");
+                NoteView {
+                    id: note.id,
+                    author: note.author.name.clone().into(),
+                    meta: format!("@{} · {time}", note.author.username).into(),
+                    body: note.body.clone().into(),
+                }
+            })
+            .collect();
+        if notes.is_empty() {
+            return None;
+        }
+        let position = discussion.position().cloned();
+        let location = position
+            .as_ref()
+            .and_then(|p| p.new_path.clone().or_else(|| p.old_path.clone()))
+            .map(SharedString::from);
+        Some(Self {
+            id: discussion.id.clone(),
+            notes,
+            resolvable: discussion.is_resolvable(),
+            resolved: discussion.is_resolved(),
+            position,
+            location,
+        })
+    }
+}
+
 pub enum ReviewEvent {
     Changed,
 }
@@ -134,12 +192,14 @@ pub struct ReviewView {
     load_state: LoadState,
     review: Option<Rc<LoadedReview>>,
     mr: Option<MrContext>,
-    discussions: Rc<Vec<gitlab::Discussion>>,
+    discussions: Rc<Vec<DiscussionView>>,
     by_file: HashMap<SharedString, Vec<usize>>,
     general: Vec<usize>,
     discussions_loading: bool,
     viewed: Vec<bool>,
-    store: ViewedStore,
+    viewed_store: Entity<SharedViewed>,
+    loaded_whitespace: bool,
+    window_handle: AnyWindowHandle,
     collapsed: HashSet<String>,
     rows: Rc<Vec<TreeRow>>,
     selected_row: Option<usize>,
@@ -154,10 +214,6 @@ pub struct ReviewView {
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
-}
-
-fn viewed_dir() -> PathBuf {
-    crate::settings_store::app_dir(dirs::data_dir()).join("reviews")
 }
 
 impl ReviewView {
@@ -180,7 +236,9 @@ impl ReviewView {
                 cx.notify();
             }
         });
-        let store = ViewedStore::load(&viewed_dir(), repo.root(), crate::recent::now());
+        let viewed_store = viewed::shared_for(repo.root(), cx);
+        let viewed_sync = cx.observe(&viewed_store, |this, _, cx| this.sync_viewed(cx));
+        let settings_sync = cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx));
         let mut this = Self {
             repo,
             source,
@@ -192,7 +250,9 @@ impl ReviewView {
             general: Vec::new(),
             discussions_loading: false,
             viewed: Vec::new(),
-            store,
+            viewed_store,
+            loaded_whitespace: settings(cx).ignore_whitespace,
+            window_handle: window.window_handle(),
             collapsed: HashSet::new(),
             rows: Rc::default(),
             selected_row: None,
@@ -206,7 +266,7 @@ impl ReviewView {
             busy: None,
             _load: Task::ready(()),
             _discussions: Task::ready(()),
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![subscription, viewed_sync, settings_sync],
         };
         this.load(cx);
         this
@@ -235,6 +295,7 @@ impl ReviewView {
         let source = self.source.clone();
         let client = settings(cx).gitlab_client();
         let ignore_whitespace = settings(cx).ignore_whitespace;
+        self.loaded_whitespace = ignore_whitespace;
         if self.review.is_none() {
             self.load_state = LoadState::Loading;
         }
@@ -263,10 +324,11 @@ impl ReviewView {
                 let previous = self
                     .current_file
                     .and_then(|ix| self.review.as_ref().map(|r| r.files[ix].path.clone()));
+                let store = self.viewed_store.read(cx).store();
                 self.viewed = review
                     .files
                     .iter()
-                    .map(|f| self.store.is_viewed(&f.path, &f.fingerprint))
+                    .map(|f| store.is_viewed(&f.path, &f.fingerprint))
                     .collect();
                 let review = Rc::new(review);
                 self.review = Some(review.clone());
@@ -303,11 +365,46 @@ impl ReviewView {
     }
 
     fn notify(&self, notification: Notification, cx: &mut Context<Self>) {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| {
+        let handle = self.window_handle;
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
                 window.push_notification(notification, cx)
             });
+        });
+    }
+
+    fn sync_viewed(&mut self, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let store = self.viewed_store.read(cx).store();
+        let viewed: Vec<bool> = review
+            .files
+            .iter()
+            .map(|f| store.is_viewed(&f.path, &f.fingerprint))
+            .collect();
+        if viewed != self.viewed {
+            self.viewed = viewed;
+            self.rebuild_rows();
+            cx.emit(ReviewEvent::Changed);
+            cx.notify();
         }
+    }
+
+    fn apply_settings(&mut self, cx: &mut Context<Self>) {
+        let current = settings(cx);
+        let mode = match current.diff_layout {
+            DiffLayout::Split => DiffMode::Split,
+            DiffLayout::Unified => DiffMode::Unified,
+        };
+        let whitespace = current.ignore_whitespace;
+        if self.diff.read(cx).mode() != mode {
+            self.diff.update(cx, |state, cx| state.set_mode(mode, cx));
+        }
+        if whitespace != self.loaded_whitespace && self.review.is_some() {
+            self.reload(cx);
+        }
+        cx.notify();
     }
 
     fn first_unviewed(&self) -> Option<usize> {
@@ -366,9 +463,6 @@ impl ReviewView {
         };
         if self.current_file != Some(ix) {
             self.current_file = Some(ix);
-            if matches!(&self.composer, Some(c) if !matches!(c.target, ComposerTarget::General)) {
-                self.composer = None;
-            }
             let diff_file = file.diff.clone();
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
@@ -412,22 +506,15 @@ impl ReviewView {
         let Some(review) = self.review.clone() else {
             return;
         };
-        let now = crate::recent::now();
+        let mut marks = Vec::with_capacity(files.len());
         for &ix in files {
             if let Some(file) = review.files.get(ix) {
                 self.viewed[ix] = viewed;
-                self.store
-                    .set_viewed(&file.path, &file.fingerprint, viewed, now);
+                marks.push((file.path.as_ref(), file.fingerprint.as_str()));
             }
         }
-        if let Some((path, bytes)) = self.store.snapshot() {
-            cx.background_spawn(async move {
-                if let Err(err) = review_core::write_atomic(&path, &bytes) {
-                    log::warn!("saving viewed marks: {err}");
-                }
-            })
-            .detach();
-        }
+        self.viewed_store
+            .update(cx, |store, cx| store.set(&marks, viewed, cx));
         self.rebuild_rows();
         cx.emit(ReviewEvent::Changed);
         cx.notify();
@@ -611,7 +698,12 @@ impl ReviewView {
                 this.discussions_loading = false;
                 match result {
                     Ok(discussions) => {
-                        this.discussions = Rc::new(discussions);
+                        this.discussions = Rc::new(
+                            discussions
+                                .iter()
+                                .filter_map(DiscussionView::from_gitlab)
+                                .collect(),
+                        );
                         this.index_discussions();
                         this.rebuild_rows();
                         this.rebuild_annotations();
@@ -638,11 +730,10 @@ impl ReviewView {
             return;
         };
         for (ix, discussion) in self.discussions.iter().enumerate() {
-            if discussion.notes.iter().all(|n| n.system) {
-                continue;
-            }
-            let placed = discussion.position().and_then(|pos| {
-                if pos.head_sha.as_deref() != Some(ctx.refs.head_sha.as_str()) {
+            let placed = discussion.position.as_ref().and_then(|pos| {
+                if pos.head_sha.as_deref() != Some(ctx.refs.head_sha.as_str())
+                    || (pos.new_line.is_none() && pos.old_line.is_none())
+                {
                     return None;
                 }
                 let path = pos.new_path.as_deref().or(pos.old_path.as_deref())?;
@@ -667,7 +758,7 @@ impl ReviewView {
             let path = review.files[file].path.clone();
             if let Some(list) = self.by_file.get(&path) {
                 for &ix in list {
-                    let Some(pos) = self.discussions[ix].position() else {
+                    let Some(pos) = self.discussions[ix].position.as_ref() else {
                         continue;
                     };
                     let position = match (pos.new_line, pos.old_line) {
@@ -757,6 +848,7 @@ impl ReviewView {
             return;
         };
         let body = composer.input.read(cx).value().trim().to_string();
+        let composer_id: EntityId = composer.input.entity_id();
         if body.is_empty() || self.busy == Some(Busy::Posting) {
             return;
         }
@@ -812,7 +904,13 @@ impl ReviewView {
                 this.busy = None;
                 match result {
                     Ok(()) => {
-                        this.composer = None;
+                        if this
+                            .composer
+                            .as_ref()
+                            .is_some_and(|c| c.input.entity_id() == composer_id)
+                        {
+                            this.composer = None;
+                        }
                         this.load_discussions(cx);
                     }
                     Err(err) => {
@@ -858,8 +956,12 @@ impl ReviewView {
         .detach();
     }
 
-    pub fn general_discussions(&self) -> impl Iterator<Item = &gitlab::Discussion> {
-        self.general.iter().map(|&ix| &self.discussions[ix])
+    pub fn general_discussions(&self) -> (Rc<Vec<DiscussionView>>, &[usize]) {
+        (self.discussions.clone(), &self.general)
+    }
+
+    pub fn discussions(&self) -> Rc<Vec<DiscussionView>> {
+        self.discussions.clone()
     }
 
     pub fn toggle_tree(&mut self, cx: &mut Context<Self>) {
@@ -930,11 +1032,12 @@ async fn load_review(
                 let repo = repo.clone();
                 let refs = refs.clone();
                 let base_url = client.base_url().to_string();
+                let project_path = project.clone();
                 cx.background_spawn(async move {
                     if repo.has_commit(&refs.head_sha) && repo.has_commit(&refs.base_sha) {
                         Ok(None)
                     } else {
-                        model::gitlab_remote(&repo, &base_url)
+                        model::gitlab_remote(&repo, &base_url, Some(&project_path))
                             .map(|(remote, _)| remote)
                             .or_else(|| repo.upstream_remote())
                             .map(Some)

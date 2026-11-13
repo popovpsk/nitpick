@@ -38,10 +38,42 @@ pub struct StartView {
     mr_input: Entity<InputState>,
     filter: Entity<InputState>,
     gitlab_project: Option<String>,
-    merge_requests: Vec<gitlab::MergeRequest>,
+    merge_requests: Vec<MrRow>,
+    filter_text: String,
     mr_state: MrListState,
-    _tasks: Vec<Task<()>>,
+    _branches_task: Task<()>,
+    _mrs_task: Task<()>,
     _subscriptions: Vec<Subscription>,
+}
+
+struct MrRow {
+    iid: u64,
+    title: SharedString,
+    subtitle: SharedString,
+    key: String,
+    draft: bool,
+    source: ReviewSource,
+}
+
+impl MrRow {
+    fn new(mr: &gitlab::MergeRequest, project: &str) -> Self {
+        let subtitle = format!(
+            "!{} · {} · {} → {}",
+            mr.iid, mr.author.name, mr.source_branch, mr.target_branch
+        );
+        let key = format!("{} {} {}", mr.title, subtitle, mr.author.username).to_lowercase();
+        Self {
+            iid: mr.iid,
+            title: mr.title.clone().into(),
+            subtitle: subtitle.into(),
+            key,
+            draft: mr.draft,
+            source: ReviewSource::MergeRequest {
+                project: project.to_string(),
+                iid: mr.iid,
+            },
+        }
+    }
 }
 
 enum MrListState {
@@ -86,8 +118,9 @@ impl StartView {
                     }
                 },
             ),
-            cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
+            cx.subscribe(&filter, |this, filter, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.filter_text = filter.read(cx).value().trim().to_lowercase();
                     cx.notify();
                 }
             }),
@@ -110,8 +143,10 @@ impl StartView {
             filter,
             gitlab_project: None,
             merge_requests: Vec::new(),
+            filter_text: String::new(),
             mr_state: MrListState::Unconfigured,
-            _tasks: Vec::new(),
+            _branches_task: Task::ready(()),
+            _mrs_task: Task::ready(()),
             _subscriptions: subscriptions,
         };
         this.load_branches(window, cx);
@@ -147,7 +182,7 @@ impl StartView {
                 cx.notify();
             });
         });
-        self._tasks.push(task);
+        self._branches_task = task;
     }
 
     fn install_branches(
@@ -187,6 +222,7 @@ impl StartView {
     fn load_merge_requests(&mut self, cx: &mut Context<Self>) {
         let Some(client) = settings(cx).gitlab_client() else {
             self.mr_state = MrListState::Unconfigured;
+            self._mrs_task = Task::ready(());
             return;
         };
         self.mr_state = MrListState::Loading;
@@ -194,9 +230,9 @@ impl StartView {
         let task = cx.spawn(async move |this, cx| {
             let base_url = client.base_url().to_string();
             let project = cx
-                .background_spawn(
-                    async move { crate::review::model::gitlab_remote(&repo, &base_url) },
-                )
+                .background_spawn(async move {
+                    crate::review::model::gitlab_remote(&repo, &base_url, None)
+                })
                 .await
                 .map(|(_, path)| path);
             let Some(project) = project else {
@@ -217,18 +253,19 @@ impl StartView {
             })
             .await;
             let _ = this.update(cx, |this, cx| {
-                this.gitlab_project = Some(project);
                 match result {
                     Ok(list) => {
-                        this.merge_requests = list;
+                        this.merge_requests =
+                            list.iter().map(|mr| MrRow::new(mr, &project)).collect();
                         this.mr_state = MrListState::Loaded;
                     }
                     Err(err) => this.mr_state = MrListState::Failed(err.to_string().into()),
                 }
+                this.gitlab_project = Some(project);
                 cx.notify();
             });
         });
-        self._tasks.push(task);
+        self._mrs_task = task;
     }
 
     fn compare(&mut self, cx: &mut Context<Self>) {
@@ -330,23 +367,14 @@ impl StartView {
                 .child(message.clone())
                 .into_any_element(),
             MrListState::Loaded => {
-                let filter = self.filter.read(cx).value().to_lowercase();
                 let mut list = v_flex().gap_1();
                 let mut shown = 0;
                 for mr in &self.merge_requests {
-                    if !filter.is_empty()
-                        && !mr.title.to_lowercase().contains(&filter)
-                        && !mr.source_branch.to_lowercase().contains(&filter)
-                        && !mr.author.name.to_lowercase().contains(&filter)
-                        && !format!("!{}", mr.iid).contains(&filter)
-                    {
+                    if !self.filter_text.is_empty() && !mr.key.contains(&self.filter_text) {
                         continue;
                     }
                     shown += 1;
-                    let source = ReviewSource::MergeRequest {
-                        project: self.gitlab_project.clone().unwrap_or_default(),
-                        iid: mr.iid,
-                    };
+                    let source = mr.source.clone();
                     list = list.child(
                         h_flex()
                             .id(("mr-row", mr.iid))
@@ -382,15 +410,10 @@ impl StartView {
                                             }),
                                     )
                                     .child(
-                                        div().text_xs().text_color(theme.muted_foreground).child(
-                                            format!(
-                                                "!{} · {} · {} → {}",
-                                                mr.iid,
-                                                mr.author.name,
-                                                mr.source_branch,
-                                                mr.target_branch
-                                            ),
-                                        ),
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(mr.subtitle.clone()),
                                     ),
                             )
                             .on_click(cx.listener(move |_, _, _, cx| {

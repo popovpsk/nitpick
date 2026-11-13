@@ -93,19 +93,30 @@ pub fn build(
             .context("computing the diff")?;
         context_limited = true;
     }
-    let diffs = DiffFile::parse_with(&patch, DiffParseOptions::new().truncated_hunks(true))
-        .map_err(|err| anyhow!("parsing the diff, line {}: {}", err.line(), err.message()))?;
-    let mut maps = review_core::line_maps(&patch);
-    drop(patch);
-    let comments_aligned = maps.len() == diffs.len();
-    if !comments_aligned {
-        log::warn!(
-            "line maps: {} files in the patch walk, {} parsed",
-            maps.len(),
-            diffs.len()
-        );
-        maps = vec![LineMap::default(); diffs.len()];
-    }
+    let diffs = parse(&patch)?;
+    let (maps, comments_aligned) = if ignore_whitespace {
+        options.ignore_whitespace = false;
+        drop(patch);
+        let exact = repo
+            .diff(&base, &head, &options)
+            .context("computing the diff")?;
+        let exact_files = parse(&exact)?;
+        let (exact_maps, aligned) = aligned_maps(&exact, exact_files.len());
+        let by_path: HashMap<SharedString, LineMap> = exact_files
+            .iter()
+            .map(|f| f.path().clone())
+            .zip(exact_maps)
+            .collect();
+        let maps = diffs
+            .iter()
+            .map(|f| by_path.get(f.path()).cloned().unwrap_or_default())
+            .collect();
+        (maps, aligned)
+    } else {
+        let (maps, aligned) = aligned_maps(&patch, diffs.len());
+        drop(patch);
+        (maps, aligned)
+    };
     let by_path: HashMap<&str, &ChangedFile> =
         changed.iter().map(|f| (f.path.as_str(), f)).collect();
     let files: Vec<ReviewFile> = diffs
@@ -140,6 +151,24 @@ pub fn build(
         comments_aligned,
         commits,
     })
+}
+
+fn parse(patch: &str) -> anyhow::Result<Vec<DiffFile>> {
+    DiffFile::parse_with(patch, DiffParseOptions::new().truncated_hunks(true))
+        .map_err(|err| anyhow!("parsing the diff, line {}: {}", err.line(), err.message()))
+}
+
+fn aligned_maps(patch: &str, files: usize) -> (Vec<LineMap>, bool) {
+    let maps = review_core::line_maps(patch);
+    if maps.len() == files {
+        (maps, true)
+    } else {
+        log::warn!(
+            "line maps: {} files in the patch walk, {files} parsed",
+            maps.len()
+        );
+        (vec![LineMap::default(); files], false)
+    }
 }
 
 fn review_file(
@@ -196,22 +225,32 @@ fn index_fingerprint(diff: &DiffFile) -> Option<String> {
     })
 }
 
-pub fn gitlab_remote(repo: &Repo, base_url: &str) -> Option<(String, String)> {
+pub fn gitlab_remote(
+    repo: &Repo,
+    base_url: &str,
+    project: Option<&str>,
+) -> Option<(String, String)> {
     let host = host_of(base_url)?;
     let remotes = repo.remotes().ok()?;
+    let mut origin = None;
     let mut fallback = None;
     for remote in remotes {
         let Some(location) = git_repo::parse_remote_url(&remote.url) else {
             continue;
         };
-        if host_of(&location.https_base).as_deref() == Some(host.as_str()) {
-            if remote.name == "origin" {
-                return Some((remote.name, location.path));
-            }
+        if host_of(&location.https_base).as_deref() != Some(host.as_str()) {
+            continue;
+        }
+        if project.is_some_and(|p| p.eq_ignore_ascii_case(&location.path)) {
+            return Some((remote.name, location.path));
+        }
+        if remote.name == "origin" {
+            origin = Some((remote.name, location.path));
+        } else {
             fallback.get_or_insert((remote.name, location.path));
         }
     }
-    fallback
+    origin.or(fallback)
 }
 
 fn host_of(url: &str) -> Option<String> {

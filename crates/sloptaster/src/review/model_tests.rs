@@ -160,8 +160,37 @@ fn gitlab_remote_matches_the_configured_host() {
         ],
     );
     assert_eq!(
-        gitlab_remote(&repo, "https://gitlab.example.com/"),
+        gitlab_remote(&repo, "https://gitlab.example.com/", None),
         Some(("origin".to_string(), "group/sub/tool".to_string()))
     );
-    assert_eq!(gitlab_remote(&repo, "https://gitlab.other.org"), None);
+    assert_eq!(gitlab_remote(&repo, "https://gitlab.other.org", None), None);
+    git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "fork",
+            "git@gitlab.example.com:me/tool.git",
+        ],
+    );
+    assert_eq!(
+        gitlab_remote(&repo, "https://gitlab.example.com", Some("me/tool")),
+        Some(("fork".to_string(), "me/tool".to_string()))
+    );
+}
+
+#[test]
+fn ignoring_whitespace_keeps_exact_comment_positions() {
+    let (dir, repo) = fixture();
+    git(dir.path(), &["checkout", "-q", "feature"]);
+    let mut text = numbered(40, Some(20));
+    text = text.replace("line 5\n", "line   5\n");
+    write(dir.path(), "src/a.rs", &text);
+    git(dir.path(), &["commit", "-qam", "indent"]);
+    let review = build(&repo, repo.compare("main", "feature").unwrap(), true).unwrap();
+    let a = &review.files[review.file_index("src/a.rs").unwrap()];
+    assert_eq!((a.additions, a.deletions), (1, 1));
+    assert_eq!(a.line_map.locate(Side::New, 5), Some(LineKind::Added { new: 5 }));
+    assert_eq!(a.line_map.locate(Side::Old, 5), Some(LineKind::Removed { old: 5 }));
+    assert!(review.comments_aligned);
 }
