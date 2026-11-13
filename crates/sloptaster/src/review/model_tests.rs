@@ -190,7 +190,13 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
     let review = build(&repo, repo.compare("main", "feature").unwrap(), true).unwrap();
     let a = &review.files[review.file_index("src/a.rs").unwrap()];
     assert_eq!((a.additions, a.deletions), (1, 1));
-    assert_eq!(a.line_map.locate(Side::New, 5), Some(LineKind::Added { new: 5 }));
-    assert_eq!(a.line_map.locate(Side::Old, 5), Some(LineKind::Removed { old: 5 }));
+    assert_eq!(
+        a.line_map.locate(Side::New, 5),
+        Some(LineKind::Added { new: 5 })
+    );
+    assert_eq!(
+        a.line_map.locate(Side::Old, 5),
+        Some(LineKind::Removed { old: 5 })
+    );
     assert!(review.comments_aligned);
 }
