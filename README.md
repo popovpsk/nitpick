@@ -4,6 +4,18 @@ Tasting the slop so you don't have to merge it blind.
 
 A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "viewed" progress.
 
+- Shows only what a merge request brings, like GitLab: the diff from the merge base (also
+  against the target's upstream), so commits the target branch gained since never leak in.
+- File tree on the left or right with compressed folders, collapse/expand all, and "viewed"
+  marks that roll up to folders and reset when a file changes again.
+- Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, YAML, TOML,
+  Markdown, Bash, Protobuf, CSS, HTML, Make), split or unified layout, expandable context.
+- One fast-forward-only "pull" button per branch to bring in fresh changes.
+- Optional GitLab connection: open merge requests by list, URL or `!iid`, read every
+  discussion on the lines it belongs to, comment, reply, resolve.
+- One repository per window; switch from the title bar, or open more as macOS native tabs.
+- Read-only: it never edits your files.
+
 Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https://www.gpui.rs/) (`gpui-pre` + `gpui-component`).
 
 ## Build
@@ -24,11 +36,16 @@ sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build
 
 | Crate | What |
 | --- | --- |
-| `crates/sloptaster` | The app binary: startup, menu, main window, packaging metadata |
+| `crates/sloptaster` | The app binary: windows, title bar, review screen, settings, packaging metadata |
+| `crates/git_repo` | Everything that talks to `git` (CLI): merge-base comparisons, patches, pull, fetch |
+| `crates/gitlab` | Async GitLab REST client: merge requests, discussions, comments |
+| `crates/review_core` | File tree, viewed-progress store, diff line → GitLab position mapping |
+| `crates/http_client` | Shared `reqwest` + rustls setup (OS certificate store) |
+| `crates/secret_store` | Seals the GitLab token inside `settings.json` |
 | `crates/updater` | Auto-update from GitHub Releases (dmg / NSIS / AppImage) |
-| `crates/ui_resources` | Embedded icons, app icon sources, localized strings |
+| `crates/ui_resources` | Embedded icons, bundled themes, app icon sources, localized strings (en, ru) |
 | `crates/diagnostics` | Rolling log file and panic capture behind the `log` facade |
-| `crates/net_runtime` | Shared tokio runtime for blocking network work |
+| `crates/net_runtime` | The one tokio runtime: all network I/O runs on it |
 
 ## Releases
 

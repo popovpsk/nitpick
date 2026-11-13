@@ -15,13 +15,20 @@ no Settings switch yet: `sloptaster` calls `init` with auto-update on.
   `is_supported`, the `CheckForUpdates` action, `ToastWindow`), `AutoUpdater` with its
   `Status` and poll loop (`POLL_INTERVAL`, 6 h), the toasts.
 - `github.rs` — `fetch_latest`: `releases/latest`, per-OS asset choice, the asset's `digest`;
-  a 404 (no published release yet) is "no update", not an error.
+  a 404 (no published release yet) is "no update", not an error. `client()`: the crate's
+  reqwest client.
 - `version.rs` — tag parsing (leading `v` stripped), `is_newer` (strictly greater).
 - `install/` — per-platform download and apply (`install/doc.md`).
 - `disabled/` — stand-ins when `self-update` is off (`disabled/doc.md`).
 
 ## Behavior
 
+- Network: `fetch_latest` and `download_and_stage` are async (`reqwest` from
+  `http_client::builder`, `https_only`, gzip off, User-Agent `sloptaster-updater`), awaited
+  from GPUI through `net_runtime::spawn`. Blocking steps inside them (temp dir, `hdiutil`,
+  `rsync`) go through `net_runtime::unblock`, never on a runtime worker. Redirects are not
+  host-restricted: release assets redirect from `github.com` to a CDN host, and no secret is
+  sent. The API request times out after 30 s.
 - `check_now` works with auto-update off and, unlike automatic polls, toasts "up to date" and
   errors. Once `Ready`, polls do nothing; a manual check re-shows the toast.
 - Toasts go to the window the app's `ToastWindow` global picks, or to the active window when

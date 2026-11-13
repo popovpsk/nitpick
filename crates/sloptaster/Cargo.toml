@@ -19,13 +19,38 @@ self-update = ["updater/self-update"]
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
-gpui-component.workspace = true
+gpui-component = { workspace = true, features = [
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-yaml",
+    "tree-sitter-toml",
+    "tree-sitter-markdown",
+    "tree-sitter-bash",
+    "tree-sitter-proto",
+    "tree-sitter-css",
+    "tree-sitter-html",
+    "tree-sitter-make",
+] }
 diagnostics = { workspace = true }
 log = { workspace = true }
 anyhow.workspace = true
 dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+git_repo = { path = "../git_repo" }
+gitlab = { path = "../gitlab" }
+review_core = { path = "../review_core" }
+secret_store = { path = "../secret_store" }
+net_runtime = { path = "../net_runtime" }
 ui_resources = { path = "../ui_resources" }
 updater = { path = "../updater", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

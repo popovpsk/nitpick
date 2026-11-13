@@ -2,14 +2,16 @@ use anyhow::{Context as _, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn download(url: &str, digest: Option<&str>) -> Result<PathBuf> {
+pub async fn download(url: &str, digest: Option<&str>) -> Result<PathBuf> {
     let dir = dirs::cache_dir()
         .context("no cache directory")?
         .join("sloptaster")
         .join("updates");
-    std::fs::create_dir_all(&dir).context("creating updates directory")?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .context("creating updates directory")?;
     let dest = dir.join("Sloptaster-setup.exe");
-    super::download_file(url, &dest, digest)?;
+    super::download_file(url, &dest, digest).await?;
     Ok(dest)
 }
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
-use super::{handle, unblock};
+use super::{handle, spawn, unblock};
 
 struct Unpark(std::thread::Thread);
 
@@ -50,4 +50,13 @@ fn a_panic_reaches_the_awaiter() {
     let caught = std::panic::catch_unwind(|| wait(unblock(|| panic!("boom"))));
     let payload = caught.expect_err("the panic was swallowed");
     assert_eq!(payload.downcast_ref::<&str>(), Some(&"boom"));
+}
+
+#[test]
+fn spawn_runs_async_work_on_the_runtime() {
+    let value = wait(spawn(async {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        std::thread::current().name().map(str::to_owned)
+    }));
+    assert_eq!(value.as_deref(), Some("net-runtime"));
 }

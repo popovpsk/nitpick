@@ -1,21 +1,26 @@
 # net_runtime
 
 The app's one tokio runtime, started on first use and kept for the life of the process. Its
-workers run async code; its blocking pool runs the blocking network calls of every other
-crate and of the app (today: the `updater`), so a request waiting on a slow server never
-holds a thread of GPUI's executor. GPUI-free and
-knows nothing of what runs on it.
+workers run the async network code of every other crate and of the app (`reqwest` in
+`gitlab` and `updater`, `tokio::process` in `git_repo`); its blocking pool runs blocking
+steps that belong to that work (the `updater`'s temp dir and `hdiutil`/`rsync`), so nothing
+waiting on the network holds a thread of GPUI's executor. GPUI-free and knows nothing of
+what runs on it.
 
-Not here: the blocking clients themselves (the crates that call `unblock`).
+Not here: the HTTP client setup (`http_client`); the network code itself (the crates that
+call `spawn` and `unblock`).
 
 ## Files
 
-- `lib.rs` — `handle`, `try_handle`, `unblock`, the runtime's shape.
+- `lib.rs` — `handle`, `try_handle`, `spawn`, `unblock`, the runtime's shape.
 - `tests.rs` — `unblock` awaited by a plain thread-parking executor (the way GPUI awaits
   it), `block_on` from the blocking pool, a panic reaching the awaiter.
 
 ## Rules
 
+- `spawn(future)` runs async network work (`reqwest`, `tokio::process`) on the workers and
+  returns a runtime-agnostic future of its output, awaited from GPUI tasks; a panic is
+  re-raised in the awaiter, as with `unblock`.
 - `unblock(work)` starts `work` on the blocking pool at once and returns a future of its
   result. The future is runtime-agnostic: GPUI tasks await it. Dropping the future does not
   stop the work, it only drops the result; cancellation stays the work's own (a stop flag,

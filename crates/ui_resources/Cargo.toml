@@ -6,7 +6,11 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets = "=0.9.1"
 anyhow.workspace = true
+log.workspace = true
+dirs = "6"
 rust-embed.workspace = true
 sys-locale = "0.3"
 

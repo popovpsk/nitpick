@@ -297,7 +297,7 @@ async fn check_and_stage(
     this: WeakEntity<AutoUpdater>,
     cx: &mut AsyncApp,
 ) -> Result<Option<(Version, Staged)>> {
-    let Some(found) = net_runtime::unblock(github::fetch_latest).await? else {
+    let Some(found) = net_runtime::spawn(github::fetch_latest()).await? else {
         return Ok(None);
     };
 
@@ -312,11 +312,11 @@ async fn check_and_stage(
     .ok();
 
     let app_bundle = cx.update(|cx| cx.app_path().ok());
-    let url = found.url.clone();
-    let digest = found.digest.clone();
-    let staged = net_runtime::unblock(move || {
-        install::download_and_stage(&url, digest.as_deref(), app_bundle)
-    })
+    let staged = net_runtime::spawn(install::download_and_stage(
+        found.url,
+        found.digest,
+        app_bundle,
+    ))
     .await?;
 
     Ok(Some((found.version, staged)))

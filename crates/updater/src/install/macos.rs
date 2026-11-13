@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::TempDir;
 
 struct Mounted {
     mount_point: PathBuf,
@@ -16,18 +17,24 @@ impl Drop for Mounted {
     }
 }
 
-pub fn install(url: &str, digest: Option<&str>, app_bundle: &Path) -> Result<()> {
-    let dir = tempfile::Builder::new()
-        .prefix("sloptaster-update")
-        .tempdir()
-        .context("creating temp dir")?;
+pub async fn install(url: &str, digest: Option<&str>, app_bundle: PathBuf) -> Result<()> {
+    let dir = net_runtime::unblock(|| {
+        tempfile::Builder::new()
+            .prefix("sloptaster-update")
+            .tempdir()
+    })
+    .await
+    .context("creating temp dir")?;
     let dmg = dir.path().join("sloptaster.dmg");
-    super::download_file(url, &dmg, digest)?;
+    super::download_file(url, &dmg, digest).await?;
+    net_runtime::unblock(move || replace_bundle(&dir, &dmg, &app_bundle)).await
+}
 
+fn replace_bundle(dir: &TempDir, dmg: &Path, app_bundle: &Path) -> Result<()> {
     let output = Command::new("hdiutil")
         .args(["attach", "-nobrowse", "-mountrandom"])
         .arg(dir.path())
-        .arg(&dmg)
+        .arg(dmg)
         .output()
         .context("running hdiutil attach")?;
     anyhow::ensure!(

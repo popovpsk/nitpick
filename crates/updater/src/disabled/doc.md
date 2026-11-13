@@ -23,8 +23,8 @@ separate compilation: `../doc.md`, "Decisions".
   Windows leg matters because the real `Staged` has its `installer` field only there). No CI
   job builds it on macOS: after touching `relaunch()` run
   `cargo check -p updater --no-default-features` on a Mac.
-- No network or filesystem dependencies here: `ureq`, `sha2`, `serde`, `serde_json`,
-  `tempfile` and `dirs` are optional and enabled only by `self-update`; using one would put
+- No network or filesystem dependencies here: `http_client`, `reqwest`, `tokio`, `sha2`,
+  `serde`, `serde_json`, `tempfile` and `dirs` are optional and enabled only by `self-update`; using one would put
   it back into the portable binary.
 
 ## Decisions

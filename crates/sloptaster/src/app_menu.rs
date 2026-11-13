@@ -1,6 +1,7 @@
 use gpui::{App, Menu, MenuItem, actions};
 
-use ui_resources::i18n::strings;
+use crate::localization::tr;
+use crate::workspace::{CloseWindow, NewReview, NewWindow, OpenRepository, ShowSettings};
 
 actions!(
     sloptaster,
@@ -11,14 +12,14 @@ actions!(
         ShowAll,
         Minimize,
         Zoom,
-        OpenRepository,
+        OpenProjectPage,
     ]
 );
 
 pub(crate) const REPOSITORY_URL: &str = "https://github.com/popovpsk/sloptaster/";
 
 pub fn app_menus() -> Vec<Menu> {
-    let s = strings();
+    let s = tr();
     let mut app_items = Vec::new();
     if updater::is_supported() {
         app_items.push(MenuItem::action(
@@ -27,6 +28,8 @@ pub fn app_menus() -> Vec<Menu> {
         ));
         app_items.push(MenuItem::separator());
     }
+    app_items.push(MenuItem::action(s.settings_ellipsis.clone(), ShowSettings));
+    app_items.push(MenuItem::separator());
     #[cfg(target_os = "macos")]
     {
         app_items.push(MenuItem::os_submenu(
@@ -46,6 +49,17 @@ pub fn app_menus() -> Vec<Menu> {
             items: app_items,
             disabled: false,
         },
+        Menu {
+            name: s.menu_file.clone(),
+            items: vec![
+                MenuItem::action(s.open_repository_ellipsis.clone(), OpenRepository),
+                MenuItem::action(s.new_review.clone(), NewReview),
+                MenuItem::separator(),
+                MenuItem::action(s.new_window.clone(), NewWindow),
+                MenuItem::action(s.close_window.clone(), CloseWindow),
+            ],
+            disabled: false,
+        },
         #[cfg(target_os = "macos")]
         Menu {
             name: s.menu_window.clone(),
@@ -57,7 +71,7 @@ pub fn app_menus() -> Vec<Menu> {
         },
         Menu {
             name: s.menu_help.clone(),
-            items: vec![MenuItem::action(s.repository.clone(), OpenRepository)],
+            items: vec![MenuItem::action(s.repository.clone(), OpenProjectPage)],
             disabled: false,
         },
     ]

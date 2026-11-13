@@ -1,24 +1,35 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
+
 use gpui::*;
 use gpui_component::*;
 
-use crate::main_view::MainView;
+use crate::workspace::Workspace;
 
 pub mod app_menu;
-pub mod main_view;
+pub mod localization;
+pub mod recent;
+pub mod review;
+pub mod settings_store;
+pub mod settings_view;
+pub mod window_registry;
+pub mod workspace;
+
+const TABBING_IDENTIFIER: &str = "sloptaster";
 
 pub(crate) fn build_window_options(cx: &mut App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
+    let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_min_size: Some(size(px(640.0), px(400.0))),
+        window_min_size: Some(size(px(720.0), px(480.0))),
         titlebar: Some(TitlebarOptions {
             title: Some("Sloptaster".into()),
             ..TitleBar::title_bar_options()
         }),
         app_owns_titlebar_drag: true,
         app_id: Some("sloptaster".into()),
+        tabbing_identifier: Some(TABBING_IDENTIFIER.into()),
         #[cfg(target_os = "linux")]
         window_background: WindowBackgroundAppearance::Transparent,
         #[cfg(target_os = "linux")]
@@ -27,13 +38,36 @@ pub(crate) fn build_window_options(cx: &mut App) -> WindowOptions {
     }
 }
 
-fn open_main_window(cx: &mut App) {
+pub fn open_window(repo: Option<PathBuf>, cx: &mut App) {
     let options = build_window_options(cx);
-    cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| MainView::new(window, cx));
+    let result = cx.open_window(options, |window, cx| {
+        window_registry::register(window, cx);
+        let view = cx.new(|cx| Workspace::new(repo, window, cx));
+        if window.focused(cx).is_none() {
+            let focus = view.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        }
         cx.new(|cx| Root::new(view, window, cx))
-    })
-    .expect("Failed to open window");
+    });
+    if let Err(err) = result {
+        log::error!("opening a window: {err}");
+    }
+}
+
+fn open_startup_windows(cx: &mut App) {
+    let repos: Vec<PathBuf> = recent::recent(cx)
+        .open_windows()
+        .iter()
+        .filter(|p| p.is_dir())
+        .cloned()
+        .collect();
+    if repos.is_empty() {
+        open_window(None, cx);
+    } else {
+        for repo in repos {
+            open_window(Some(repo), cx);
+        }
+    }
 }
 
 fn main() {
@@ -43,40 +77,49 @@ fn main() {
     #[cfg(target_os = "macos")]
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
-            open_main_window(cx);
+            open_window(None, cx);
         }
     });
 
     app.run(move |cx| {
-        let log_dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("sloptaster")
-            .join("logs");
+        let data_dir = settings_store::app_dir(dirs::data_dir());
         let _notices = diagnostics::init(diagnostics::Config {
-            log_dir,
+            log_dir: data_dir.join("logs"),
             ..Default::default()
         });
 
         gpui_component::init(cx);
-        ui_resources::i18n::set_active(ui_resources::i18n::Lang::system());
+        cx.set_global(settings_store::SettingsStore::load());
+        cx.set_global(recent::RecentRepos::load(data_dir.join("recent.json")));
+        localization::sync_active_lang(cx);
+        settings_store::apply_saved_theme(cx);
+        ui_resources::themes::register_bundled_themes(cx, settings_store::apply_saved_theme);
 
+        review::init(cx);
+        workspace::init(cx);
+        settings_view::init(cx);
         updater::init(cx, env!("CARGO_PKG_VERSION"), true);
 
-        #[cfg(not(target_os = "macos"))]
-        cx.on_window_closed(|cx, _| {
+        cx.on_window_closed(|cx, id| {
+            window_registry::remove(id, cx);
+            #[cfg(not(target_os = "macos"))]
             if cx.windows().is_empty() {
                 cx.quit();
             }
         })
         .detach();
 
-        cx.on_app_quit(|_| {
+        cx.on_app_quit(|cx| {
+            window_registry::quitting(cx);
             diagnostics::flush();
             async {}
         })
         .detach();
 
-        cx.on_action(|_: &crate::app_menu::Quit, cx| cx.quit());
+        cx.on_action(|_: &crate::app_menu::Quit, cx| {
+            window_registry::quitting(cx);
+            cx.quit();
+        });
 
         #[cfg(target_os = "macos")]
         cx.on_action(|_: &crate::app_menu::Hide, cx| cx.hide());
@@ -96,14 +139,16 @@ fn main() {
                 let _ = w.update(cx, |_, window, _| window.zoom_window());
             }
         });
-        cx.on_action(|_: &crate::app_menu::OpenRepository, cx| {
+        cx.on_action(|_: &crate::app_menu::OpenProjectPage, cx| {
             cx.open_url(crate::app_menu::REPOSITORY_URL);
         });
+        cx.on_action(|_: &workspace::NewWindow, cx| open_window(None, cx));
+        cx.on_action(|_: &workspace::OpenRepository, cx| open_window(None, cx));
         cx.on_action(|_: &updater::CheckForUpdates, cx| updater::check_now(cx));
 
         cx.activate(true);
         crate::app_menu::set_menus(cx);
 
-        open_main_window(cx);
+        open_startup_windows(cx);
     });
 }

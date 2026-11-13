@@ -7,6 +7,6 @@ pub struct Found {
     pub digest: Option<String>,
 }
 
-pub fn fetch_latest() -> Result<Option<Found>> {
+pub async fn fetch_latest() -> Result<Option<Found>> {
     anyhow::bail!("this build was compiled without the updater")
 }

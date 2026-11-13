@@ -1,4 +1,6 @@
 use anyhow::{Context as _, Result};
+use reqwest::StatusCode;
+use reqwest::header::ACCEPT;
 use semver::Version;
 use serde::Deserialize;
 use std::time::Duration;
@@ -7,6 +9,7 @@ use crate::version;
 
 const REPO: &str = "popovpsk/sloptaster";
 const USER_AGENT: &str = "sloptaster-updater";
+const API_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 struct Release {
@@ -28,32 +31,37 @@ pub struct Found {
     pub digest: Option<String>,
 }
 
-pub fn fetch_latest() -> Result<Option<Found>> {
+pub(crate) fn client() -> Result<reqwest::Client> {
+    http_client::builder(USER_AGENT)?
+        .https_only(true)
+        .no_gzip()
+        .build()
+        .context("building the HTTP client")
+}
+
+pub async fn fetch_latest() -> Result<Option<Found>> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_response(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(30)))
-            .build(),
-    );
-    let mut response = match agent
+    let response = client()?
         .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .header("Accept", "application/vnd.github+json")
+        .timeout(API_TIMEOUT)
+        .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .call()
-    {
-        Err(ureq::Error::StatusCode(404)) => return Ok(None),
-        response => response.context("GitHub releases request failed")?,
-    };
+        .send()
+        .await
+        .context("GitHub releases request failed")?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .context("GitHub releases request failed")?;
 
     let body = response
-        .body_mut()
-        .read_to_string()
+        .bytes()
+        .await
         .context("reading GitHub releases response")?;
     let release: Release =
-        serde_json::from_str(&body).context("parsing GitHub releases response")?;
+        serde_json::from_slice(&body).context("parsing GitHub releases response")?;
 
     let version = version::parse(&release.tag_name)?;
     let asset = select_asset(&release.assets).context("no release asset matches this platform")?;

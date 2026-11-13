@@ -1,4 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use reqwest::StatusCode;
+use reqwest::header::RANGE;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::io::AsyncWriteExt as _;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -9,31 +14,32 @@ mod windows;
 
 pub struct Staged {
     #[cfg(target_os = "windows")]
-    installer: std::path::PathBuf,
+    installer: PathBuf,
 }
 
-pub fn download_and_stage(
-    url: &str,
-    digest: Option<&str>,
-    app_bundle: Option<std::path::PathBuf>,
+pub async fn download_and_stage(
+    url: String,
+    digest: Option<String>,
+    app_bundle: Option<PathBuf>,
 ) -> Result<Staged> {
+    let digest = digest.as_deref();
     #[cfg(target_os = "macos")]
     {
         let bundle =
             app_bundle.ok_or_else(|| anyhow::anyhow!("running app path is unavailable"))?;
-        macos::install(url, digest, &bundle)?;
+        macos::install(&url, digest, bundle).await?;
         Ok(Staged {})
     }
     #[cfg(target_os = "windows")]
     {
         let _ = app_bundle;
-        let installer = windows::download(url, digest)?;
+        let installer = windows::download(&url, digest).await?;
         Ok(Staged { installer })
     }
     #[cfg(target_os = "linux")]
     {
         let _ = app_bundle;
-        linux::install(url, digest)?;
+        linux::install(&url, digest).await?;
         Ok(Staged {})
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -44,12 +50,12 @@ pub fn download_and_stage(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn appimage_path() -> Option<std::path::PathBuf> {
+pub(crate) fn appimage_path() -> Option<PathBuf> {
     linux::appimage_path()
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn relaunch(app_bundle: &std::path::Path) -> Result<()> {
+pub(crate) fn relaunch(app_bundle: &Path) -> Result<()> {
     macos::relaunch(app_bundle)
 }
 
@@ -64,36 +70,33 @@ impl Staged {
 
 const DOWNLOAD_ATTEMPTS: u32 = 5;
 
-const DOWNLOAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+const DOWNLOAD_RETRY_DELAY: Duration = Duration::from_secs(3);
 
-const DOWNLOAD_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-const DOWNLOAD_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
-const DOWNLOAD_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
-pub(crate) fn download_file(
+pub(crate) async fn download_file(
     url: &str,
-    dest: &std::path::Path,
+    dest: &Path,
     expected_digest: Option<&str>,
 ) -> Result<()> {
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_connect(Some(DOWNLOAD_CONNECT_TIMEOUT))
-            .timeout_recv_response(Some(DOWNLOAD_TOTAL_TIMEOUT))
-            .timeout_recv_body(Some(DOWNLOAD_STALL_TIMEOUT))
-            .build(),
-    );
+    download_with(&crate::github::client()?, url, dest, expected_digest).await
+}
 
+async fn download_with(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    expected_digest: Option<&str>,
+) -> Result<()> {
     let mut progress = Progress::default();
     let mut last_error = None;
 
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
         if attempt > 1 {
-            std::thread::sleep(DOWNLOAD_RETRY_DELAY);
+            tokio::time::sleep(DOWNLOAD_RETRY_DELAY).await;
         }
 
-        if let Err(error) = fetch_into(&agent, url, dest, &mut progress) {
+        if let Err(error) = fetch_into(client, url, dest, &mut progress).await {
             log::warn!(
                 "updater: download attempt {attempt}/{DOWNLOAD_ATTEMPTS} failed at {} bytes: {error:#}",
                 progress.received
@@ -112,7 +115,7 @@ pub(crate) fn download_file(
         }
     }
 
-    let _ = std::fs::remove_file(dest);
+    let _ = tokio::fs::remove_file(dest).await;
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("download failed")))
 }
 
@@ -126,46 +129,71 @@ impl Progress {
     fn reset(&mut self) {
         *self = Self::default();
     }
+
+    fn record(&mut self, bytes: &[u8]) {
+        use sha2::Digest as _;
+        self.hasher.update(bytes);
+        self.received += bytes.len() as u64;
+    }
 }
 
-fn fetch_into(
-    agent: &ureq::Agent,
+async fn fetch_into(
+    client: &reqwest::Client,
     url: &str,
-    dest: &std::path::Path,
+    dest: &Path,
     progress: &mut Progress,
 ) -> Result<()> {
-    use anyhow::Context as _;
-
-    let mut request = agent.get(url).header("User-Agent", "sloptaster-updater");
+    let mut request = client.get(url).timeout(DOWNLOAD_TOTAL_TIMEOUT);
     if progress.received > 0 {
-        request = request.header("Range", format!("bytes={}-", progress.received));
+        request = request.header(RANGE, format!("bytes={}-", progress.received));
     }
-    let response = request.call().context("download request failed")?;
+    let mut response = request
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .context("download request failed")?;
 
-    if progress.received > 0 && response.status().as_u16() != 206 {
+    if progress.received > 0 && response.status() != StatusCode::PARTIAL_CONTENT {
         progress.reset();
     }
 
-    let file = if progress.received > 0 {
-        std::fs::OpenOptions::new()
+    let mut file = if progress.received > 0 {
+        tokio::fs::OpenOptions::new()
             .append(true)
             .open(dest)
+            .await
             .with_context(|| format!("opening {}", dest.display()))?
     } else {
-        std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?
+        tokio::fs::File::create(dest)
+            .await
+            .with_context(|| format!("creating {}", dest.display()))?
     };
 
-    let mut reader = response.into_body().into_reader();
-    let mut writer = HashingWriter {
-        inner: file,
-        hasher: std::mem::take(&mut progress.hasher),
-        written: 0,
-    };
-    let copied = std::io::copy(&mut reader, &mut writer);
-    progress.received += writer.written;
-    progress.hasher = writer.hasher;
-    copied.context("writing downloaded file")?;
-    Ok(())
+    let mut transfer_error = None;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if let Err(error) = file.write_all(&chunk).await {
+                    progress.reset();
+                    return Err(error).context("writing downloaded file");
+                }
+                progress.record(&chunk);
+            }
+            Ok(None) => break,
+            Err(error) => {
+                transfer_error = Some(error);
+                break;
+            }
+        }
+    }
+    if let Err(error) = file.flush().await {
+        progress.reset();
+        return Err(error).context("writing downloaded file");
+    }
+    match transfer_error {
+        Some(error) => Err(error).context("downloading the update"),
+        None => Ok(()),
+    }
 }
 
 fn verify_digest(hasher: sha2::Sha256, expected_digest: Option<&str>) -> Result<()> {
@@ -189,22 +217,5 @@ fn verify_digest(hasher: sha2::Sha256, expected_digest: Option<&str>) -> Result<
     Ok(())
 }
 
-struct HashingWriter<W> {
-    inner: W,
-    hasher: sha2::Sha256,
-    written: u64,
-}
-
-impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        use sha2::Digest as _;
-        let n = self.inner.write(buf)?;
-        self.hasher.update(&buf[..n]);
-        self.written += n as u64;
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,154 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Old,
+    New,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineKind {
+    Context { old: u32, new: u32 },
+    Added { new: u32 },
+    Removed { old: u32 },
+}
+
+impl LineKind {
+    pub fn old_line(self) -> Option<u32> {
+        match self {
+            LineKind::Context { old, .. } | LineKind::Removed { old } => Some(old),
+            LineKind::Added { .. } => None,
+        }
+    }
+
+    pub fn new_line(self) -> Option<u32> {
+        match self {
+            LineKind::Context { new, .. } | LineKind::Added { new } => Some(new),
+            LineKind::Removed { .. } => None,
+        }
+    }
+}
+
+const ABSENT: u32 = 0;
+const CHANGED: u32 = u32::MAX;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LineMap {
+    old_to_new: Vec<u32>,
+    new_to_old: Vec<u32>,
+}
+
+impl LineMap {
+    pub fn locate(&self, side: Side, line: u32) -> Option<LineKind> {
+        let (map, ix) = match side {
+            Side::Old => (&self.old_to_new, line),
+            Side::New => (&self.new_to_old, line),
+        };
+        let other = *map.get(ix.checked_sub(1)? as usize)?;
+        match (side, other) {
+            (_, ABSENT) => None,
+            (Side::Old, CHANGED) => Some(LineKind::Removed { old: line }),
+            (Side::New, CHANGED) => Some(LineKind::Added { new: line }),
+            (Side::Old, new) => Some(LineKind::Context { old: line, new }),
+            (Side::New, old) => Some(LineKind::Context { old, new: line }),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.old_to_new.is_empty() && self.new_to_old.is_empty()
+    }
+
+    fn set(map: &mut Vec<u32>, line: u32, value: u32) {
+        let ix = line.saturating_sub(1) as usize;
+        if map.len() <= ix {
+            map.resize(ix + 1, ABSENT);
+        }
+        map[ix] = value;
+    }
+}
+
+pub fn line_maps(patch: &str) -> Vec<LineMap> {
+    let mut maps = Vec::new();
+    let mut current: Option<LineMap> = None;
+    let mut old_line = 0u32;
+    let mut new_line = 0u32;
+    let mut old_left = 0u32;
+    let mut new_left = 0u32;
+    for line in patch.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if old_left > 0 || new_left > 0 {
+            let Some(map) = current.as_mut() else {
+                old_left = 0;
+                new_left = 0;
+                continue;
+            };
+            match line.as_bytes().first() {
+                Some(b'+') if new_left > 0 => {
+                    LineMap::set(&mut map.new_to_old, new_line, CHANGED);
+                    new_line += 1;
+                    new_left -= 1;
+                }
+                Some(b'-') if old_left > 0 => {
+                    LineMap::set(&mut map.old_to_new, old_line, CHANGED);
+                    old_line += 1;
+                    old_left -= 1;
+                }
+                Some(b'\\') => {}
+                Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    LineMap::set(&mut map.old_to_new, old_line, new_line);
+                    LineMap::set(&mut map.new_to_old, new_line, old_line);
+                    old_line += 1;
+                    new_line += 1;
+                    old_left -= 1;
+                    new_left -= 1;
+                }
+                _ => {
+                    old_left = 0;
+                    new_left = 0;
+                }
+            }
+            if old_left > 0 || new_left > 0 {
+                continue;
+            }
+            if line.starts_with(['+', '-', ' ', '\\']) || line.is_empty() {
+                continue;
+            }
+        }
+        if line.starts_with("diff --git ") {
+            if let Some(map) = current.take() {
+                maps.push(map);
+            }
+            current = Some(LineMap::default());
+        } else if line.starts_with("@@ ")
+            && let Some((old, new)) = parse_hunk_header(line)
+        {
+            if current.is_none() {
+                current = Some(LineMap::default());
+            }
+            (old_line, old_left) = old;
+            (new_line, new_left) = new;
+            if old_line == 0 {
+                old_line = 1;
+            }
+            if new_line == 0 {
+                new_line = 1;
+            }
+        }
+    }
+    if let Some(map) = current.take() {
+        maps.push(map);
+    }
+    maps
+}
+
+fn parse_hunk_header(line: &str) -> Option<((u32, u32), (u32, u32))> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    Some((parse_range(old)?, parse_range(new)?))
+}
+
+fn parse_range(range: &str) -> Option<(u32, u32)> {
+    match range.split_once(',') {
+        Some((start, count)) => Some((start.parse().ok()?, count.parse().ok()?)),
+        None => Some((range.parse().ok()?, 1)),
+    }
+}

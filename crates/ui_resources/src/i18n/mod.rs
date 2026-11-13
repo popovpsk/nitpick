@@ -11,15 +11,106 @@ pub struct Strings {
     pub hide_others: SharedString,
     pub show_all: SharedString,
     pub quit_app: SharedString,
+    pub menu_file: SharedString,
     pub menu_window: SharedString,
     pub minimize: SharedString,
     pub zoom: SharedString,
     pub menu_help: SharedString,
     pub repository: SharedString,
-
     pub up_to_date: SharedString,
+    pub settings: SharedString,
+    pub settings_ellipsis: SharedString,
+    pub open: SharedString,
+    pub open_repository: SharedString,
+    pub open_repository_ellipsis: SharedString,
+    pub open_repo_failed: SharedString,
+    pub new_review: SharedString,
+    pub new_window: SharedString,
+    pub close_window: SharedString,
+    pub recent_repositories: SharedString,
+    pub recent_repositories_hint: SharedString,
+    pub welcome_hint: SharedString,
+    pub choose_review: SharedString,
+    pub choose_review_tooltip: SharedString,
+    pub compare_branches: SharedString,
+    pub compare_hint: SharedString,
+    pub target_branch: SharedString,
+    pub source_branch: SharedString,
+    pub choose_branch: SharedString,
+    pub search: SharedString,
+    pub swap: SharedString,
+    pub compare: SharedString,
+    pub merge_requests: SharedString,
+    pub mr_input_placeholder: SharedString,
+    pub filter_mrs: SharedString,
+    pub no_mrs: SharedString,
+    pub gitlab_not_configured: SharedString,
+    pub no_gitlab_remote: SharedString,
+    pub no_remote_for_mr: SharedString,
+    pub mr_not_ready: SharedString,
+    pub loading_review: SharedString,
+    pub retry: SharedString,
+    pub files: SharedString,
+    pub toggle_tree: SharedString,
+    pub expand_all: SharedString,
+    pub collapse_all: SharedString,
+    pub mark_viewed: SharedString,
+    pub mark_unviewed: SharedString,
+    pub viewed: SharedString,
+    pub previous_file: SharedString,
+    pub next_file: SharedString,
+    pub split_view: SharedString,
+    pub unified_view: SharedString,
+    pub no_changes: SharedString,
+    pub context_limited: SharedString,
+    pub refresh: SharedString,
+    pub open_in_browser: SharedString,
+    pub general_comments: SharedString,
+    pub comments_failed: SharedString,
+    pub comment_failed: SharedString,
+    pub comment_line_unavailable: SharedString,
+    pub comment_placeholder: SharedString,
+    pub comment_hint: SharedString,
+    pub comment: SharedString,
+    pub cancel: SharedString,
+    pub reply: SharedString,
+    pub resolve: SharedString,
+    pub unresolve: SharedString,
+    pub resolved: SharedString,
+    pub outdated: SharedString,
+    pub new_comment: SharedString,
+    pub no_comments: SharedString,
+    pub back: SharedString,
+    pub appearance: SharedString,
+    pub theme: SharedString,
+    pub theme_desc: SharedString,
+    pub system: SharedString,
+    pub language: SharedString,
+    pub review: SharedString,
+    pub tree_side: SharedString,
+    pub left: SharedString,
+    pub right: SharedString,
+    pub diff_layout: SharedString,
+    pub ignore_whitespace: SharedString,
+    pub ignore_whitespace_desc: SharedString,
+    pub advance_on_viewed: SharedString,
+    pub advance_on_viewed_desc: SharedString,
+    pub gitlab_desc: SharedString,
+    pub gitlab_url: SharedString,
+    pub gitlab_token: SharedString,
+    pub gitlab_token_desc: SharedString,
+    pub save_and_check: SharedString,
+    pub checking: SharedString,
+
     pub update_ready_t: SharedString,
     pub update_check_failed_t: SharedString,
+    pub settings_save_failed_t: SharedString,
+    pub gitlab_connected_t: SharedString,
+    pub merge_base_t: SharedString,
+    pub pull_branch_t: SharedString,
+    pub pull_failed_t: SharedString,
+    pub pull_up_to_date_t: SharedString,
+    pub pull_updated_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -42,6 +133,34 @@ impl Strings {
 
     pub fn update_check_failed(&self, err: &str) -> String {
         fill(&self.update_check_failed_t, &[err])
+    }
+
+    pub fn settings_save_failed(&self, err: &str) -> String {
+        fill(&self.settings_save_failed_t, &[err])
+    }
+
+    pub fn gitlab_connected(&self, user: &str) -> String {
+        fill(&self.gitlab_connected_t, &[user])
+    }
+
+    pub fn merge_base(&self, base: &str, commits: usize) -> String {
+        fill(&self.merge_base_t, &[base, &commits.to_string()])
+    }
+
+    pub fn pull_branch(&self, branch: &str) -> String {
+        fill(&self.pull_branch_t, &[branch])
+    }
+
+    pub fn pull_failed(&self, branch: &str) -> String {
+        fill(&self.pull_failed_t, &[branch])
+    }
+
+    pub fn pull_up_to_date(&self, branch: &str) -> String {
+        fill(&self.pull_up_to_date_t, &[branch])
+    }
+
+    pub fn pull_updated(&self, branch: &str) -> String {
+        fill(&self.pull_updated_t, &[branch])
     }
 }
 
@@ -164,9 +283,19 @@ mod tests {
     fn interpolated_templates_have_one_placeholder() {
         for &lang in Lang::all() {
             let s = lang.strings();
-            for template in [&s.update_ready_t, &s.update_check_failed_t] {
+            for template in [
+                &s.update_ready_t,
+                &s.update_check_failed_t,
+                &s.settings_save_failed_t,
+                &s.gitlab_connected_t,
+                &s.pull_branch_t,
+                &s.pull_failed_t,
+                &s.pull_up_to_date_t,
+                &s.pull_updated_t,
+            ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }
+            assert_eq!(s.merge_base_t.matches("{}").count(), 2, "{lang:?}");
         }
     }
 }

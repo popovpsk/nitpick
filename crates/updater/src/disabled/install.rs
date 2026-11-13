@@ -2,9 +2,9 @@ use anyhow::Result;
 
 pub struct Staged;
 
-pub fn download_and_stage(
-    _url: &str,
-    _digest: Option<&str>,
+pub async fn download_and_stage(
+    _url: String,
+    _digest: Option<String>,
     _app_bundle: Option<std::path::PathBuf>,
 ) -> Result<Staged> {
     anyhow::bail!("this build was compiled without the updater")

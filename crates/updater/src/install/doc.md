@@ -8,23 +8,28 @@ Not here: when to check, which asset, toasts (`../doc.md`); the feature-off stan
 
 ## Files
 
-- `mod.rs` — `Staged` (carries the installer path on Windows only), dispatch by OS,
-  `finalize_on_quit` (runs the installer on Windows, no-op elsewhere), the shared blocking
+- `mod.rs` — `Staged` (carries the installer path on Windows only), async dispatch by OS,
+  `finalize_on_quit` (runs the installer on Windows, no-op elsewhere), the shared async
   `download_file`.
 - `macos.rs`, `windows.rs`, `linux.rs` — one backend each.
+- `tests.rs` — a download from a `wiremock` server to disk with its digest; the digest rule
+  table.
 
 ## Download
 
-- `download_file` retries and resumes with `Range`; any reply but `206` restarts from zero.
-  The partial file is removed only once every attempt is spent.
+- `download_file` streams the body chunk by chunk to the file (`tokio::fs`), never holding the
+  whole asset in memory. It retries (5 attempts, 3 s apart) and resumes with `Range`; any
+  reply but `206` restarts from zero, and so does a failed disk write (with `tokio::fs` a
+  write error surfaces one write late, so the byte count can no longer be trusted). The
+  file is flushed before a retry reopens it. The partial file is removed only once every
+  attempt is spent. gzip is off so `Range` offsets and the digest are over the stored bytes.
 - The body is stream-hashed (SHA-256) and compared with the asset's `digest`. A mismatch
   re-downloads from scratch (also how a bad resume heals). Enforced only when the API gave a
   `sha256:` digest, otherwise it warns and proceeds. It covers bytes altered in transit or on
   the CDN; it is not a substitute for signing.
-- ureq's timeouts are not independent: `RecvBody` is checked against `RecvResponse` too, so
-  `recv_response` (15 min) caps the whole transfer and `recv_body` (60 s) is the stall
-  detector, re-armed on every read. Do not shorten `recv_response` as if it were a headers
-  timeout: it fails slow downloads of a healthy file.
+- Timeouts: each attempt is capped at 15 min as a whole (per-request `timeout`); the stall
+  detector is `http_client`'s 60 s read timeout, re-armed on every read. Do not shorten the
+  15 min as if it were a headers timeout: it fails slow downloads of a healthy file.
 
 ## macOS
 

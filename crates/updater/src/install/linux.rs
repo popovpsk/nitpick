@@ -6,10 +6,10 @@ pub fn appimage_path() -> Option<PathBuf> {
     std::env::var_os("APPIMAGE").map(PathBuf::from)
 }
 
-pub fn install(url: &str, digest: Option<&str>) -> Result<()> {
+pub async fn install(url: &str, digest: Option<&str>) -> Result<()> {
     let target = appimage_path().context("not running as an AppImage")?;
     let parent = target.parent().context("AppImage path has no parent")?;
-    match replace(url, digest, &target, parent) {
+    match replace(url, digest, &target, parent).await {
         Err(error) if denied_by_permissions(&error) => Err(anyhow::anyhow!(
             "no write access to {} — update Sloptaster the same way it was installed",
             parent.display()
@@ -18,17 +18,20 @@ pub fn install(url: &str, digest: Option<&str>) -> Result<()> {
     }
 }
 
-fn replace(url: &str, digest: Option<&str>, target: &Path, parent: &Path) -> Result<()> {
+async fn replace(url: &str, digest: Option<&str>, target: &Path, parent: &Path) -> Result<()> {
     let file_name = target
         .file_name()
         .context("AppImage path has no file name")?
         .to_string_lossy();
     let tmp = parent.join(format!("{file_name}.new"));
 
-    super::download_file(url, &tmp, digest)?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+    super::download_file(url, &tmp, digest).await?;
+    tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+        .await
         .context("setting AppImage permissions")?;
-    std::fs::rename(&tmp, target).context("replacing AppImage")?;
+    tokio::fs::rename(&tmp, target)
+        .await
+        .context("replacing AppImage")?;
     Ok(())
 }
 

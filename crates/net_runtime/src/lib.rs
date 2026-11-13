@@ -32,6 +32,20 @@ where
     }
 }
 
+pub fn spawn<F>(future: F) -> impl Future<Output = F::Output> + Send + 'static
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let task = handle().spawn(future);
+    async move {
+        match task.await {
+            Ok(value) => value,
+            Err(error) => std::panic::resume_unwind(error.into_panic()),
+        }
+    }
+}
+
 fn build() -> Result<Runtime, String> {
     Builder::new_multi_thread()
         .worker_threads(WORKER_THREADS)
