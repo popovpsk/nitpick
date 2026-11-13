@@ -1,0 +1,14 @@
+/target
+.env
+.DS_Store
+.idea
+.plans
+todo
+Claude.md
+.claude
+opencode.json
+.opencode
+# Flatpak builder output
+/build
+/repo
+/.flatpak-builder

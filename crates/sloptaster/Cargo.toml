@@ -1,0 +1,89 @@
+[package]
+name = "sloptaster"
+version.workspace = true
+edition.workspace = true
+publish = false
+authors = ["Aleksandr Popov <popov.psk@gmail.com>"]
+description = "A side-by-side diff reviewer for huge merge requests"
+homepage = "https://github.com/popovpsk/sloptaster"
+license = "MIT"
+
+[[bin]]
+name = "sloptaster"
+path = "src/main.rs"
+
+[features]
+default = ["self-update"]
+self-update = ["updater/self-update"]
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+diagnostics = { workspace = true }
+log = { workspace = true }
+anyhow.workspace = true
+dirs = "6"
+ui_resources = { path = "../ui_resources" }
+updater = { path = "../updater", default-features = false }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[package.metadata.packager]
+product-name = "Sloptaster"
+identifier = "io.github.popovpsk.sloptaster"
+category = "DeveloperTool"
+long-description = """
+Sloptaster is a native side-by-side diff reviewer for huge merge requests, \
+with per-file "viewed" progress so a long review can be picked up where it \
+was left.
+"""
+icons = [
+    "../ui_resources/assets/app-icon/32x32.png",
+    "../ui_resources/assets/app-icon/128x128.png",
+    "../ui_resources/assets/app-icon/256x256.png",
+    "../ui_resources/assets/app-icon/icon.icns",
+    "../ui_resources/assets/app-icon/icon.ico",
+]
+
+[package.metadata.packager.pacman]
+depends = [
+    "dbus",
+    "fontconfig",
+    "hicolor-icon-theme",
+    "libxcb",
+    "libxkbcommon",
+    "libxkbcommon-x11",
+    "vulkan-icd-loader",
+    "wayland",
+]
+
+[package.metadata.packager.pacman.files]
+"../../LICENSE" = "/usr/share/licenses/sloptaster-bin/LICENSE"
+
+[package.metadata.packager.deb]
+section = "devel"
+depends = [
+    "libdbus-1-3",
+    "libvulkan1",
+    "libwayland-client0",
+    "libxcb1",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "fontconfig-config",
+    "hicolor-icon-theme",
+]
+
+[package.metadata.packager.deb.files]
+"../../LICENSE" = "/usr/share/doc/sloptaster/copyright"
+
+[package.metadata.packager.macos]
+minimum-system-version = "10.15"
+info-plist-path = "Info.plist"
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+
+[lints]
+workspace = true

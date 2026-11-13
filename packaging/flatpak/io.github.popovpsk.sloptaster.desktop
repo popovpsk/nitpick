@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sloptaster
+GenericName=Diff Reviewer
+Comment=A side-by-side diff reviewer for huge merge requests
+Exec=sloptaster
+Icon=io.github.popovpsk.sloptaster
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=diff;review;merge;git;code;
+StartupNotify=true

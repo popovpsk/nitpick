@@ -1,0 +1,29 @@
+# Maintainer: Aleksandr Popov <popov.psk@gmail.com>
+pkgname=sloptaster-bin
+pkgver=__VERSION__
+pkgrel=1
+pkgdesc="A side-by-side diff reviewer for huge merge requests"
+arch=('x86_64' 'aarch64')
+url="https://github.com/popovpsk/sloptaster"
+license=('MIT')
+depends=('dbus' 'fontconfig' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
+provides=('sloptaster')
+conflicts=('sloptaster')
+options=('!strip')
+source_x86_64=("sloptaster-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/sloptaster_${pkgver}_${CARCH}-pacman.tar.gz")
+sha256sums_x86_64=('__SHA256_X86_64__')
+source_aarch64=("sloptaster-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/sloptaster_${pkgver}_${CARCH}-pacman.tar.gz")
+sha256sums_aarch64=('__SHA256_AARCH64__')
+
+package() {
+  if [ ! -d "${srcdir}/usr" ]; then
+    echo "expected a usr/ tree in the release tarball; got:" >&2
+    find "${srcdir}" -maxdepth 2 >&2
+    return 1
+  fi
+  cp -a "${srcdir}/usr" "${pkgdir}/usr"
+  if [ ! -s "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE" ]; then
+    echo "the release tarball carries no LICENSE; check [package.metadata.packager.pacman.files]" >&2
+    return 1
+  fi
+}

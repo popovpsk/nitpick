@@ -1,0 +1,380 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix (e.g. 0.2.1). Leave empty to only build artifacts without publishing a release."
+        required: false
+        default: ""
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libssl-dev libzstd-dev libgit2-dev \
+            build-essential cmake clang
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-test
+          cache-on-failure: true
+
+      - name: Test
+        run: cargo test --workspace
+
+  bundle:
+    name: Bundle (${{ matrix.label }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-arm64
+            os: macos-14
+            formats: dmg
+          - label: windows-x86_64
+            os: windows-latest
+            formats: nsis
+          - label: windows-arm64
+            os: windows-11-arm
+            formats: nsis
+          - label: linux-x86_64
+            os: ubuntu-22.04
+            formats: appimage,deb,pacman
+            update_info: gh-releases-zsync|popovpsk|sloptaster|latest|sloptaster_*_x86_64.AppImage.zsync
+          - label: linux-arm64
+            os: ubuntu-22.04-arm
+            formats: appimage,deb,pacman
+            update_info: gh-releases-zsync|popovpsk|sloptaster|latest|sloptaster_*_aarch64.AppImage.zsync
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Stamp release version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            PY=python3
+            command -v "$PY" >/dev/null 2>&1 || PY=python
+            "$PY" scripts/stamp_version.py "$VERSION"
+          else
+            echo "No semver release version (got '$VERSION'); leaving Cargo.toml version as-is"
+          fi
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libssl-dev libzstd-dev libgit2-dev \
+            libfuse2 build-essential cmake clang zsync squashfs-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.label }}
+          cache-on-failure: true
+
+      - name: Install cargo-packager
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager
+
+      - name: Build release binary
+        run: cargo build --release -p sloptaster
+
+      - name: Verify the release binary keeps the updater
+        shell: bash
+        run: |
+          bin=target/release/sloptaster
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            bin=target/release/sloptaster.exe
+          fi
+          cargo tree -p sloptaster -e normal -f '{p} {f}' | grep 'updater v' || true
+          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < "$bin" | grep -c 'sloptaster-updater' || true)
+          echo "updater marker occurrences in $bin: $hits"
+          if [ "$hits" -eq 0 ]; then
+            echo "::error::$bin carries no updater — every published installer must self-update; only the Windows portable zip is built with --no-default-features."
+            exit 1
+          fi
+
+      - name: Enable macOS code signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            python3 scripts/enable_macos_signing.py "Sloptaster Self Signed"
+          else
+            echo "APPLE_CERTIFICATE secret not set; building unsigned"
+          fi
+
+      - name: Prefetch AppImage runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch="$(uname -m)"
+          url="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${arch}"
+          dest="$RUNNER_TEMP/appimage-runtime-${arch}"
+          ok=""
+          for i in 1 2 3 4 5; do
+            if curl -fSL --retry 5 --retry-all-errors --retry-delay 5 -o "$dest" "$url" && [ -s "$dest" ]; then
+              ok=1
+              break
+            fi
+            echo "runtime download attempt $i failed; retrying in 15s"
+            sleep 15
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::failed to prefetch AppImage runtime from $url"
+            exit 1
+          fi
+          chmod +x "$dest"
+          echo "LDAI_RUNTIME_FILE=$dest" >> "$GITHUB_ENV"
+
+      - name: Seed cargo-packager AppRun with mode 755
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch="$(uname -m)"
+          dir="${XDG_CACHE_HOME:-$HOME/.cache}/.cargo-packager/AppImage"
+          dest="$dir/AppRun-${arch}"
+          url="https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-${arch}"
+          mkdir -p "$dir"
+          rm -f "$dest"
+          curl -fSL --retry 5 --retry-all-errors --retry-delay 5 -o "$dest" "$url"
+          test -s "$dest"
+          chmod 755 "$dest"
+          ls -l "$dest"
+
+      - name: Package
+        working-directory: crates/sloptaster
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          LDAI_UPDATE_INFORMATION: ${{ matrix.update_info }}
+        run: cargo packager --release --formats ${{ matrix.formats }} --verbose
+
+      - name: Verify AppImage file modes
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          images=(target/release/*.AppImage)
+          if [ ${#images[@]} -eq 0 ]; then
+            echo "::error::no AppImage found in target/release"
+            exit 1
+          fi
+          for img in "${images[@]}"; do
+            chmod +x "$img"
+            offset=$("$img" --appimage-offset)
+            listing=$(unsquashfs -lln -o "$offset" "$img")
+            echo "$listing" | grep -E ' squashfs-root/AppRun$'
+            bad=$(echo "$listing" | awk '
+              $1 ~ /^-/ && substr($1,4,1) == "x" && substr($1,10,1) != "x" { print; next }
+              $1 ~ /^-/ && substr($1,8,1) != "r" { print; next }
+              $1 ~ /^d/ && substr($1,10,1) != "x" { print }
+            ')
+            if [ -n "$bad" ]; then
+              echo "$bad"
+              echo "::error::$img has files other users cannot read or run; root-mounted launches (firejail, the AppImage catalog test) fail with Permission denied"
+              exit 1
+            fi
+          done
+
+      - name: Collect AppImage update metadata
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          found=$(find target/release -name '*.AppImage.zsync')
+          if [ -z "$found" ]; then
+            echo "::error::no .zsync produced — appimagetool skips it silently when zsyncmake is missing or update information was not embedded"
+            exit 1
+          fi
+          while IFS= read -r f; do
+            [ "$(dirname "$f")" = "target/release" ] || mv -f "$f" target/release/
+          done <<< "$found"
+          ls -la target/release/*.AppImage.zsync
+
+      - name: Re-image dmg without signature
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then exit 0; fi
+          shopt -s nullglob
+          for dmg in target/release/*.dmg; do
+            tmp="${dmg%.dmg}.repacked.dmg"
+            hdiutil convert "$dmg" -format UDZO -o "$tmp"
+            mv -f "$tmp" "$dmg"
+            echo "re-imaged unsigned: $dmg"
+          done
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          for f in \
+            target/release/*.dmg \
+            target/release/*.AppImage \
+            target/release/*.AppImage.zsync \
+            target/release/*.deb \
+            target/release/*-setup.exe \
+            target/release/nsis/*-setup.exe; do
+            cp "$f" dist/
+          done
+          for f in dist/*_arm64-setup.exe; do
+            mv "$f" "${f%_arm64-setup.exe}_arm64-installer.exe"
+          done
+          ls -la dist
+
+      - name: Collect pacman archive
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          arch="$(uname -m)"
+          mapfile -t found < <(find target/release -maxdepth 1 -name '*.tar.gz' -not -name '*-pacman.tar.gz')
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one pacman tarball under target/release, found: ${found[*]:-none}"
+            find target/release -maxdepth 2 -name 'PKGBUILD' -o -maxdepth 2 -name '*.tar.gz'
+            exit 1
+          fi
+          cp "${found[0]}" "dist/sloptaster_${version}_${arch}-pacman.tar.gz"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  portable:
+    name: Portable (${{ matrix.label }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x86_64
+            os: windows-latest
+            arch_tag: x64
+          - label: windows-arm64
+            os: windows-11-arm
+            arch_tag: arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Stamp release version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            PY=python3
+            command -v "$PY" >/dev/null 2>&1 || PY=python
+            "$PY" scripts/stamp_version.py "$VERSION"
+          else
+            echo "No semver release version (got '$VERSION'); leaving Cargo.toml version as-is"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.label }}
+          cache-on-failure: true
+
+      - name: Build the portable binary
+        shell: bash
+        run: |
+          cargo build --release -p sloptaster --no-default-features
+          cargo tree -p sloptaster -e normal -f '{p} {f}' --no-default-features | grep 'updater v' || true
+          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < target/release/sloptaster.exe | grep -c 'sloptaster-updater' || true)
+          echo "updater marker occurrences in the portable binary: $hits"
+          if [ "$hits" -ne 0 ]; then
+            echo "::error::the portable binary still links the updater — --no-default-features did not reach updater/self-update."
+            exit 1
+          fi
+
+      - name: Build portable archive
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $stage = Join-Path $env:RUNNER_TEMP 'portable'
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target/release/sloptaster.exe $stage
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/sloptaster_${version}_${{ matrix.arch_tag }}-portable.zip"
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.label }}-portable
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [bundle, portable]
+    if: inputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts
+
+      - name: Enforce updater asset invariant
+        shell: bash
+        run: |
+          shopt -s nullglob
+          setups=(artifacts/*-setup.exe)
+          if [ "${#setups[@]}" -ne 1 ] || [[ "${setups[0]}" != *_x64-setup.exe ]]; then
+            echo "::error::Exactly one asset may end with -setup.exe and it must be the x64 installer; found: ${setups[*]:-none}."
+            echo "::error::Releases already in the field match that suffix with a plain ends_with() and take the first hit in GitHub's name-sorted asset list, so a second one silently installs the wrong architecture."
+            exit 1
+          fi
+          dmgs=(artifacts/*.dmg)
+          if [ "${#dmgs[@]}" -gt 1 ]; then
+            echo "::error::Shipped updaters match .dmg by suffix alone; a second dmg would be picked by sort order, not by architecture. Found: ${dmgs[*]}."
+            exit 1
+          fi
+          echo "Updater asset invariant holds: ${setups[0]}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          tag_name: v${{ inputs.version }}
+          draft: true
+          generate_release_notes: true
+          body: |
+            TODO

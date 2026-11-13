@@ -1,0 +1,14 @@
+[package]
+name = "ui_resources"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+rust-embed.workspace = true
+sys-locale = "0.3"
+
+[lints]
+workspace = true

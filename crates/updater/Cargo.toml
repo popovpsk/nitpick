@@ -1,0 +1,42 @@
+[package]
+name = "updater"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+name = "updater"
+path = "src/lib.rs"
+
+[features]
+default = ["self-update"]
+self-update = [
+    "dep:ureq",
+    "dep:sha2",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tempfile",
+    "dep:dirs",
+]
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+ui_resources = { path = "../ui_resources" }
+net_runtime = { path = "../net_runtime" }
+anyhow.workspace = true
+log.workspace = true
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+semver = "1"
+sha2 = { version = "0.10", optional = true }
+ureq = { version = "3", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tempfile = { version = "3", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+dirs = { version = "6", optional = true }
+
+[lints]
+workspace = true

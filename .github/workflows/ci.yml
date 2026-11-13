@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - ".docs/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libssl-dev libzstd-dev libgit2-dev \
+            build-essential cmake clang
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (portable build, updater compiled out)
+        run: cargo clippy -p sloptaster --no-default-features --all-targets -- -D warnings
+
+      - name: Flatpak offline sources match the lockfiles
+        run: |
+          if [ ! -f packaging/flatpak/cargo-sources.json ]; then
+            echo "::error::packaging/flatpak/cargo-sources.json is missing; the Flatpak manifest references it."
+            exit 1
+          fi
+          awk '
+            /^\[\[package\]\]/ { n=""; v=""; s=""; c=""; next }
+            /^name = / { sub(/^name = "/, ""); sub(/"$/, ""); n=$0; next }
+            /^version = / { sub(/^version = "/, ""); sub(/"$/, ""); v=$0; next }
+            /^source = / { sub(/^source = "/, ""); sub(/"$/, ""); s=$0; next }
+            /^checksum = / { sub(/^checksum = "/, ""); sub(/"$/, ""); c=$0; next }
+            /^$/ { if (n != "" && s ~ /^registry\+/) print n "-" v " " c; n=""; v=""; s=""; c=""; next }
+            END { if (n != "" && s ~ /^registry\+/) print n "-" v " " c }
+          ' Cargo.lock | sort > /tmp/cargo-lock.txt
+          jq -r '.[] | select(.type=="archive") | (.dest|sub("cargo/vendor/";"")) + " " + .sha256' \
+            packaging/flatpak/cargo-sources.json | sort > /tmp/cargo-src.txt
+          if ! diff -u /tmp/cargo-lock.txt /tmp/cargo-src.txt; then
+            echo "::error::cargo-sources.json no longer matches Cargo.lock — regenerate it with scripts/gen_flatpak_cargo_sources.py, or the offline Flathub build fails for the reviewer, not for us."
+            exit 1
+          fi
+          echo "cargo: $(wc -l < /tmp/cargo-lock.txt) crates in sync"
+
+      - name: AUR template depends match the packager metadata
+        run: |
+          tmpl=$(grep '^depends=' packaging/aur/PKGBUILD.tmpl \
+            | sed "s/^depends=(//; s/)$//; s/'//g" | tr ' ' '\n' | sed '/^$/d' | sort)
+          toml=$(awk '
+            /^\[package\.metadata\.packager\.pacman\]$/ { f = 1 }
+            f && /^depends = \[/ { d = 1; next }
+            d && /^\]/ { exit }
+            d { gsub(/[",]/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") print }
+          ' crates/sloptaster/Cargo.toml | sort)
+          if [ "$tmpl" != "$toml" ]; then
+            echo "::error::packaging/aur/PKGBUILD.tmpl and [package.metadata.packager.pacman].depends disagree. The template is what reaches AUR users; the packager metadata only shapes the tarball's own generated PKGBUILD, which is discarded."
+            diff <(echo "$toml") <(echo "$tmpl") || true
+            exit 1
+          fi
+          echo "pacman depends in sync: $(echo "$tmpl" | tr '\n' ' ')"
+
+  check-windows:
+    name: Check (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x86_64
+            os: windows-latest
+          - label: windows-arm64
+            os: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.label }}
+
+      - name: Check
+        run: cargo check --workspace --all-targets
+
+      - name: Check (portable build, updater compiled out)
+        run: cargo check -p sloptaster --no-default-features --all-targets
