@@ -11,8 +11,8 @@ if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+].*)?", version):
 
 path = pathlib.Path("Cargo.toml")
 text = path.read_text(encoding="utf-8")
-new_text = re.sub(r'(?m)^version = "[^"]*"', f'version = "{version}"', text, count=1)
-if new_text == text:
+new_text, found = re.subn(r'(?m)^version = "[^"]*"', f'version = "{version}"', text, count=1)
+if found == 0:
     raise SystemExit("could not find a [workspace.package] version line to stamp")
 
 path.write_text(new_text, encoding="utf-8")
