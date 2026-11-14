@@ -34,6 +34,22 @@ gpui-component = { workspace = true, features = [
     "tree-sitter-css",
     "tree-sitter-html",
     "tree-sitter-make",
+    "tree-sitter-csharp",
+    "tree-sitter-java",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-kotlin",
+    "tree-sitter-swift",
+    "tree-sitter-scala",
+    "tree-sitter-ruby",
+    "tree-sitter-php",
+    "tree-sitter-lua",
+    "tree-sitter-elixir",
+    "tree-sitter-zig",
+    "tree-sitter-graphql",
+    "tree-sitter-cmake",
+    "tree-sitter-diff",
+    "tree-sitter-sql",
 ] }
 diagnostics = { workspace = true }
 log = { workspace = true }
@@ -48,8 +64,14 @@ secret_store = { path = "../secret_store" }
 net_runtime = { path = "../net_runtime" }
 ui_resources = { path = "../ui_resources" }
 updater = { path = "../updater", default-features = false }
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-swift = "0.7"
+tree-sitter-cmake = "0.7"
 
 [dev-dependencies]
+rstest = "0.28"
 tempfile = "3"
 
 [target.'cfg(windows)'.build-dependencies]

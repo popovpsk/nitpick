@@ -13,9 +13,13 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   save, tree selection and collapse state, file navigation, pull, discussions and the comment
   composer; actions and key bindings.
 - `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile`, `build` (changed files + full
-  context patch → parsed `DiffFile`s, line maps, fingerprints, tree), `gitlab_remote`,
-  `mr_refspecs`, `comparison_for_mr`.
-- `model_tests.rs` — the whole pipeline on a throwaway repository.
+  context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
+  maps, fingerprints, tree), `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`.
+- `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
+  gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
+  the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`).
+- `model_tests.rs` — the whole pipeline on a throwaway repository; every enabled language
+  produces syntax colors.
 - `viewed.rs` — `SharedViewed`: one `ViewedStore` entity per repository for the whole app,
   a debounced save, `flush_all` at quit.
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
@@ -66,6 +70,11 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
   so comment positions follow GitLab's real diff rather than the whitespace-blind one.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
+- Highlight queries are registered once, by the first `parse`, through gpui-component's
+  `LanguageRegistry::register` (same grammar, new query); every highlighter is built after
+  that, since files reach the `DiffState` only from a parsed review. The proto and GraphQL
+  queries are ours, written against those grammars' node types; capture names must be
+  gpui-component highlight names (a dotted name falls back to its prefix).
 
 ## Decisions
 

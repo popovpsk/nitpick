@@ -186,3 +186,27 @@ fn line_map_locates_lines(
 ) {
     assert_eq!(line_maps(PATCH)[file].locate(side, line), expected);
 }
+
+#[rstest]
+#[case::make_include("build/rules.mk", Some("make"))]
+#[case::make_mak("win/nmake.mak", Some("make"))]
+#[case::makefile_am("Makefile.am", Some("make"))]
+#[case::gnumakefile_suffix("sub/GNUmakefile.inc", Some("make"))]
+#[case::backslash_path("tools\\deps.mk", Some("make"))]
+#[case::zsh_script("scripts/install.zsh", Some("bash"))]
+#[case::zshrc("home/.zshrc", Some("bash"))]
+#[case::cargo_lock("Cargo.lock", Some("toml"))]
+#[case::gemfile("Gemfile", Some("ruby"))]
+#[case::cpp_header("include/view.hh", Some("cpp"))]
+#[case::upper_case_extension("docs/GUIDE.MARKDOWN", Some("markdown"))]
+#[case::patch("fixes/0001-fix.patch", Some("diff"))]
+#[case::bazel("tools/defs.bzl", Some("python"))]
+#[case::detected_upstream_makefile("Makefile", None)]
+#[case::detected_upstream_proto("api/v1/service.proto", None)]
+#[case::detected_upstream_csharp("src/App.cs", None)]
+#[case::detected_upstream_java("src/Main.java", None)]
+#[case::no_grammar_dockerfile("Dockerfile", None)]
+#[case::no_extension("LICENSE", None)]
+fn language_overrides(#[case] path: &str, #[case] expected: Option<&str>) {
+    assert_eq!(language_override(path), expected);
+}

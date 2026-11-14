@@ -2,7 +2,10 @@ use std::path::Path;
 use std::process::Command;
 
 use git_repo::Repo;
+use gpui_component::Rope;
+use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use review_core::{FileStatus, LineKind, Side};
+use rstest::rstest;
 
 use super::{build, gitlab_remote};
 
@@ -199,4 +202,69 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
         Some(LineKind::Removed { old: 5 })
     );
     assert!(review.comments_aligned);
+}
+
+#[test]
+fn language_overrides_apply_to_parsed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    write(root, "README", "base\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "base"]);
+    git(root, &["checkout", "-qb", "feature"]);
+    write(root, "build/rules.mk", "all:\n\techo hi\n");
+    write(root, "src/lib.rs", "fn main() {}\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "feature"]);
+    let repo = Repo::open(root).unwrap();
+    let review = build(&repo, repo.compare("main", "feature").unwrap(), false).unwrap();
+    let language = |path: &str| {
+        let ix = review.file_index(path).unwrap();
+        review.files[ix].diff.language().to_string()
+    };
+    assert_eq!(language("build/rules.mk"), "make");
+    assert_eq!(language("src/lib.rs"), "rust");
+}
+
+#[rstest]
+#[case::proto(
+    "api/service.proto",
+    "syntax = \"proto3\";\nmessage A { string name = 1; }\n"
+)]
+#[case::makefile("Makefile", "CFLAGS := -O2\nall: build\n\techo $(CFLAGS)\n")]
+#[case::make_include("build/rules.mk", "CFLAGS := -O2\nall: build\n\techo $(CFLAGS)\n")]
+#[case::csharp("src/App.cs", "public class App { int x = 1; }\n")]
+#[case::java("src/Main.java", "public class Main { int x = 1; }\n")]
+#[case::c("src/main.c", "int main(void) { return 0; }\n")]
+#[case::cpp("src/main.cpp", "int main() { return 0; }\n")]
+#[case::kotlin("app/Main.kt", "fun main() { val x = 1 }\n")]
+#[case::swift("Sources/App.swift", "let x = 1\nfunc f() {}\n")]
+#[case::scala("src/A.scala", "object A { val x = 1 }\n")]
+#[case::ruby("lib/a.rb", "def f\n  1\nend\n")]
+#[case::php("web/a.php", "<?php function f() { return 1; }\n")]
+#[case::lua("scripts/a.lua", "local x = 1\n")]
+#[case::elixir("lib/a.ex", "defmodule A do\n  def f, do: 1\nend\n")]
+#[case::zig("src/main.zig", "const x: u8 = 1;\n")]
+#[case::graphql("schema.graphql", "type Query { a: Int }\n")]
+#[case::cmake("CMakeLists.txt", "project(a)\nadd_executable(a main.c)\n")]
+#[case::json("package.json", "{\"a\": 1}\n")]
+#[case::sql("db/schema.sql", "SELECT id FROM users WHERE id = 1;\n")]
+#[case::diff("fixes/0001.patch", "@@ -1 +1 @@\n-a\n+b\n")]
+#[case::zsh("scripts/setup.zsh", "export A=1\necho \"$A\"\n")]
+fn review_languages_highlight(#[case] path: &str, #[case] source: &str) {
+    let body: String = source.lines().map(|line| format!("+{line}\n")).collect();
+    let patch = format!(
+        "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n{body}",
+        source.lines().count()
+    );
+    let files = super::parse(&patch).unwrap();
+    let language = files[0].language();
+    let mut highlighter = SyntaxHighlighter::new(&language);
+    highlighter.update(None, &Rope::from(source), None);
+    let styles = highlighter.styles(&(0..source.len()), &*HighlightTheme::default_dark());
+    assert!(
+        styles.iter().any(|(_, style)| style.color.is_some()),
+        "{path} ({language}) has no syntax colors"
+    );
 }

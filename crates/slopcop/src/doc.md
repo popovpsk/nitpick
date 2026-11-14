@@ -41,6 +41,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   turns it off and this crate has no `#[cfg]` for it.
 - Quit on last window closed everywhere except macOS, where the app stays in the dock and
   `on_reopen` opens a new window.
+- Highlighting languages are gpui-component `tree-sitter-*` features in `Cargo.toml`. The SQL
+  grammar (`tree-sitter-sequel`) requires `cc ~1.2.1`, so `Cargo.lock` keeps `cc` on 1.2.x;
+  the grammar crates listed directly are there only for their highlight queries
+  (`review/model_grammars.rs`) and must stay on the versions gpui-component resolves.
 
 ## Decisions
 
