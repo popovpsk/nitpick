@@ -442,21 +442,17 @@ impl ReviewView {
             return 1;
         };
         let is_shown = self.current_file == Some(file);
+        let changes = self.shown_changes(file);
         let cursor = self
             .change_cursor
             .filter(|_| is_shown)
-            .and_then(|k| shown.changes.get(k));
+            .and_then(|k| changes.get(k));
         let selection = is_shown
             .then(|| self.diff.read(cx).selected_lines())
             .flatten()
             .filter(|range| range.path() == &shown.path && range.end_side() == DiffSide::Modified)
             .map(|range| range.end() as u32);
-        pick_line(
-            cursor,
-            self.change_scrolled,
-            selection,
-            shown.changes.first(),
-        )
+        pick_line(cursor, self.change_scrolled, selection, changes.first())
     }
 
     fn web_url(&self, file: usize, cx: &App) -> Option<String> {
