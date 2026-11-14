@@ -221,6 +221,10 @@ pub struct Strings {
     pub days_ago_t: SharedString,
     pub months_ago_t: SharedString,
     pub years_ago_t: SharedString,
+    pub all_changes: SharedString,
+    pub search_commits: SharedString,
+    pub pick_commit: SharedString,
+    pub commits_count_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -340,6 +344,10 @@ impl Strings {
         };
         let count = seconds / unit;
         plural(template, count.unsigned_abs())
+    }
+
+    pub fn commits_count(&self, count: usize) -> String {
+        plural(&self.commits_count_t, count as u64)
     }
 }
 
@@ -496,6 +504,11 @@ mod tests {
         assert_eq!(ru.relative_time(12 * 3600), "12 часов назад");
         assert_eq!(ru.relative_time(22 * day), "22 дня назад");
         assert_eq!(ru.relative_time(11 * 30 * day), "11 месяцев назад");
+        assert_eq!(en.commits_count(1), "1 commit");
+        assert_eq!(en.commits_count(4), "4 commits");
+        assert_eq!(ru.commits_count(21), "21 коммит");
+        assert_eq!(ru.commits_count(3), "3 коммита");
+        assert_eq!(ru.commits_count(11), "11 коммитов");
         assert_eq!(ru.relative_time(5 * 365 * day), "5 лет назад");
     }
 

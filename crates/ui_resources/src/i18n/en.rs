@@ -214,4 +214,8 @@ pub static EN: Strings = lang! {
     days_ago_t: "{} day ago|{} days ago",
     months_ago_t: "{} month ago|{} months ago",
     years_ago_t: "{} year ago|{} years ago",
+    all_changes: "All changes",
+    search_commits: "Search commits",
+    pick_commit: "Show the changes of one commit",
+    commits_count_t: "{} commit|{} commits",
 };

@@ -790,6 +790,29 @@ fn commits_are_newest_first() {
     assert!(repo.commits("main", "main").unwrap().is_empty());
 }
 
+#[test]
+fn first_parent_of_a_root_commit_is_the_empty_tree() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let root = fixture.commit(&path, &[("a.txt", "1\n")], "one");
+    fixture.git(&path, &["checkout", "-qb", "side"]);
+    let side = fixture.commit(&path, &[("b.txt", "b\n")], "side");
+    fixture.git(&path, &["checkout", "-q", "main"]);
+    let second = fixture.commit(&path, &[("a.txt", "2\n")], "two");
+    fixture.git(&path, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+    let merge = fixture.rev(&path, "main");
+    let repo = Repo::open(&path).unwrap();
+    assert_eq!(repo.first_parent_or_empty_tree(&second).unwrap(), root);
+    assert_eq!(repo.first_parent_or_empty_tree(&merge).unwrap(), second);
+    assert_ne!(repo.first_parent_or_empty_tree(&merge).unwrap(), side);
+    assert_eq!(
+        repo.first_parent_or_empty_tree(&root).unwrap(),
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    );
+    assert!(repo.first_parent_or_empty_tree("-x").is_err());
+    assert!(repo.first_parent_or_empty_tree("no-such-ref").is_err());
+}
+
 #[tokio::test]
 async fn pull_updates_a_remote_tracking_ref() {
     let fixture = Fixture::new();

@@ -77,7 +77,7 @@ fn fixture() -> (tempfile::TempDir, Repo) {
 fn review_shows_only_what_the_source_brings() {
     let (dir, repo) = fixture();
     let comparison = repo.compare("main", "feature").unwrap();
-    let review = build(&repo, comparison, false).unwrap();
+    let review = build(&repo, comparison, None, false).unwrap();
     let mut paths: Vec<&str> = review.files.iter().map(|f| f.path.as_ref()).collect();
     paths.sort();
     assert_eq!(paths, vec!["old.go", "src/a.rs", "web/new.ts"]);
@@ -128,13 +128,62 @@ fn review_shows_only_what_the_source_brings() {
 }
 
 #[test]
+fn one_commit_shows_only_that_commit_and_keeps_the_range() {
+    let (dir, repo) = fixture();
+    let root = dir.path();
+    git(root, &["checkout", "-q", "feature"]);
+    let first = git(root, &["rev-parse", "HEAD"]);
+    write(root, "src/a.rs", &numbered(41, Some(20)));
+    git(root, &["commit", "-qam", "second"]);
+    let second = git(root, &["rev-parse", "HEAD"]);
+    write(root, "docs/b.md", "b\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "third"]);
+    let range = repo.compare("main", "feature").unwrap();
+    let merge_base = range.base_sha.clone();
+
+    let review = build(&repo, range.clone(), Some(&second), false).unwrap();
+    let paths: Vec<&str> = review.files.iter().map(|f| f.path.as_ref()).collect();
+    assert_eq!(paths, vec!["src/a.rs"]);
+    assert_eq!(review.base_sha, first);
+    assert_eq!(review.head_sha, second);
+    assert_eq!(review.merge_base_sha, merge_base);
+    assert_eq!(review.commit_sha(), Some(second.as_str()));
+    assert_eq!(review.commits.len(), 3);
+    assert_eq!(review.commits[1].sha, second);
+    assert_eq!(review.target, "main");
+    assert_eq!(review.source, "feature");
+    let a = &review.files[0];
+    assert_eq!(a.status, FileStatus::Modified);
+    assert_eq!((a.additions, a.deletions), (1, 0));
+    assert_eq!(
+        a.line_map.locate(Side::New, 41),
+        Some(LineKind::Added { new: 41 })
+    );
+
+    let all = build(&repo, range.clone(), None, false).unwrap();
+    assert_eq!(all.files.len(), 4);
+    assert_eq!(all.commit, None);
+    assert_eq!(all.base_sha, merge_base);
+    assert_eq!(all.merge_base_sha, merge_base);
+    assert_ne!(
+        all.files[all.file_index("src/a.rs").unwrap()].fingerprint,
+        a.fingerprint
+    );
+
+    let gone = build(&repo, range, Some("0123456789abcdef"), false).unwrap();
+    assert_eq!(gone.commit, None);
+    assert_eq!(gone.files.len(), 4);
+}
+
+#[test]
 fn fingerprint_changes_when_the_source_changes_the_file_again() {
     let (dir, repo) = fixture();
-    let first = build(&repo, repo.compare("main", "feature").unwrap(), false).unwrap();
+    let first = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
     git(dir.path(), &["checkout", "-q", "feature"]);
     write(dir.path(), "src/a.rs", &numbered(41, Some(20)));
     git(dir.path(), &["commit", "-qam", "more"]);
-    let second = build(&repo, repo.compare("main", "feature").unwrap(), false).unwrap();
+    let second = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
     let fp =
         |r: &super::LoadedReview, p: &str| r.files[r.file_index(p).unwrap()].fingerprint.clone();
     assert_ne!(fp(&first, "src/a.rs"), fp(&second, "src/a.rs"));
@@ -190,7 +239,7 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
     text = text.replace("line 5\n", "line   5\n");
     write(dir.path(), "src/a.rs", &text);
     git(dir.path(), &["commit", "-qam", "indent"]);
-    let review = build(&repo, repo.compare("main", "feature").unwrap(), true).unwrap();
+    let review = build(&repo, repo.compare("main", "feature").unwrap(), None, true).unwrap();
     let a = &review.files[review.file_index("src/a.rs").unwrap()];
     assert_eq!((a.additions, a.deletions), (1, 1));
     assert_eq!(
@@ -256,7 +305,7 @@ fn language_overrides_apply_to_parsed_files() {
     git(root, &["add", "-A"]);
     git(root, &["commit", "-qm", "feature"]);
     let repo = Repo::open(root).unwrap();
-    let review = build(&repo, repo.compare("main", "feature").unwrap(), false).unwrap();
+    let review = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
     let language = |path: &str| {
         let ix = review.file_index(path).unwrap();
         review.files[ix].diff.language().to_string()

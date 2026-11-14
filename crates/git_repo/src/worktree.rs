@@ -27,13 +27,17 @@ impl Repo {
     pub fn head_or_empty_tree(&self) -> Result<String, GitError> {
         match self.resolve("HEAD") {
             Ok(sha) => Ok(sha),
-            Err(_) => Ok(text(&self.git(&[
-                "hash-object",
-                "-t",
-                "tree",
-                "--stdin",
-            ])?)),
+            Err(_) => self.empty_tree(),
         }
+    }
+
+    pub(crate) fn empty_tree(&self) -> Result<String, GitError> {
+        Ok(text(&self.git(&[
+            "hash-object",
+            "-t",
+            "tree",
+            "--stdin",
+        ])?))
     }
 
     pub fn untracked_files(&self) -> Result<Vec<String>, GitError> {

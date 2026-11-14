@@ -1,6 +1,7 @@
 mod blame;
 mod branch_picker;
 mod comments;
+mod commit_picker;
 mod diff_panel;
 pub mod model;
 mod tree_panel;
@@ -254,6 +255,8 @@ pub struct ReviewView {
     busy: Option<Busy>,
     _tree_close: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
+    commit: Option<String>,
+    commit_picker: commit_picker::CommitPicker,
     blame: blame::BlameState,
     _load: Task<()>,
     _discussions: Task<()>,
@@ -293,6 +296,7 @@ impl ReviewView {
             }
         });
         let branch_pickers = branch_picker::BranchPickers::new(window, cx);
+        let commit_picker = commit_picker::CommitPicker::new(window, cx);
         let mut this = Self {
             repo,
             source,
@@ -345,6 +349,8 @@ impl ReviewView {
             busy: None,
             _tree_close: Task::ready(()),
             branch_pickers,
+            commit: None,
+            commit_picker,
             blame: blame::BlameState::new(cx),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
@@ -492,6 +498,7 @@ impl ReviewView {
     fn load(&mut self, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         let source = self.source.clone();
+        let commit = self.commit.clone();
         let client = settings(cx).gitlab_client();
         let ignore_whitespace = settings(cx).ignore_whitespace;
         self.loaded_whitespace = ignore_whitespace;
@@ -499,7 +506,7 @@ impl ReviewView {
             self.load_state = LoadState::Loading;
         }
         self._load = cx.spawn(async move |this, cx| {
-            let result = load_review(repo, source, client, ignore_whitespace, cx).await;
+            let result = load_review(repo, source, commit, client, ignore_whitespace, cx).await;
             let _ = this.update(cx, |this, cx| this.install(result, ignore_whitespace, cx));
         });
         cx.notify();
@@ -525,12 +532,19 @@ impl ReviewView {
                     self.installed_whitespace == whitespace
                         && old.context_limited == review.context_limited
                 };
+                let switched = self
+                    .review
+                    .as_deref()
+                    .is_some_and(|old| old.commit_sha() != review.commit_sha());
                 let unchanged = self.mr.is_none()
                     && mr.is_none()
+                    && !switched
                     && self.review.as_deref().is_some_and(|old| {
                         same_shape(old)
                             && old.base_sha == review.base_sha
                             && old.head_sha == review.head_sha
+                            && old.merge_base_sha == review.merge_base_sha
+                            && old.commits == review.commits
                             && old.files.len() == review.files.len()
                             && old.files.iter().zip(&review.files).all(|(a, b)| {
                                 a.path == b.path
@@ -543,13 +557,14 @@ impl ReviewView {
                     cx.notify();
                     return;
                 }
-                let previous = self.current_file.and_then(|ix| {
+                let previous = self.current_file.filter(|_| !switched).and_then(|ix| {
                     let old = self.review.as_deref()?;
                     let file = &old.files[ix];
                     same_shape(old).then(|| (file.path.clone(), file.fingerprint.clone()))
                 });
                 let kept_path = self
                     .current_file
+                    .filter(|_| !switched)
                     .and_then(|ix| self.review.as_ref().map(|r| r.files[ix].path.clone()));
                 let store = self.viewed_store.read(cx).store();
                 self.viewed = review
@@ -557,6 +572,8 @@ impl ReviewView {
                     .iter()
                     .map(|f| store.is_viewed(&f.path, &f.fingerprint))
                     .collect();
+                self.commit = review.commit_sha().map(str::to_string);
+                self.commit_picker.set_review(&review);
                 let review = Rc::new(review);
                 self.review = Some(review.clone());
                 self.apply_hide_rules(cx);
@@ -593,6 +610,11 @@ impl ReviewView {
             Err(err) => {
                 log::warn!("review load failed: {err:#}");
                 let message: SharedString = format!("{err:#}").into();
+                self.commit = self
+                    .review
+                    .as_deref()
+                    .and_then(LoadedReview::commit_sha)
+                    .map(str::to_string);
                 if self.review.is_some() {
                     self.notify(Notification::error(message), cx);
                 } else {
@@ -1189,9 +1211,11 @@ impl ReviewView {
         let (Some(review), Some(ctx)) = (self.review.as_ref(), self.mr.as_ref()) else {
             return;
         };
+        let can_place = review.comments_aligned && review.commit.is_none();
         for (ix, discussion) in self.discussions.iter().enumerate() {
             let placed = discussion.position.as_ref().and_then(|pos| {
-                if pos.head_sha.as_deref() != Some(ctx.refs.head_sha.as_str())
+                if !can_place
+                    || pos.head_sha.as_deref() != Some(ctx.refs.head_sha.as_str())
                     || (pos.new_line.is_none() && pos.old_line.is_none())
                 {
                     return None;
@@ -1204,10 +1228,8 @@ impl ReviewView {
                     .map(|f| f.path.clone())
             });
             match placed {
-                Some(path) if review.comments_aligned => {
-                    self.by_file.entry(path).or_default().push(ix)
-                }
-                _ => self.general.push(ix),
+                Some(path) => self.by_file.entry(path).or_default().push(ix),
+                None => self.general.push(ix),
             }
         }
     }
@@ -1240,6 +1262,7 @@ impl ReviewView {
                 target: ComposerTarget::Line(position),
                 ..
             }) = &self.composer
+                && review.commit.is_none()
                 && position.path() == &path
             {
                 annotations.push(DiffAnnotation::line(
@@ -1257,7 +1280,7 @@ impl ReviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.mr.is_none() {
+        if self.mr.is_none() || self.review.as_ref().is_none_or(|r| r.commit.is_some()) {
             return;
         }
         let side = range.end_side();
@@ -1315,6 +1338,13 @@ impl ReviewView {
         let request = match &composer.target {
             ComposerTarget::Reply(id) => PostRequest::Reply(id.clone()),
             ComposerTarget::General => PostRequest::New(None),
+            ComposerTarget::Line(_) if review.commit.is_some() => {
+                window.push_notification(
+                    Notification::error(tr().comment_line_unavailable.clone()),
+                    cx,
+                );
+                return;
+            }
             ComposerTarget::Line(position) => {
                 let Some(file) = review.file_index(position.path()) else {
                     return;
@@ -1526,6 +1556,7 @@ impl Focusable for ReviewView {
 async fn load_review(
     repo: Repo,
     source: ReviewSource,
+    commit: Option<String>,
     client: Option<gitlab::Client>,
     ignore_whitespace: bool,
     cx: &mut AsyncApp,
@@ -1535,7 +1566,7 @@ async fn load_review(
             let review = cx
                 .background_spawn(async move {
                     let comparison = repo.compare(&target, &source)?;
-                    model::build(&repo, comparison, ignore_whitespace)
+                    model::build(&repo, comparison, commit.as_deref(), ignore_whitespace)
                 })
                 .await?;
             Ok((review, None))
@@ -1587,9 +1618,9 @@ async fn load_review(
             let comparison = model::comparison_for_mr(&mr, &refs);
             let review = {
                 let repo = repo.clone();
-                cx.background_spawn(
-                    async move { model::build(&repo, comparison, ignore_whitespace) },
-                )
+                cx.background_spawn(async move {
+                    model::build(&repo, comparison, commit.as_deref(), ignore_whitespace)
+                })
                 .await?
             };
             Ok((

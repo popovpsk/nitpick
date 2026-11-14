@@ -281,6 +281,19 @@ impl Repo {
             .collect()
     }
 
+    pub fn first_parent_or_empty_tree(&self, sha: &str) -> Result<String, GitError> {
+        let spec = format!("{}^{{commit}}", checked_arg(sha)?);
+        let out = text(&self.git(&["rev-list", "--parents", "-n", "1", spec.as_str(), "--"])?);
+        let mut ids = out.split_whitespace();
+        if ids.next().is_none() {
+            return Err(GitError::Parse(format!("{sha} does not name a commit")));
+        }
+        match ids.next() {
+            Some(parent) => Ok(parent.to_string()),
+            None => self.empty_tree(),
+        }
+    }
+
     pub fn remotes(&self) -> Result<Vec<Remote>, GitError> {
         let out = self.git(&["remote", "-v"])?;
         let mut remotes: Vec<Remote> = Vec::new();
