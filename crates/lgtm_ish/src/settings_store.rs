@@ -248,7 +248,7 @@ impl Settings {
         })
     }
 
-    fn forge_token(&self, kind: ForgeKind) -> &str {
+    pub fn forge_token(&self, kind: ForgeKind) -> &str {
         match kind {
             ForgeKind::GitLab => self.gitlab_token.trim(),
             ForgeKind::GitHub => self.github_token.trim(),

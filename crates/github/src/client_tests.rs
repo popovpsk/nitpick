@@ -88,6 +88,22 @@ async fn current_user_sends_the_github_headers() {
     "https://ghe.example.com",
     "https://ghe.example.com/api/v3"
 )]
+#[case::bare_host(
+    "ghe.example.com",
+    "https://ghe.example.com",
+    "https://ghe.example.com/api/v3"
+)]
+#[case::bare_github("github.com", "https://github.com", "https://api.github.com")]
+#[case::data_residency(
+    "https://octo.ghe.com",
+    "https://octo.ghe.com",
+    "https://api.octo.ghe.com"
+)]
+#[case::data_residency_api(
+    "https://api.octo.ghe.com/",
+    "https://octo.ghe.com",
+    "https://api.octo.ghe.com"
+)]
 fn api_root_follows_the_host(#[case] base: &str, #[case] web: &str, #[case] api: &str) {
     let client = Client::new(base, TOKEN).unwrap();
     assert_eq!(client.base_url(), web);
@@ -96,7 +112,6 @@ fn api_root_follows_the_host(#[case] base: &str, #[case] web: &str, #[case] api:
 
 #[rstest]
 #[case::empty("")]
-#[case::no_scheme("github.com")]
 #[case::ftp("ftp://github.com")]
 #[case::credentials("https://user:pass@github.com")]
 fn rejects_invalid_base_urls(#[case] base_url: &str) {

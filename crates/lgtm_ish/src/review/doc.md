@@ -117,7 +117,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
   head and the merge base, or head and the target tip) is missing, `Request::refspecs` are
   fetched (GitLab: `refs/merge-requests/<n>/head` into `refs/lgtm-ish/mr/<n>`; GitHub:
   `refs/pull/<n>/head` and the target branch into `refs/lgtm-ish/pr/<n>/{head,base}`, hidden
-  from branch lists) from the remote whose URL path is the project, else `origin`, else any
+  from branch lists) from the remote whose URL path is the project, else `upstream` on the
+  same host as `origin`, else `origin`, else any
   remote on the host (`forge_remote` with just that host).
 - Comments go through `forge::Client` with the request's own number and `MrRefs`. A card
   offers Reply only when `can_reply` (GitHub conversation comments take none) and

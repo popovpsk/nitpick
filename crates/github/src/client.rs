@@ -79,6 +79,13 @@ impl Client {
                 PUBLIC_API.to_string(),
                 format!("{PUBLIC_API}/graphql"),
             )
+        } else if let Some(host) = web.host_str().filter(|host| host.ends_with(".ghe.com")) {
+            let host = host.strip_prefix("api.").unwrap_or(host);
+            (
+                format!("https://{host}"),
+                format!("https://api.{host}"),
+                format!("https://api.{host}/graphql"),
+            )
         } else {
             let base = web.as_str().trim_end_matches('/').to_string();
             let api = format!("{base}/api/v3");
@@ -399,7 +406,14 @@ fn pull_path(repo: &RepoRef, number: u64) -> String {
 fn parse_base_url(raw: &str) -> Result<Url, Error> {
     let raw = raw.trim();
     let invalid = |reason: &str| Error::InvalidUrl(format!("{raw}: {reason}"));
-    let mut url = Url::parse(raw).map_err(|e| invalid(&e.to_string()))?;
+    let with_scheme;
+    let parsed = if raw.contains("://") {
+        raw
+    } else {
+        with_scheme = format!("https://{raw}");
+        &with_scheme
+    };
+    let mut url = Url::parse(parsed).map_err(|e| invalid(&e.to_string()))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(invalid("only http and https are supported"));
     }

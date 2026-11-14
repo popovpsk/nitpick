@@ -597,11 +597,21 @@ impl SettingsView {
                 s.github_token = token;
             }
         });
-        let Some(client) = settings(cx).forge_client(kind) else {
+        let current = settings(cx);
+        if !current.forge_configured(kind) {
             self.form_mut(kind).status = ForgeStatus::Idle;
             cx.notify();
             return;
-        };
+        }
+        let client =
+            match forge::Client::new(kind, &current.forge_url(kind), current.forge_token(kind)) {
+                Ok(client) => client,
+                Err(err) => {
+                    self.form_mut(kind).status = ForgeStatus::Failed(err.to_string().into());
+                    cx.notify();
+                    return;
+                }
+            };
         let task = cx.spawn(async move |this, cx| {
             let result = net_runtime::spawn(async move { client.current_user().await }).await;
             let _ = this.update(cx, |this, cx| {

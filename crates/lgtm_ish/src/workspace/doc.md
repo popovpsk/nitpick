@@ -57,8 +57,9 @@ window options and opening windows (`main.rs`).
 - The request list picks the host from the remotes (`review::model::forge_remote` over
   `Settings::forge_hosts`: the GitLab URL when set, the GitHub URL or github.com): a remote
   on a connected host (URL and token) wins, else any matching remote, so a github.com
-  `origin` does not hide a connected GitLab remote; within that, the `origin` remote, else
-  the first. The project path comes from the remote URL. No match says that no remote
+  `origin` does not hide a connected GitLab remote; within that, the `upstream` remote when
+  it is on the same host as `origin` (a fork's `origin` has none of the project's requests),
+  else `origin`, else the first. The project path comes from the remote URL. No match says that no remote
   points to a configured server when any host is connected, else that GitLab is not
   connected; a match on a
   host without a token says that host is not connected. The card title and the empty-list

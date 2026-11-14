@@ -485,6 +485,7 @@ pub fn forge_remote(
         .filter_map(|(kind, url)| Some((*kind, host_of(url)?)))
         .collect();
     let remotes = repo.remotes().ok()?;
+    let mut upstream = None;
     let mut origin = None;
     let mut fallback = None;
     for remote in remotes {
@@ -505,13 +506,18 @@ pub fn forge_remote(
         if project.is_some_and(|p| p.eq_ignore_ascii_case(&found.project)) {
             return Some(found);
         }
-        if found.remote == "origin" {
-            origin = Some(found);
-        } else {
-            fallback.get_or_insert(found);
+        match found.remote.as_str() {
+            "upstream" => upstream = Some(found),
+            "origin" => origin = Some(found),
+            _ => {
+                fallback.get_or_insert(found);
+            }
         }
     }
-    origin.or(fallback)
+    match (upstream, origin) {
+        (Some(upstream), Some(origin)) if upstream.kind == origin.kind => Some(upstream),
+        (upstream, origin) => origin.or(upstream).or(fallback),
+    }
 }
 
 fn host_of(url: &str) -> Option<String> {

@@ -269,6 +269,33 @@ fn forge_remote_matches_the_configured_host() {
 }
 
 #[test]
+fn a_fork_lists_the_requests_of_its_upstream() {
+    let (dir, repo) = fixture();
+    git(
+        dir.path(),
+        &["remote", "add", "origin", "git@github.com:me/tool.git"],
+    );
+    git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "https://github.com/acme/tool.git",
+        ],
+    );
+    let github = forges(&[(ForgeKind::GitHub, "https://github.com")]);
+    assert_eq!(
+        forge_remote(&repo, &github, None),
+        found(ForgeKind::GitHub, "upstream", "acme/tool")
+    );
+    assert_eq!(
+        forge_remote(&repo, &github, Some("me/tool")),
+        found(ForgeKind::GitHub, "origin", "me/tool")
+    );
+}
+
+#[test]
 fn a_request_without_a_merge_base_gets_it_from_git() {
     let (_dir, repo) = fixture();
     let head = repo.resolve("feature").unwrap();

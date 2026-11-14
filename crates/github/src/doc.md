@@ -31,7 +31,9 @@ finding the repository from git remotes (the app), storing the token (`secret_st
 
 - Base URL is the web address. `github.com`, `www.github.com` and `api.github.com` mean
   github.com: REST at `https://api.github.com`, GraphQL at `https://api.github.com/graphql`.
-  Any other host is Enterprise: REST at `<base>/api/v3`, GraphQL at `<base>/api/graphql`; a
+  A `*.ghe.com` host (Enterprise Cloud with data residency) has REST at `https://api.<host>`
+  and GraphQL at `https://api.<host>/graphql`. Any other host is Enterprise Server: REST at
+  `<base>/api/v3`, GraphQL at `<base>/api/graphql`; a bare host gets `https://`, a
   pasted `/api/v3`, trailing slashes, query and fragment are dropped, credentials in the
   URL are rejected. Tests use the mock server as an Enterprise host.
 - Every request sends `Authorization: Bearer <token>` (sensitive, never logged, hidden from
