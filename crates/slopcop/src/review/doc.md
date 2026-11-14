@@ -65,13 +65,27 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - Tree rows are rebuilt when data changes (load, viewed, collapse, discussions), never in
   `render`; the list closure only reads them.
 - Key bindings in the tree (context `ReviewTree`) are single letters (`j/k/h/l`, `space`/`v`,
-  `n/p`); anywhere in the review (context `Review`) they are `space` (viewed) and modifier
-  keys (`alt-up/down`, `cmd-b`, `cmd-r`, `cmd-1/2`). `space` and `alt-up/down` pass through
-  (`cx.propagate`) while an input has focus, so typing a comment never marks or switches
-  files. No `alt-<letter>` binding: on macOS bindings match before text input, so it would
-  eat the character the layout types. Toolbar tooltips name their key through
-  `tooltip_with_action`, so they follow the bindings.
-- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
+  `n/p` for the next/previous file); anywhere in the review (context `Review`) they are
+  `space` (viewed) and modifier or function keys (`alt-up/down` and `f7`/`shift-f7` for the
+  next/previous change, `alt-left/right` for the previous/next file, `cmd-b`, `cmd-r`,
+  `cmd-1/2`). `space` and the `alt-` arrows pass through (`cx.propagate`) while an input has
+  focus, so typing a comment never marks, switches files or eats a word jump. No
+  `alt-<letter>` binding: on macOS bindings match before text input, so it would eat the
+  character the layout types. Toolbar tooltips name their key through `tooltip_with_action`,
+  so they follow the bindings.
+- Change navigation (the toolbar arrows, `step_change`) follows IntelliJ's next/previous
+  difference with a change cursor in place of the caret. The changes are
+  `ReviewFile::changes`, runs of changed lines from the displayed patch (so with "ignore
+  whitespace" a whitespace-only edit is not a stop). A jump scrolls to the change's anchor,
+  up to two context lines above it, never to a folded line, since `scroll_to_line` would
+  unfold it. Next goes to the change after the cursor, so from a freshly opened file it is
+  the first one. Previous goes to the one before it; after a manual scroll (wheel, scrollbar
+  or a click inside the diff, or the diff's own scroll keys) it first returns to the cursor's
+  change. Past the last (or before the first) change, one press shows a hint for 3 s and a
+  second press opens the neighbouring file in tree order, at its first (or last) change; a
+  manual scroll or another jump disarms it. No wrap-around after the last file. Opening a
+  file any other way resets the cursor. The viewport position itself is private to
+  gpui-component's `DiffState`, hence the cursor and the scroll detection.- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
   for at least `AUTO_MARK_DWELL` (1 s), so running through the tree with j/k marks nothing,
   and unless the user unmarked it by hand (`kept_unviewed`, keyed by path + fingerprint so it
   survives reloads of this review). Reloads and the first file of a load never mark anything.

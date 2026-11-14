@@ -25,7 +25,7 @@ use gpui_component::{
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
-use review_core::{FileStatus, Progress, Side};
+use review_core::{FileStatus, LineKind, Progress, Side};
 
 use crate::localization::tr;
 use crate::settings_store::{
@@ -40,6 +40,8 @@ actions!(
     [
         NextFile,
         PreviousFile,
+        NextChange,
+        PreviousChange,
         ToggleViewed,
         CollapseAll,
         ExpandAll,
@@ -58,6 +60,7 @@ actions!(
 const TREE_SLIDE: Duration = Duration::from_millis(200);
 const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
 const AUTO_MARK_DWELL: Duration = Duration::from_millis(1000);
+const CROSS_HINT_TIMEOUT: Duration = Duration::from_millis(3000);
 
 static TREE_WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -77,8 +80,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("n", NextFile, Some("ReviewTree")),
         KeyBinding::new("p", PreviousFile, Some("ReviewTree")),
         KeyBinding::new("space", ToggleViewed, Some("Review")),
-        KeyBinding::new("alt-down", NextFile, Some("Review")),
-        KeyBinding::new("alt-up", PreviousFile, Some("Review")),
+        KeyBinding::new("alt-down", NextChange, Some("Review")),
+        KeyBinding::new("alt-up", PreviousChange, Some("Review")),
+        KeyBinding::new("f7", NextChange, Some("Review")),
+        KeyBinding::new("shift-f7", PreviousChange, Some("Review")),
+        KeyBinding::new("alt-right", NextFile, Some("Review")),
+        KeyBinding::new("alt-left", PreviousFile, Some("Review")),
         KeyBinding::new("cmd-1", FocusTree, Some("Review")),
         KeyBinding::new("ctrl-1", FocusTree, Some("Review")),
         KeyBinding::new("cmd-2", FocusDiff, Some("Review")),
@@ -101,6 +108,14 @@ pub struct TreeRow {
     pub status: FileStatus,
     pub progress: Progress,
     pub comments: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CrossHint {
+    PressForNextFile,
+    PressForPreviousFile,
+    NoNextFile,
+    NoPreviousFile,
 }
 
 pub enum LoadState {
@@ -223,6 +238,10 @@ pub struct ReviewView {
     tree_scroll: UniformListScrollHandle,
     composer: Option<Composer>,
     kept_unviewed: HashSet<(SharedString, String)>,
+    change_cursor: Option<usize>,
+    change_scrolled: bool,
+    cross_hint: Option<CrossHint>,
+    _cross_hint_clear: Task<()>,
     shown_at: Option<Instant>,
     installed_whitespace: bool,
     tree_visible: bool,
@@ -294,6 +313,10 @@ impl ReviewView {
             tree_scroll: UniformListScrollHandle::new(),
             composer: None,
             kept_unviewed: HashSet::new(),
+            change_cursor: None,
+            change_scrolled: false,
+            cross_hint: None,
+            _cross_hint_clear: Task::ready(()),
             shown_at: None,
             installed_whitespace: settings(cx).ignore_whitespace,
             tree_visible: true,
@@ -566,6 +589,9 @@ impl ReviewView {
                 self.set_viewed(&[left], true, cx);
             }
             self.shown_at = Some(Instant::now());
+            self.change_cursor = None;
+            self.change_scrolled = false;
+            self.cross_hint = None;
             self.current_file = Some(ix);
             let diff_file = file.diff.clone();
             self.sync_diff_mode(cx);
@@ -589,6 +615,111 @@ impl ReviewView {
         self.rebuild_annotations();
         cx.emit(ReviewEvent::Changed);
         cx.notify();
+    }
+
+    pub fn step_change(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let Some(current) = self.current_file else {
+            self.step_file(if forward { 1 } else { -1 }, cx);
+            return;
+        };
+        let count = review.files[current].changes.len();
+        let target = if forward {
+            Some(self.change_cursor.map_or(0, |k| k + 1)).filter(|&k| k < count)
+        } else if self.change_scrolled {
+            Some(self.change_cursor.unwrap_or(0)).filter(|&k| k < count)
+        } else {
+            self.change_cursor.and_then(|k| k.checked_sub(1))
+        };
+        match target {
+            Some(k) => self.scroll_to_change(current, k, cx),
+            None => self.cross_file(forward, cx),
+        }
+    }
+
+    fn cross_file(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let Some(current) = self.current_file else {
+            return;
+        };
+        let order = review.tree.file_order();
+        let neighbour = order.iter().position(|&f| f == current).and_then(|pos| {
+            if forward {
+                order.get(pos + 1).copied()
+            } else {
+                pos.checked_sub(1).map(|p| order[p])
+            }
+        });
+        let Some(next) = neighbour else {
+            self.show_cross_hint(
+                if forward {
+                    CrossHint::NoNextFile
+                } else {
+                    CrossHint::NoPreviousFile
+                },
+                cx,
+            );
+            return;
+        };
+        let armed = if forward {
+            CrossHint::PressForNextFile
+        } else {
+            CrossHint::PressForPreviousFile
+        };
+        if self.cross_hint != Some(armed) {
+            self.show_cross_hint(armed, cx);
+            return;
+        }
+        self.show_file(next, cx);
+        let count = review.files[next].changes.len();
+        if count > 0 {
+            self.scroll_to_change(next, if forward { 0 } else { count - 1 }, cx);
+        }
+    }
+
+    fn scroll_to_change(&mut self, file: usize, change: usize, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let Some(target) = review.files.get(file).and_then(|f| f.changes.get(change)) else {
+            return;
+        };
+        let (side, line) = match target.anchor {
+            LineKind::Context { new, .. } | LineKind::Added { new } => (DiffSide::Modified, new),
+            LineKind::Removed { old } => (DiffSide::Original, old),
+        };
+        let position = DiffLinePosition::new(review.files[file].path.clone(), side, line as usize);
+        self.diff
+            .update(cx, |state, cx| state.scroll_to_line(position, cx));
+        self.change_cursor = Some(change);
+        self.change_scrolled = false;
+        self.cross_hint = None;
+        cx.notify();
+    }
+
+    fn show_cross_hint(&mut self, hint: CrossHint, cx: &mut Context<Self>) {
+        self.cross_hint = Some(hint);
+        self._cross_hint_clear = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CROSS_HINT_TIMEOUT).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.cross_hint == Some(hint) {
+                    this.cross_hint = None;
+                    cx.notify();
+                }
+            });
+        });
+        cx.notify();
+    }
+
+    pub fn note_manual_scroll(&mut self, cx: &mut Context<Self>) {
+        self.change_scrolled = true;
+        if self.cross_hint.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn step_file(&mut self, delta: isize, cx: &mut Context<Self>) {

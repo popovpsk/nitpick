@@ -1,8 +1,8 @@
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle, DragMoveEvent,
-    ElementId, Empty, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, ease_out_quint,
-    prelude::FluentBuilder as _, px,
+    ElementId, Empty, Entity, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
+    div, ease_out_quint, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -18,8 +18,9 @@ use gpui_component::{
 use ui_resources::Icons;
 
 use super::{
-    Busy, FocusDiff, FocusTree, LoadState, NextFile, PreviousFile, PullSide, Refresh, ReviewSource,
-    ReviewView, TREE_SLIDE, ToggleTree, ToggleViewed, comments,
+    Busy, CrossHint, FocusDiff, FocusTree, LoadState, NextChange, NextFile, PreviousChange,
+    PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleTree,
+    ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -258,20 +259,20 @@ impl ReviewView {
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_tree(window, cx))),
             )
             .child(
-                Button::new("prev-file")
+                Button::new("prev-change")
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronUp)
-                    .tooltip_with_action(s.previous_file.clone(), &PreviousFile, Some("Review"))
-                    .on_click(cx.listener(|this, _, _, cx| this.step_file(-1, cx))),
+                    .tooltip_with_action(s.previous_change.clone(), &PreviousChange, Some("Review"))
+                    .on_click(cx.listener(|this, _, _, cx| this.step_change(false, cx))),
             )
             .child(
-                Button::new("next-file")
+                Button::new("next-change")
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronDown)
-                    .tooltip_with_action(s.next_file.clone(), &NextFile, Some("Review"))
-                    .on_click(cx.listener(|this, _, _, cx| this.step_file(1, cx))),
+                    .tooltip_with_action(s.next_change.clone(), &NextChange, Some("Review"))
+                    .on_click(cx.listener(|this, _, _, cx| this.step_change(true, cx))),
             )
             .child(
                 div()
@@ -279,6 +280,21 @@ impl ReviewView {
                     .text_color(theme.muted_foreground)
                     .child(format!("{position} / {count}")),
             )
+            .children(self.cross_hint.map(|hint| {
+                div()
+                    .ml_2()
+                    .px_1p5()
+                    .rounded(theme.radius)
+                    .bg(theme.accent)
+                    .text_xs()
+                    .text_color(theme.accent_foreground)
+                    .child(match hint {
+                        CrossHint::PressForNextFile => s.press_again_next_file.clone(),
+                        CrossHint::PressForPreviousFile => s.press_again_previous_file.clone(),
+                        CrossHint::NoNextFile => s.no_next_change.clone(),
+                        CrossHint::NoPreviousFile => s.no_previous_change.clone(),
+                    })
+            }))
             .child(div().flex_1())
             .child(
                 Button::new("auto-mark")
@@ -374,9 +390,27 @@ impl ReviewView {
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
         div()
+            .id("diff-area")
             .flex_1()
             .min_h_0()
             .when(current_viewed, |el| el.bg(viewed_bg))
+            .on_scroll(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                let keys = &event.keystroke;
+                let plain = !keys.modifiers.alt
+                    && !keys.modifiers.control
+                    && !keys.modifiers.platform
+                    && !keys.modifiers.function;
+                if plain
+                    && matches!(
+                        keys.key.as_str(),
+                        "up" | "down" | "pageup" | "pagedown" | "home" | "end"
+                    )
+                {
+                    this.note_manual_scroll(cx);
+                }
+            }))
             .child(
                 Diff::new(&self.diff)
                     .hover_highlight(DiffHoverHighlight::LineNumber)
@@ -544,6 +578,20 @@ impl Render for ReviewView {
                     cx.propagate();
                 } else {
                     this.step_file(-1, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &NextChange, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_change(true, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PreviousChange, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_change(false, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleViewed, window, cx| {

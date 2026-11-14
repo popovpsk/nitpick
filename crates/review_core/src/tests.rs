@@ -212,3 +212,66 @@ fn line_map_locates_lines(
 fn language_overrides(#[case] path: &str, #[case] expected: Option<&str>) {
     assert_eq!(language_override(path), expected);
 }
+
+const CHANGES_PATCH: &str = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1,12 +1,11 @@
+-first
++FIRST
+ two
+ three
+ four
+ five
+-six
+-seven
++SIX
+ eight
++inserted
+ nine
+ ten
+ eleven
+-twelve
+diff --git a/new.rs b/new.rs
+new file mode 100644
+--- /dev/null
++++ b/new.rs
+@@ -0,0 +1,2 @@
++a
++b
+";
+
+#[test]
+fn changes_are_runs_of_changed_lines_with_context_above_as_anchor() {
+    let maps = line_maps(CHANGES_PATCH);
+    let changes = maps[0].changes();
+    assert_eq!(
+        changes,
+        &[
+            Change {
+                first: LineKind::Removed { old: 1 },
+                anchor: LineKind::Removed { old: 1 },
+            },
+            Change {
+                first: LineKind::Removed { old: 6 },
+                anchor: LineKind::Context { old: 4, new: 4 },
+            },
+            Change {
+                first: LineKind::Added { new: 8 },
+                anchor: LineKind::Context { old: 8, new: 7 },
+            },
+            Change {
+                first: LineKind::Removed { old: 12 },
+                anchor: LineKind::Context { old: 10, new: 10 },
+            },
+        ]
+    );
+    assert_eq!(
+        maps[1].changes(),
+        &[Change {
+            first: LineKind::Added { new: 1 },
+            anchor: LineKind::Added { new: 1 },
+        }]
+    );
+}

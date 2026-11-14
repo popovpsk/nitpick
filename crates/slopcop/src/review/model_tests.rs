@@ -4,7 +4,7 @@ use std::process::Command;
 use git_repo::Repo;
 use gpui_component::Rope;
 use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
-use review_core::{FileStatus, LineKind, Side};
+use review_core::{Change, FileStatus, LineKind, Side};
 use rstest::rstest;
 
 use super::{build, build_working_tree, gitlab_remote};
@@ -202,6 +202,13 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
         Some(LineKind::Removed { old: 5 })
     );
     assert!(review.comments_aligned);
+    assert_eq!(
+        a.changes,
+        vec![Change {
+            first: LineKind::Removed { old: 20 },
+            anchor: LineKind::Context { old: 18, new: 18 },
+        }]
+    );
 }
 
 #[test]

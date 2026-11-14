@@ -27,6 +27,12 @@ impl LineKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    pub first: LineKind,
+    pub anchor: LineKind,
+}
+
 const ABSENT: u32 = 0;
 const CHANGED: u32 = u32::MAX;
 
@@ -34,9 +40,14 @@ const CHANGED: u32 = u32::MAX;
 pub struct LineMap {
     old_to_new: Vec<u32>,
     new_to_old: Vec<u32>,
+    changes: Vec<Change>,
 }
 
 impl LineMap {
+    pub fn changes(&self) -> &[Change] {
+        &self.changes
+    }
+
     pub fn locate(&self, side: Side, line: u32) -> Option<LineKind> {
         let (map, ix) = match side {
             Side::Old => (&self.old_to_new, line),
@@ -72,6 +83,8 @@ pub fn line_maps(patch: &str) -> Vec<LineMap> {
     let mut new_line = 0u32;
     let mut old_left = 0u32;
     let mut new_left = 0u32;
+    let mut in_change = false;
+    let mut before: [Option<LineKind>; 2] = [None, None];
     for line in patch.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if old_left > 0 || new_left > 0 {
@@ -82,17 +95,33 @@ pub fn line_maps(patch: &str) -> Vec<LineMap> {
             };
             match line.as_bytes().first() {
                 Some(b'+') if new_left > 0 => {
+                    if !in_change {
+                        start_change(map, LineKind::Added { new: new_line }, &mut before);
+                        in_change = true;
+                    }
                     LineMap::set(&mut map.new_to_old, new_line, CHANGED);
                     new_line += 1;
                     new_left -= 1;
                 }
                 Some(b'-') if old_left > 0 => {
+                    if !in_change {
+                        start_change(map, LineKind::Removed { old: old_line }, &mut before);
+                        in_change = true;
+                    }
                     LineMap::set(&mut map.old_to_new, old_line, CHANGED);
                     old_line += 1;
                     old_left -= 1;
                 }
                 Some(b'\\') => {}
                 Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    in_change = false;
+                    before = [
+                        before[1],
+                        Some(LineKind::Context {
+                            old: old_line,
+                            new: new_line,
+                        }),
+                    ];
                     LineMap::set(&mut map.old_to_new, old_line, new_line);
                     LineMap::set(&mut map.new_to_old, new_line, old_line);
                     old_line += 1;
@@ -112,6 +141,8 @@ pub fn line_maps(patch: &str) -> Vec<LineMap> {
                 continue;
             }
         }
+        in_change = false;
+        before = [None, None];
         if line.starts_with("diff --git ") {
             if let Some(map) = current.take() {
                 maps.push(map);
@@ -137,6 +168,12 @@ pub fn line_maps(patch: &str) -> Vec<LineMap> {
         maps.push(map);
     }
     maps
+}
+
+fn start_change(map: &mut LineMap, first: LineKind, before: &mut [Option<LineKind>; 2]) {
+    let anchor = before[0].or(before[1]).unwrap_or(first);
+    map.changes.push(Change { first, anchor });
+    *before = [None, None];
 }
 
 fn parse_hunk_header(line: &str) -> Option<((u32, u32), (u32, u32))> {

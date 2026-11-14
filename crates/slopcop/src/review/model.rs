@@ -4,7 +4,7 @@ use anyhow::{Context as _, anyhow};
 use git_repo::{ChangeStatus, ChangedFile, Comparison, DiffOptions, Repo};
 use gpui::SharedString;
 use gpui_component::diff::{DiffFile, DiffParseOptions};
-use review_core::{FileStatus, FileTree, LineMap, TreeFile};
+use review_core::{Change, FileStatus, FileTree, LineMap, TreeFile};
 
 const FULL_CONTEXT: u32 = 1_000_000;
 const SHORT_CONTEXT: u32 = 3;
@@ -79,6 +79,7 @@ pub struct ReviewFile {
     pub deletions: u32,
     pub binary: bool,
     pub line_map: LineMap,
+    pub changes: Vec<Change>,
 }
 
 pub struct LoadedReview {
@@ -156,7 +157,8 @@ fn build_range(
         context_limited = true;
     }
     let diffs = parse(&patch)?;
-    let (maps, comments_aligned) = if ignore_whitespace {
+    let (maps, changes, comments_aligned) = if ignore_whitespace {
+        let changes = display_changes(&patch, diffs.len());
         options.ignore_whitespace = false;
         drop(patch);
         let exact = range_head
@@ -173,18 +175,20 @@ fn build_range(
             .iter()
             .map(|f| by_path.get(f.path()).cloned().unwrap_or_default())
             .collect();
-        (maps, aligned)
+        (maps, changes, aligned)
     } else {
         let (maps, aligned) = aligned_maps(&patch, diffs.len());
         drop(patch);
-        (maps, aligned)
+        let changes = maps.iter().map(|m| m.changes().to_vec()).collect();
+        (maps, changes, aligned)
     };
     let by_path: HashMap<&str, &ChangedFile> =
         changed.iter().map(|f| (f.path.as_str(), f)).collect();
     let files: Vec<ReviewFile> = diffs
         .into_iter()
         .zip(maps)
-        .map(|(diff, line_map)| review_file(diff, line_map, &by_path))
+        .zip(changes)
+        .map(|((diff, line_map), changes)| review_file(diff, line_map, changes, &by_path))
         .collect();
     let tree = FileTree::build(
         &files
@@ -245,9 +249,19 @@ fn aligned_maps(patch: &str, files: usize) -> (Vec<LineMap>, bool) {
     }
 }
 
+fn display_changes(patch: &str, files: usize) -> Vec<Vec<Change>> {
+    let maps = review_core::line_maps(patch);
+    if maps.len() == files {
+        maps.iter().map(|m| m.changes().to_vec()).collect()
+    } else {
+        vec![Vec::new(); files]
+    }
+}
+
 fn review_file(
     diff: DiffFile,
     line_map: LineMap,
+    changes: Vec<Change>,
     by_path: &HashMap<&str, &ChangedFile>,
 ) -> ReviewFile {
     let path = diff.path().clone();
@@ -287,6 +301,7 @@ fn review_file(
         fingerprint,
         status,
         line_map,
+        changes,
     }
 }
 

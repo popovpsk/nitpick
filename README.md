@@ -32,7 +32,8 @@ Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https
 | File tree | `space`, `v` | Toggle viewed (a folder toggles every file in it) |
 | File tree | `n` / `p` | Next / previous file |
 | Review | `space` | Toggle viewed for the current file |
-| Review | `⌥↓` / `⌥↑` | Next / previous file |
+| Review | `⌥↓` / `⌥↑`, `F7` / `⇧F7` | Next / previous change; past the last one, press again for the next file |
+| Review | `⌥→` / `⌥←` | Next / previous file |
 | Review | `⌘B` | Show / hide the file tree |
 | Review | `⌘1` / `⌘2` | Focus the tree / the diff |
 | Review | `⌘R` | Refresh (refetch the merge request and its comments) |

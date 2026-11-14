@@ -17,7 +17,9 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
 - `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `snapshot` / `save`),
   `fingerprint`, `write_atomic`.
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
-  `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed).
+  `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
+  `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
+  up to two context lines above it within the hunk, else the first line).
 - `fuzzy.rs` — `fuzzy_match(query, text)` → score and matched byte offsets; `rank` over
   `(label, optional detail)` items; `highlight_ranges` (offsets → byte ranges of whole chars).
 - `language.rs` — `language_override(path)`: the highlighter language for a path by file
