@@ -146,6 +146,8 @@ fn an_edit_keeps_patterns_added_elsewhere_meanwhile() {
 #[case::question("file?.txt", "a/file1.txt", &["file", ".txt"])]
 #[case::unicode("*ё.md", "docs/всё.md", &["ё.md"])]
 #[case::negation("!keep.go", "keep.go", &[])]
+#[case::braces("*.{rs,go}", "src/main.go", &[".go"])]
+#[case::nested_braces("{docs,{a,b}}/*.md", "b/x.md", &["b", ".md"])]
 fn matched_ranges_cover_the_literal_part(
     #[case] pattern: &str,
     #[case] path: &str,
@@ -156,4 +158,16 @@ fn matched_ranges_cover_the_literal_part(
         .map(|range| &path[range])
         .collect();
     assert_eq!(parts, expected);
+}
+
+#[test]
+fn many_stars_do_not_backtrack_exponentially() {
+    let pattern = format!("{}*b", "*a".repeat(16));
+    let path = format!("{}c/{}", "a".repeat(40), "a".repeat(60));
+    let started = std::time::Instant::now();
+    assert!(matched_ranges(&pattern, &path).is_empty());
+    let deep = format!("{}x", "**/".repeat(12));
+    let long: String = (0..60).map(|i| format!("d{i}/")).collect::<String>() + "y";
+    assert!(matched_ranges(&deep, &long).is_empty());
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
 }

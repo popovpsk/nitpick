@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ops::Range;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -124,7 +125,63 @@ pub fn merge_patterns(list: &mut Vec<String>, baseline: &[String], typed: &[Stri
 }
 
 pub fn matched_ranges(pattern: &str, path: &str) -> Vec<Range<usize>> {
-    let pattern = pattern.trim_end();
+    expand_braces(pattern.trim_end())
+        .iter()
+        .map(|alternative| matched_single(alternative, path))
+        .find(|ranges| !ranges.is_empty())
+        .unwrap_or_default()
+}
+
+const BRACE_LIMIT: usize = 64;
+
+fn expand_braces(pattern: &str) -> Vec<String> {
+    let bytes = pattern.as_bytes();
+    let mut depth = 0usize;
+    let mut open = None;
+    let mut commas = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 1,
+            b'{' => {
+                if depth == 0 {
+                    open = Some(i);
+                    commas.clear();
+                }
+                depth += 1;
+            }
+            b',' if depth == 1 => commas.push(i),
+            b'}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0
+                    && let Some(start) = open
+                {
+                    let prefix = &pattern[..start];
+                    let suffix = &pattern[i + 1..];
+                    let mut bounds = vec![start];
+                    bounds.extend(&commas);
+                    bounds.push(i);
+                    let mut out = Vec::new();
+                    for pair in bounds.windows(2) {
+                        let alternative =
+                            format!("{prefix}{}{suffix}", &pattern[pair[0] + 1..pair[1]]);
+                        for expanded in expand_braces(&alternative) {
+                            if out.len() < BRACE_LIMIT {
+                                out.push(expanded);
+                            }
+                        }
+                    }
+                    return out;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    vec![pattern.to_string()]
+}
+
+fn matched_single(pattern: &str, path: &str) -> Vec<Range<usize>> {
     if pattern.starts_with('!') || pattern.starts_with('#') {
         return Vec::new();
     }
@@ -145,7 +202,7 @@ pub fn matched_ranges(pattern: &str, path: &str) -> Vec<Range<usize>> {
     let last = components.len().saturating_sub(1);
     let mut positions = Vec::new();
     if anchored {
-        if let Some(found) = match_anchored(&segments, &components, dir_only) {
+        if let Some(found) = match_anchored(&segments, &components, dir_only, &mut HashSet::new()) {
             positions = found;
         }
     } else {
@@ -176,18 +233,36 @@ fn match_anchored(
     segments: &[&str],
     components: &[(usize, &str)],
     dir_only: bool,
+    failed: &mut HashSet<(usize, usize)>,
+) -> Option<Vec<usize>> {
+    let key = (segments.len(), components.len());
+    if failed.contains(&key) {
+        return None;
+    }
+    let found = match_anchored_inner(segments, components, dir_only, failed);
+    if found.is_none() {
+        failed.insert(key);
+    }
+    found
+}
+
+fn match_anchored_inner(
+    segments: &[&str],
+    components: &[(usize, &str)],
+    dir_only: bool,
+    failed: &mut HashSet<(usize, usize)>,
 ) -> Option<Vec<usize>> {
     match segments.split_first() {
         None => Some(Vec::new()),
         Some((&"**", rest)) => (0..=components.len())
-            .find_map(|skip| match_anchored(rest, &components[skip..], dir_only)),
+            .find_map(|skip| match_anchored(rest, &components[skip..], dir_only, failed)),
         Some((segment, rest)) => {
             let ((offset, component), remaining) = components.split_first()?;
             if rest.is_empty() && dir_only && remaining.is_empty() {
                 return None;
             }
             let found = match_segment(segment, component)?;
-            let mut tail = match_anchored(rest, remaining, dir_only)?;
+            let mut tail = match_anchored(rest, remaining, dir_only, failed)?;
             let mut out: Vec<usize> = found.into_iter().map(|p| p + offset).collect();
             out.append(&mut tail);
             Some(out)
@@ -198,74 +273,67 @@ fn match_anchored(
 fn match_segment(segment: &str, text: &str) -> Option<Vec<usize>> {
     let pattern: Vec<char> = segment.chars().collect();
     let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let mut literal = Vec::new();
-    glob(&pattern, 0, &chars, 0, &mut literal).then_some(literal)
+    let mut state = Glob {
+        pattern: &pattern,
+        text: &chars,
+        literal: Vec::new(),
+        failed: HashSet::new(),
+    };
+    state.matches(0, 0).then_some(state.literal)
 }
 
-fn glob(
-    pattern: &[char],
-    pi: usize,
-    text: &[(usize, char)],
-    ti: usize,
-    literal: &mut Vec<usize>,
-) -> bool {
+struct Glob<'a> {
+    pattern: &'a [char],
+    text: &'a [(usize, char)],
+    literal: Vec<usize>,
+    failed: HashSet<(usize, usize)>,
+}
+
+impl Glob<'_> {
+    fn matches(&mut self, pi: usize, ti: usize) -> bool {
+        if self.failed.contains(&(pi, ti)) {
+            return false;
+        }
+        let mark = self.literal.len();
+        let found = glob(self.pattern, pi, self.text, ti, self);
+        if !found {
+            self.literal.truncate(mark);
+            self.failed.insert((pi, ti));
+        }
+        found
+    }
+}
+
+fn glob(pattern: &[char], pi: usize, text: &[(usize, char)], ti: usize, state: &mut Glob) -> bool {
     if pi == pattern.len() {
         return ti == text.len();
     }
     match pattern[pi] {
         '*' => {
-            let next = pattern[pi..].iter().take_while(|c| **c == '*').count();
-            (ti..=text.len()).any(|skip| {
-                let mark = literal.len();
-                glob(pattern, pi + next, text, skip, literal) || {
-                    literal.truncate(mark);
-                    false
-                }
-            })
+            let next = pi + pattern[pi..].iter().take_while(|c| **c == '*').count();
+            (ti..=text.len()).any(|skip| state.matches(next, skip))
         }
-        '?' => ti < text.len() && glob(pattern, pi + 1, text, ti + 1, literal),
+        '?' => ti < text.len() && state.matches(pi + 1, ti + 1),
         '[' => {
             let Some(&(_, c)) = text.get(ti) else {
                 return false;
             };
             match class(pattern, pi, c) {
-                Some((true, end)) => glob(pattern, end, text, ti + 1, literal),
+                Some((true, end)) => state.matches(end, ti + 1),
                 Some((false, _)) => false,
-                None => literal_step('[', pattern, pi, text, ti, literal),
+                None => literal_step('[', pi + 1, text, ti, state),
             }
         }
-        '\\' if pi + 1 < pattern.len() => {
-            let c = pattern[pi + 1];
-            match text.get(ti) {
-                Some(&(at, t)) if t == c => {
-                    literal.push(at);
-                    glob(pattern, pi + 2, text, ti + 1, literal) || {
-                        literal.pop();
-                        false
-                    }
-                }
-                _ => false,
-            }
-        }
-        c => literal_step(c, pattern, pi, text, ti, literal),
+        '\\' if pi + 1 < pattern.len() => literal_step(pattern[pi + 1], pi + 2, text, ti, state),
+        c => literal_step(c, pi + 1, text, ti, state),
     }
 }
 
-fn literal_step(
-    c: char,
-    pattern: &[char],
-    pi: usize,
-    text: &[(usize, char)],
-    ti: usize,
-    literal: &mut Vec<usize>,
-) -> bool {
+fn literal_step(c: char, next: usize, text: &[(usize, char)], ti: usize, state: &mut Glob) -> bool {
     match text.get(ti) {
         Some(&(at, t)) if t == c => {
-            literal.push(at);
-            glob(pattern, pi + 1, text, ti + 1, literal) || {
-                literal.pop();
-                false
-            }
+            state.literal.push(at);
+            state.matches(next, ti + 1)
         }
         _ => false,
     }

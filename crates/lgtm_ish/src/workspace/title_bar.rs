@@ -58,7 +58,7 @@ impl Workspace {
                 .selected(self.screen == Screen::Start)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.screen == Screen::Start {
-                        this.back_to_review(cx);
+                        this.back_to_review(window, cx);
                     } else {
                         this.new_review(window, cx);
                     }

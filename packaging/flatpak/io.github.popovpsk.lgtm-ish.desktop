@@ -9,3 +9,4 @@ Terminal=false
 Categories=Development;RevisionControl;
 Keywords=diff;review;merge;git;code;
 StartupNotify=true
+StartupWMClass=lgtm-ish

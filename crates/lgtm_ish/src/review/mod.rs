@@ -1354,6 +1354,14 @@ impl ReviewView {
         window.focus(&self.tree_focus, cx);
     }
 
+    pub fn focus_main(&self, window: &mut Window, cx: &mut App) {
+        if self.tree_visible {
+            self.focus_tree(window, cx);
+        } else {
+            self.focus_diff(window, cx);
+        }
+    }
+
     fn focus_diff(&self, window: &mut Window, cx: &mut App) {
         let handle = self.diff.read(cx).focus_handle(cx);
         window.focus(&handle, cx);

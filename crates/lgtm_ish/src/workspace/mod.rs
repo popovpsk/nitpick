@@ -174,6 +174,7 @@ impl Workspace {
         self.start = Some(start);
         self.review = None;
         self.screen = Screen::Start;
+        self.focus_screen(window, cx);
         self.repo = Some(repo);
         if restore
             && let Some(source) = self
@@ -289,17 +290,24 @@ impl Workspace {
             return;
         }
         self.screen = self.previous_screen;
-        match (self.screen, &self.review, &self.start) {
+        if let (Screen::Start, Some(start)) = (self.screen, &self.start) {
+            start.update(cx, |start, cx| start.refresh(window, cx));
+        }
+        self.focus_screen(window, cx);
+        cx.notify();
+    }
+
+    fn focus_screen(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match (self.screen, &self.review, &self.settings) {
             (Screen::Review, Some(review), _) => {
-                review.update(cx, |review, cx| review.focus_tree(window, cx))
+                review.update(cx, |review, cx| review.focus_main(window, cx))
             }
-            (Screen::Start, _, Some(start)) => {
-                start.update(cx, |start, cx| start.refresh(window, cx));
-                window.focus(&self.focus, cx);
+            (Screen::Settings, _, Some(settings)) => {
+                let focus = settings.focus_handle(cx);
+                window.focus(&focus, cx);
             }
             _ => window.focus(&self.focus, cx),
         }
-        cx.notify();
     }
 
     fn new_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -311,13 +319,15 @@ impl Workspace {
             start.update(cx, |start, cx| start.refresh(window, cx));
         }
         self.screen = Screen::Start;
+        self.focus_screen(window, cx);
         cx.notify();
     }
 
-    fn back_to_review(&mut self, cx: &mut Context<Self>) {
+    fn back_to_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.review.is_some() {
             self.close_screen_pickers(cx);
             self.screen = Screen::Review;
+            self.focus_screen(window, cx);
             cx.notify();
         }
     }
