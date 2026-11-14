@@ -40,6 +40,7 @@ gpui_kit_assets::icon_assets!(
         EyeOff,
         Eye,
         CircleX,
+        GitCommitHorizontal,
     ]
 );
 

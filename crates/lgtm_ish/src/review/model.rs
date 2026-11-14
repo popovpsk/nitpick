@@ -80,7 +80,14 @@ pub struct ReviewFile {
     pub deletions: u32,
     pub binary: bool,
     pub line_map: LineMap,
+    pub display_map: Option<LineMap>,
     pub changes: Vec<Change>,
+}
+
+impl ReviewFile {
+    pub fn shown_map(&self) -> &LineMap {
+        self.display_map.as_ref().unwrap_or(&self.line_map)
+    }
 }
 
 pub struct LoadedReview {
@@ -158,8 +165,8 @@ fn build_range(
         context_limited = true;
     }
     let diffs = parse(&patch)?;
-    let (maps, changes, comments_aligned) = if ignore_whitespace {
-        let changes = display_changes(&patch, diffs.len());
+    let (maps, display, comments_aligned) = if ignore_whitespace {
+        let display = display_maps(&patch, diffs.len());
         options.ignore_whitespace = false;
         drop(patch);
         let exact = range_head
@@ -176,20 +183,22 @@ fn build_range(
             .iter()
             .map(|f| by_path.get(f.path()).cloned().unwrap_or_default())
             .collect();
-        (maps, changes, aligned)
+        (maps, Some(display), aligned)
     } else {
         let (maps, aligned) = aligned_maps(&patch, diffs.len());
         drop(patch);
-        let changes = maps.iter().map(|m| m.changes().to_vec()).collect();
-        (maps, changes, aligned)
+        (maps, None, aligned)
     };
+    let mut display = display.map(Vec::into_iter);
     let by_path: HashMap<&str, &ChangedFile> =
         changed.iter().map(|f| (f.path.as_str(), f)).collect();
     let files: Vec<ReviewFile> = diffs
         .into_iter()
         .zip(maps)
-        .zip(changes)
-        .map(|((diff, line_map), changes)| review_file(diff, line_map, changes, &by_path))
+        .map(|(diff, line_map)| {
+            let display_map = display.as_mut().and_then(Iterator::next);
+            review_file(diff, line_map, display_map, &by_path)
+        })
         .collect();
     let tree = Arc::new(FileTree::build(&tree_files(&files)));
     let commits = match range_head {
@@ -252,21 +261,22 @@ pub fn tree_files(files: &[ReviewFile]) -> Vec<TreeFile> {
         .collect()
 }
 
-fn display_changes(patch: &str, files: usize) -> Vec<Vec<Change>> {
+fn display_maps(patch: &str, files: usize) -> Vec<LineMap> {
     let maps = review_core::line_maps(patch);
     if maps.len() == files {
-        maps.iter().map(|m| m.changes().to_vec()).collect()
+        maps
     } else {
-        vec![Vec::new(); files]
+        vec![LineMap::default(); files]
     }
 }
 
 fn review_file(
     diff: DiffFile,
     line_map: LineMap,
-    changes: Vec<Change>,
+    display_map: Option<LineMap>,
     by_path: &HashMap<&str, &ChangedFile>,
 ) -> ReviewFile {
+    let changes: Vec<Change> = display_map.as_ref().unwrap_or(&line_map).changes().to_vec();
     let path = diff.path().clone();
     let changed = by_path.get(path.as_ref()).copied();
     let status = match changed.map(|c| c.status) {
@@ -304,6 +314,7 @@ fn review_file(
         fingerprint,
         status,
         line_map,
+        display_map,
         changes,
     }
 }

@@ -1,3 +1,4 @@
+mod blame;
 mod command;
 mod diff;
 mod pull;
@@ -10,6 +11,7 @@ mod worktree;
 mod tests;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use command::NETWORK_TIMEOUT;
 pub use remote_url::{RemoteLocation, parse_remote_url};
@@ -122,6 +124,25 @@ pub struct Commit {
     pub subject: String,
     pub author: String,
     pub time: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlameCommit {
+    pub id: String,
+    pub author: String,
+    pub author_time: i64,
+    pub summary: String,
+}
+
+impl BlameCommit {
+    pub fn is_uncommitted(&self) -> bool {
+        !self.id.is_empty() && self.id.bytes().all(|byte| byte == b'0')
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlameLine {
+    pub commit: Arc<BlameCommit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

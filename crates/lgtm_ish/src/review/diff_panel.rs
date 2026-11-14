@@ -25,7 +25,7 @@ use ui_resources::Icons;
 use super::{
     Busy, CrossHint, FocusDiff, FocusTree, LoadState, LoadedReview, NextChange, NextFile,
     PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
-    ToggleTree, ToggleViewed, comments,
+    ToggleBlame, ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -492,6 +492,7 @@ impl ReviewView {
                         }
                     })),
             )
+            .child(self.render_blame_toggle(cx))
             .child(
                 ButtonGroup::new("diff-layout")
                     .small()
@@ -560,6 +561,7 @@ impl ReviewView {
         let divider_center = DIFF_BORDER + body_width * ratio - 0.5;
         let grip = theme.drag_border;
         let dragging = self.split_drag.is_some() && cx.has_active_drag();
+        let blame = self.blame_marks();
         div()
             .id("diff-area")
             .relative()
@@ -624,6 +626,12 @@ impl ReviewView {
                             add_view
                                 .update(cx, |this, cx| this.open_line_composer(range, window, cx));
                         })
+                    })
+                    .when_some(blame, |diff, marks| {
+                        diff.gutter_markers(marks.markers.iter().cloned())
+                            .render_gutter_marker(move |marker, window, cx| {
+                                marks.render_chip(marker, window, cx)
+                            })
                     }),
             )
             .child(
@@ -926,6 +934,13 @@ impl Render for ReviewView {
                     cx.propagate();
                 } else {
                     this.toggle_tree(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleBlame, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.toggle_blame(cx);
                 }
             }));
         match &self.load_state {

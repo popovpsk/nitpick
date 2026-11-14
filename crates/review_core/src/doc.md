@@ -2,8 +2,8 @@
 
 The review model the UI draws: the changed-file tree with folder compression and viewed
 roll-up, the per-repository store of "viewed" marks, the map from a diff line to the
-old/new line pair GitLab positions need, the fuzzy matcher every picker filters with, and
-the syntax language of paths the diff component does not recognise. GPUI-free and git-free;
+old/new line pair GitLab positions need, where blame chips go, the fuzzy matcher every
+picker filters with, and the syntax language of paths the diff component does not recognise. GPUI-free and git-free;
 only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
@@ -22,7 +22,12 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
   `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
-  up to two context lines above it within the hunk, else the first line).
+  up to two context lines above it within the hunk, else the first line);
+  `LineMap::shown_block_starts(side, context, min_folded)` → the first line of each block of
+  lines the diff shows on that side with unchanged lines folded.
+- `blame.rs` — `marker_lines` (the lines a blame chip goes on), `initials` of an author
+  name, `tint_index` (a stable palette slot for a commit id).
+- `blame_tests.rs` — marker placement, initials, tint stability.
 - `fuzzy.rs` — `fuzzy_match(query, text)` → score and matched byte offsets; `rank` over
   `(label, optional detail)` items; `highlight_ranges` (offsets → byte ranges of whole chars).
 - `language.rs` — `language_override(path)`: the highlighter language for a path by file
@@ -62,6 +67,17 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
   `+++ y` is never taken for a file header. The result is index-aligned with
   gpui-component's `DiffFile::parse` of the same patch, which also yields one file per
   `diff --git` header; the caller checks the counts match.
+- `shown_block_starts` mirrors gpui-component's default folding (`visible_pairs` in its
+  `diff/state.rs`, private): a change shows `context` unchanged lines on each side, a
+  removal on the other side counts as a change between two lines of this side, folds
+  shorter than `min_folded` stay open, and lines the patch lacks (between short-context
+  hunks) never show. Folds the user opens are not known here.
+- Blame chips (`marker_lines`): one on the first line of each run of lines from the same
+  commit, plus one on every `shown_block_starts` line, so each block the diff shows starts
+  with a chip even when its run began inside a fold. `initials`: the first letters of the
+  first and last word (split at spaces, `.`, `_`, `-`; the local part of a bare e-mail),
+  upper-cased, `?` when there is none. `tint_index` is FNV-1a of the id, so a commit keeps
+  its color across files and launches.
 - `language_override` answers only for paths gpui-component's `detected_language` misses
   (it already knows `Makefile`, `.proto`, `.cs`, `.java`, …), so the two never disagree;
   `None` keeps the component's detection. Names are gpui-component highlighter names; a

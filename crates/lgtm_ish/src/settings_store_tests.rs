@@ -7,6 +7,7 @@ fn settings_without_syntax_colors_still_load() {
     let settings: Settings =
         serde_json::from_str(r#"{ "theme": "system", "diff_layout": "unified" }"#).unwrap();
     assert_eq!(settings.syntax_colors, SyntaxPalettes::default());
+    assert!(!settings.show_blame);
 }
 
 #[test]

@@ -1,8 +1,8 @@
 # review
 
 One review: a branch comparison, a GitLab merge request or the uncommitted changes of the work
-tree, loaded into a file tree, a diff of one file at a time, per-file "viewed" marks and, for a
-merge request, its discussions.
+tree, loaded into a file tree, a diff of one file at a time, per-file "viewed" marks, an
+optional blame of the shown file and, for a merge request, its discussions.
 `ReviewView` is the entity; the window creates one per opened review.
 
 Not here: choosing what to review (`workspace/start.rs`), the git operations
@@ -15,7 +15,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   composer; actions and key bindings.
 - `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile`, `build` (changed files + full
   context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
-  maps, fingerprints, tree), `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`.
+  maps (plus the shown patch's map with "ignore whitespace"), fingerprints, tree),
+  `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`.
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
   gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
   the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`).
@@ -33,6 +34,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
   general and outdated discussions.
+- `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
+  toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
+  (`BlameMarks::render_chip`).
 
 ## Spec
 
@@ -174,8 +178,35 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   mouse input to the code under it (not scrolling), shows a `drag_border` line on hover and
   while dragging, and a double-click resets to 0.5. `resize_split` saves the ratio 400 ms
   after the last move, detached, like the tree width.
+- Blame (`settings.show_blame`, the toolbar toggle and `ToggleBlame`, no default key; the
+  setting is global, so every window follows it): the shown file is blamed off the UI thread
+  at the review's head commit, or the work tree for the uncommitted-changes review, and a
+  deleted file at `base_sha` on its old side. A fetch starts `BLAME_DELAY` (120 ms) after the
+  file is shown, so running through files with j/k starts no `git blame` (a started one runs
+  to its end: the blocking child is not killed when its task is dropped). Results are cached
+  by (rev, path) for the installed review; a reload that installs a new review drops the
+  cache and refetches, and an unchanged reload keeps it like everything else but retries
+  failed blames. Chips are shown only for the file and content they were computed for: the
+  same key with the same fingerprint keeps its chips until the refetch lands (a work-tree
+  reload does not blink); anything else shows an empty lane until its result arrives, and a
+  result that lands after the file changed is cached but not shown. A failed blame leaves
+  the lane empty and shows one notification until the next reload or toggle.
+- Blame chips use the `Diff`'s marker lane (between the line numbers and the code, one row
+  high and one row wide, in each column in split mode, once in unified): no extra row. A
+  chip sits on the first line of each run from one commit and on the first line of each
+  block the default folding shows (`review_core::LineMap::shown_block_starts`); nothing on
+  the other side. It is the author's initials on a tint picked from the commit id
+  (`review_core::blame::tint_index`) over six theme hues at two strengths with the theme's
+  foreground, so it reads in light and dark themes; uncommitted lines get a muted "you". The
+  tooltip shows author, relative date (computed when it opens), short id and summary. While
+  blame is on, the lane stays even before results arrive or when there are none (a
+  placeholder marker on no line), so the code does not shift sideways on every file switch.
+  Markers and chip data are built when a result lands; render only clones the marker list
+  the component's builder takes and looks a chip up by binary search.
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
-  so comment positions follow GitLab's real diff rather than the whitespace-blind one.
+  so comment positions follow GitLab's real diff rather than the whitespace-blind one;
+  `ReviewFile::display_map` keeps the shown patch's map (`shown_map`), from which `changes`
+  and blame's block starts are taken.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
 - Header branch chips: the name opens a fuzzy branch picker for that side only (the branch
   list is read with `git for-each-ref` each time a picker opens, off the UI thread);
@@ -204,3 +235,5 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - The split divider is movable; its ratio is one app-wide setting, not per file or
   repository.
 - "Viewed" has one control, the toolbar button.
+- Blame is compact: one initials chip per run of a commit in the marker lane, details in the
+  tooltip; not Zed's per-line author and date column.

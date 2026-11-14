@@ -118,6 +118,8 @@ pub struct Settings {
     pub gitlab_token: String,
     #[serde(default)]
     pub syntax_colors: SyntaxPalettes,
+    #[serde(default)]
+    pub show_blame: bool,
 }
 
 pub const UI_SCALE_RANGE: (u16, u16) = (80, 150);
@@ -180,6 +182,7 @@ impl Default for Settings {
             gitlab_url: String::new(),
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
+            show_blame: false,
         }
     }
 }

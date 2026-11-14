@@ -10,7 +10,8 @@ use ui_resources::i18n::Strings;
 
 use crate::review::{
     CollapseSelected, ExpandSelected, FocusDiff, FocusTree, NextChange, NextFile, OpenSelected,
-    PreviousChange, PreviousFile, Refresh, SelectNext, SelectPrevious, ToggleTree, ToggleViewed,
+    PreviousChange, PreviousFile, Refresh, SelectNext, SelectPrevious, ToggleBlame, ToggleTree,
+    ToggleViewed,
 };
 use crate::settings_store::{SettingsStore, settings, update_settings};
 use crate::workspace::{
@@ -110,6 +111,14 @@ pub static COMMANDS: &[Command] = &[
         defaults: &["secondary-r"],
         action: || Box::new(Refresh),
         title: |s| s.refresh.clone(),
+    },
+    Command {
+        id: "review.toggle_blame",
+        group: Group::Review,
+        context: REVIEW,
+        defaults: &[],
+        action: || Box::new(ToggleBlame),
+        title: |s| s.cmd_toggle_blame.clone(),
     },
     Command {
         id: "tree.select_next",
