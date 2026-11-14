@@ -7,7 +7,8 @@ mod viewed;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use git_repo::{PullOutcome, Repo};
@@ -56,6 +57,9 @@ actions!(
 
 const TREE_SLIDE: Duration = Duration::from_millis(200);
 const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
+const AUTO_MARK_DWELL: Duration = Duration::from_millis(1000);
+
+static TREE_WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -218,14 +222,15 @@ pub struct ReviewView {
     tree_focus: FocusHandle,
     tree_scroll: UniformListScrollHandle,
     composer: Option<Composer>,
-    kept_unviewed: HashSet<usize>,
+    kept_unviewed: HashSet<(SharedString, String)>,
+    shown_at: Option<Instant>,
+    installed_whitespace: bool,
     tree_visible: bool,
     tree_closing: bool,
     tree_toggles: usize,
     tree_width: f32,
     busy: Option<Busy>,
     _tree_close: Task<()>,
-    _tree_width_save: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
     _load: Task<()>,
     _discussions: Task<()>,
@@ -289,13 +294,16 @@ impl ReviewView {
             tree_scroll: UniformListScrollHandle::new(),
             composer: None,
             kept_unviewed: HashSet::new(),
+            shown_at: None,
+            installed_whitespace: settings(cx).ignore_whitespace,
             tree_visible: true,
             tree_closing: false,
             tree_toggles: 0,
-            tree_width: settings(cx).tree_width,
+            tree_width: settings(cx)
+                .tree_width
+                .clamp(TREE_WIDTH_RANGE.0, TREE_WIDTH_RANGE.1),
             busy: None,
             _tree_close: Task::ready(()),
-            _tree_width_save: Task::ready(()),
             branch_pickers,
             _load: Task::ready(()),
             _discussions: Task::ready(()),
@@ -334,7 +342,7 @@ impl ReviewView {
         }
         self._load = cx.spawn(async move |this, cx| {
             let result = load_review(repo, source, client, ignore_whitespace, cx).await;
-            let _ = this.update(cx, |this, cx| this.install(result, cx));
+            let _ = this.update(cx, |this, cx| this.install(result, ignore_whitespace, cx));
         });
         cx.notify();
     }
@@ -347,6 +355,7 @@ impl ReviewView {
     fn install(
         &mut self,
         result: anyhow::Result<(LoadedReview, Option<MrContext>)>,
+        whitespace: bool,
         cx: &mut Context<Self>,
     ) {
         if self.busy == Some(Busy::Refreshing) {
@@ -354,7 +363,33 @@ impl ReviewView {
         }
         match result {
             Ok((review, mr)) => {
-                let previous = self
+                let same_shape = |old: &LoadedReview| {
+                    self.installed_whitespace == whitespace
+                        && old.context_limited == review.context_limited
+                };
+                let unchanged = self.mr.is_none()
+                    && mr.is_none()
+                    && self.review.as_deref().is_some_and(|old| {
+                        same_shape(old)
+                            && old.base_sha == review.base_sha
+                            && old.head_sha == review.head_sha
+                            && old.files.len() == review.files.len()
+                            && old.files.iter().zip(&review.files).all(|(a, b)| {
+                                a.path == b.path
+                                    && a.fingerprint == b.fingerprint
+                                    && a.status == b.status
+                            })
+                    });
+                if unchanged {
+                    cx.notify();
+                    return;
+                }
+                let previous = self.current_file.and_then(|ix| {
+                    let old = self.review.as_deref()?;
+                    let file = &old.files[ix];
+                    same_shape(old).then(|| (file.path.clone(), file.fingerprint.clone()))
+                });
+                let kept_path = self
                     .current_file
                     .and_then(|ix| self.review.as_ref().map(|r| r.files[ix].path.clone()));
                 let store = self.viewed_store.read(cx).store();
@@ -364,21 +399,31 @@ impl ReviewView {
                     .map(|f| store.is_viewed(&f.path, &f.fingerprint))
                     .collect();
                 let review = Rc::new(review);
-                self.kept_unviewed.clear();
                 self.review = Some(review.clone());
+                self.installed_whitespace = whitespace;
                 self.mr = mr;
                 self.load_state = LoadState::Ready;
                 self.index_discussions();
                 self.rebuild_rows();
-                let target = previous
-                    .and_then(|path| review.file_index(&path))
-                    .or_else(|| self.first_unviewed())
-                    .or_else(|| review.tree.file_order().first().copied());
-                self.current_file = None;
-                if let Some(ix) = target {
-                    self.show_file(ix, cx);
+                let same_file = previous.and_then(|(path, fingerprint)| {
+                    let ix = review.file_index(&path)?;
+                    (review.files[ix].fingerprint == fingerprint).then_some(ix)
+                });
+                if let Some(ix) = same_file {
+                    self.current_file = Some(ix);
+                    self.selected_row = self.rows.iter().position(|r| r.file == Some(ix));
+                    self.rebuild_annotations();
                 } else {
-                    self.diff.update(cx, |state, cx| state.set_files([], cx));
+                    let target = kept_path
+                        .and_then(|path| review.file_index(&path))
+                        .or_else(|| self.first_unviewed())
+                        .or_else(|| review.tree.file_order().first().copied());
+                    self.current_file = None;
+                    if let Some(ix) = target {
+                        self.show_file(ix, cx);
+                    } else {
+                        self.diff.update(cx, |state, cx| state.set_files([], cx));
+                    }
                 }
                 if self.mr.is_some() {
                     self.load_discussions(cx);
@@ -509,11 +554,18 @@ impl ReviewView {
         if self.current_file != Some(ix) {
             if let Some(left) = self.current_file
                 && settings(cx).auto_mark_viewed
+                && self
+                    .shown_at
+                    .is_some_and(|at| at.elapsed() >= AUTO_MARK_DWELL)
                 && !self.viewed.get(left).copied().unwrap_or(true)
-                && !self.kept_unviewed.contains(&left)
+                && !review.files.get(left).is_some_and(|f| {
+                    self.kept_unviewed
+                        .contains(&(f.path.clone(), f.fingerprint.clone()))
+                })
             {
                 self.set_viewed(&[left], true, cx);
             }
+            self.shown_at = Some(Instant::now());
             self.current_file = Some(ix);
             let diff_file = file.diff.clone();
             self.sync_diff_mode(cx);
@@ -563,10 +615,11 @@ impl ReviewView {
         for &ix in files {
             if let Some(file) = review.files.get(ix) {
                 self.viewed[ix] = viewed;
+                let key = (file.path.clone(), file.fingerprint.clone());
                 if viewed {
-                    self.kept_unviewed.remove(&ix);
+                    self.kept_unviewed.remove(&key);
                 } else {
-                    self.kept_unviewed.insert(ix);
+                    self.kept_unviewed.insert(key);
                 }
                 marks.push((file.path.as_ref(), file.fingerprint.as_str()));
             }
@@ -1018,7 +1071,10 @@ impl ReviewView {
         self.discussions.clone()
     }
 
-    pub fn toggle_tree(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tree_visible && self.tree_focus.contains_focused(window, cx) {
+            self.focus_diff(window, cx);
+        }
         self.tree_visible = !self.tree_visible;
         self.tree_toggles += 1;
         self.tree_closing = !self.tree_visible;
@@ -1048,10 +1104,14 @@ impl ReviewView {
             return;
         }
         self.tree_width = width;
-        self._tree_width_save = cx.spawn(async move |_, cx| {
+        let generation = TREE_WIDTH_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+        cx.spawn(async move |_, cx| {
             cx.background_executor().timer(TREE_WIDTH_SAVE_DELAY).await;
-            cx.update(|cx| update_settings(cx, |s| s.tree_width = width));
-        });
+            if TREE_WIDTH_GENERATION.load(Ordering::Relaxed) == generation {
+                cx.update(|cx| update_settings(cx, |s| s.tree_width = width));
+            }
+        })
+        .detach();
         cx.notify();
     }
 
@@ -1067,7 +1127,7 @@ impl ReviewView {
         window.focus(&self.tree_focus, cx);
     }
 
-    fn focus_diff(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn focus_diff(&self, window: &mut Window, cx: &mut App) {
         let handle = self.diff.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
     }

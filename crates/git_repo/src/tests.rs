@@ -1209,3 +1209,78 @@ fn an_unborn_repository_diffs_against_the_empty_tree() {
         .unwrap();
     assert!(patch.contains("+++ b/first.txt\n@@ -0,0 +1 @@\n+hello\n"));
 }
+
+#[test]
+fn working_tree_survives_paths_git_cannot_hash() {
+    let fixture = Fixture::new();
+    let library = fixture.init("library");
+    let first = fixture.commit(&library, &[("lib.txt", "v1\n")], "v1");
+    let second = fixture.commit(&library, &[("lib.txt", "v2\n")], "v2");
+    let path = fixture.init("repo");
+    fixture.commit(&path, &[("target.txt", "t\n")], "initial");
+    fixture.git(
+        &path,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            library.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    fixture.git(&path.join("sub"), &["checkout", "-q", &first]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("target.txt", path.join("link")).unwrap();
+    let head = fixture.commit(&path, &[], "submodule and link");
+    fixture.git(&path.join("sub"), &["checkout", "-q", &second]);
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(path.join("link")).unwrap();
+        std::os::unix::fs::symlink("nowhere", path.join("link")).unwrap();
+    }
+    let repo = Repo::open(&path).unwrap();
+
+    let files = repo
+        .working_tree_changes(&head, &DiffOptions::default())
+        .unwrap();
+    let blob = |p: &str| files.iter().find(|f| f.path == p).unwrap().new_blob.clone();
+    assert_eq!(blob("sub"), format!("commit:{second}"));
+    #[cfg(unix)]
+    assert_eq!(blob("link"), "link:nowhere");
+    repo.working_tree_diff(&head, &DiffOptions::default())
+        .unwrap();
+}
+
+#[test]
+fn a_staged_deletion_with_the_file_still_on_disk_is_listed_once() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(&path, &[("kept.txt", "a\n")], "initial");
+    fixture.git(&path, &["rm", "-q", "--cached", "kept.txt"]);
+    let repo = Repo::open(&path).unwrap();
+
+    let files = repo
+        .working_tree_changes(&head, &DiffOptions::default())
+        .unwrap();
+    assert_eq!(paths(&files), vec!["kept.txt"]);
+    let patch = repo
+        .working_tree_diff(&head, &DiffOptions::default())
+        .unwrap();
+    assert_eq!(patch.matches("diff --git").count(), 1);
+}
+
+#[test]
+fn untracked_paths_keep_non_ascii_control_characters_raw() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(&path, &[("a.txt", "a\n")], "initial");
+    fixture.write(&path, "odd\u{85}name.txt", "x\n");
+    let repo = Repo::open(&path).unwrap();
+
+    let patch = repo
+        .working_tree_diff(&head, &DiffOptions::default())
+        .unwrap();
+    assert!(patch.contains("diff --git a/odd\u{85}name.txt b/odd\u{85}name.txt\n"));
+}

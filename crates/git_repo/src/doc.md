@@ -55,7 +55,11 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
   files (`ls-files --others --exclude-standard`) are appended as new-file patches built here,
   in git's format (C-quoted paths, `\ No newline at end of file`, `Binary files … differ` for
   NUL bytes or files over 16 MB); the on-disk blob ids come from `hash-object` without `-w`,
-  in batches. An untracked symlink shows its target; its blob id is `link:<target>`.
+  in batches bounded by count and by command-line length (Windows' limit). A path git can't
+  hash never fails the diff: symlinks get `link:<target>`, submodules `commit:<HEAD>`, a
+  vanished or unreadable file `missing` / `unreadable` (a failed batch is retried per path).
+  An untracked file that is also a staged deletion (`git rm --cached`) is listed once, as the
+  deletion, so every path appears once.
 - `current_branch` is `None` for a detached or unborn HEAD.
 - `branches`: local first, then remote-tracking, each newest committer date first, then by
   name; symbolic refs such as `origin/HEAD` are left out. `upstream` is the short name.

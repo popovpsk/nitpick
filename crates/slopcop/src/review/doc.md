@@ -71,15 +71,22 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   files. No `alt-<letter>` binding: on macOS bindings match before text input, so it would
   eat the character the layout types. Toolbar tooltips name their key through
   `tooltip_with_action`, so they follow the bindings.
-- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed, except a file
-  the user unmarked by hand in this review (`kept_unviewed`, cleared on every load since file
-  indices change). Reloads and the first file of a load never mark anything.
+- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
+  for at least `AUTO_MARK_DWELL` (1 s), so running through the tree with j/k marks nothing,
+  and unless the user unmarked it by hand (`kept_unviewed`, keyed by path + fingerprint so it
+  survives reloads of this review). Reloads and the first file of a load never mark anything.
+- A reload that finds the same files with the same fingerprints (and the same whitespace and
+  context setting) changes nothing, and a reload that keeps the shown file's fingerprint
+  keeps its `DiffState`, so the work-tree reload on window activation does not reset the
+  scroll, the expanded context or the selection. A merge request always reinstalls.
 - The tree panel is drawn here rather than with `h_resizable`, so it can slide: toggling
   animates its width over `TREE_SLIDE` (ease-out, as in pawse) while the content keeps its
   full width inside an `overflow_hidden` box, and a closing panel stays rendered until the
-  slide ends. The first render of a review does not animate. The drag handle on its inner
+  slide ends, covered so it takes no clicks. The first render of a review does not animate.
+  Hiding the tree while it has focus moves focus to the diff first; otherwise the focused
+  element vanishes and the `Review` key bindings (⌘B included) stop reaching the review. The drag handle on its inner
   edge resizes it within `TREE_WIDTH_RANGE`; the width is saved to settings 400 ms after the
-  last move.
+  last move by a detached task, so closing the review right after a drag still saves it.
 - The comment composer survives file switches and reloads; only Cancel or a successful post
   of that same composer closes it.
 - Notifications go to the review's own window (`window_handle`) through `cx.defer`, never to

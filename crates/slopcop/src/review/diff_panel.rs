@@ -255,7 +255,7 @@ impl ReviewView {
                     })
                     .selected(self.tree_visible)
                     .tooltip_with_action(s.toggle_tree.clone(), &ToggleTree, Some("Review"))
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_tree(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_tree(window, cx))),
             )
             .child(
                 Button::new("prev-file")
@@ -497,7 +497,18 @@ impl ReviewView {
                     .overflow_hidden()
                     .child(div().h_full().w(px(width)).child(tree)),
             )
-            .when(!closing, |el| el.child(handle));
+            .when(!closing, |el| el.child(handle))
+            .when(closing, |el| {
+                el.child(
+                    div()
+                        .id("tree-closing")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude(),
+                )
+            });
         if self.tree_toggles == 0 {
             return panel.w(px(width)).into_any_element();
         }
@@ -545,7 +556,9 @@ impl Render for ReviewView {
             .on_action(cx.listener(|this, _: &FocusTree, window, cx| this.focus_tree(window, cx)))
             .on_action(cx.listener(|this, _: &FocusDiff, window, cx| this.focus_diff(window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
-            .on_action(cx.listener(|this, _: &ToggleTree, _, cx| this.toggle_tree(cx)));
+            .on_action(
+                cx.listener(|this, _: &ToggleTree, window, cx| this.toggle_tree(window, cx)),
+            );
         match &self.load_state {
             LoadState::Loading => {
                 return root

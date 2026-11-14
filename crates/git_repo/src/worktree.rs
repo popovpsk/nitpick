@@ -1,12 +1,14 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::command::{checked_arg, text};
+use crate::command::{self, checked_arg, text};
 use crate::diff::{DIFF_CONFIG, PATCH_FLAGS, option_flags, parse_raw_numstat};
 use crate::repo::Repo;
 use crate::{ChangeStatus, ChangedFile, DiffOptions, GitError};
 
 const HASH_BATCH: usize = 256;
+const HASH_BATCH_BYTES: usize = 16 * 1024;
 const UNTRACKED_TEXT_LIMIT: u64 = 16 * 1024 * 1024;
 const BINARY_SNIFF: usize = 8000;
 
@@ -65,29 +67,24 @@ impl Repo {
             .filter(|f| f.status != ChangeStatus::Deleted && is_null(&f.new_blob))
             .map(|f| f.path.clone())
             .collect();
-        let hashes = self.hash_paths(&unhashed)?;
+        let hashes = self.disk_blobs(&unhashed);
         for file in &mut files {
             if let Some(hash) = hashes.get(&file.path) {
                 file.new_blob = hash.clone();
             }
         }
-        let untracked = self.read_untracked()?;
-        let regular: Vec<String> = untracked
-            .iter()
-            .filter(|u| u.mode != "120000")
-            .map(|u| u.path.clone())
-            .collect();
-        let hashes = self.hash_paths(&regular)?;
+        let untracked = self.read_untracked(base)?;
+        let paths: Vec<String> = untracked.iter().map(|u| u.path.clone()).collect();
+        let hashes = self.disk_blobs(&paths);
         for entry in untracked {
             let (additions, deletions) = match &entry.content {
                 UntrackedContent::Text(content) => (Some(line_count(content) as u32), Some(0)),
                 UntrackedContent::Binary => (None, None),
             };
-            let new_blob = match (&entry.content, hashes.get(&entry.path)) {
-                (_, Some(hash)) => hash.clone(),
-                (UntrackedContent::Text(target), None) => format!("link:{target}"),
-                (UntrackedContent::Binary, None) => null.clone(),
-            };
+            let new_blob = hashes
+                .get(&entry.path)
+                .cloned()
+                .unwrap_or_else(|| null.clone());
             files.push(ChangedFile {
                 path: entry.path,
                 old_path: None,
@@ -124,13 +121,9 @@ impl Repo {
             Ok(text) => text,
             Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
         };
-        let untracked = self.read_untracked()?;
-        let regular: Vec<String> = untracked
-            .iter()
-            .filter(|u| u.mode != "120000")
-            .map(|u| u.path.clone())
-            .collect();
-        let hashes = self.hash_paths(&regular)?;
+        let untracked = self.read_untracked(base)?;
+        let paths: Vec<String> = untracked.iter().map(|u| u.path.clone()).collect();
+        let hashes = self.disk_blobs(&paths);
         let null = null_blob(base);
         for entry in &untracked {
             let hash = hashes.get(&entry.path).unwrap_or(&null);
@@ -139,9 +132,32 @@ impl Repo {
         Ok(patch)
     }
 
-    fn read_untracked(&self) -> Result<Vec<Untracked>, GitError> {
+    fn staged_deletions(&self, base: &str) -> Result<HashSet<String>, GitError> {
+        let out = self.git(&[
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--name-only",
+            "--diff-filter=D",
+            "-z",
+            checked_arg(base)?,
+            "--",
+        ])?;
+        Ok(out
+            .split(|byte| *byte == 0)
+            .filter(|token| !token.is_empty())
+            .map(|token| String::from_utf8_lossy(token).into_owned())
+            .collect())
+    }
+
+    fn read_untracked(&self, base: &str) -> Result<Vec<Untracked>, GitError> {
+        let paths = self.untracked_files()?;
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let deleted = self.staged_deletions(base)?;
         let mut entries = Vec::new();
-        for path in self.untracked_files()? {
+        for path in paths.into_iter().filter(|p| !deleted.contains(p)) {
             let full = self.root().join(&path);
             let Ok(meta) = std::fs::symlink_metadata(&full) else {
                 continue;
@@ -166,22 +182,84 @@ impl Repo {
         Ok(entries)
     }
 
-    fn hash_paths(
-        &self,
-        paths: &[String],
-    ) -> Result<std::collections::HashMap<String, String>, GitError> {
-        let mut hashes = std::collections::HashMap::with_capacity(paths.len());
-        for chunk in paths.chunks(HASH_BATCH) {
-            let mut args = vec!["hash-object".to_string(), "--".to_string()];
-            args.extend(chunk.iter().cloned());
-            let out = self.git(&args)?;
-            let text = String::from_utf8_lossy(&out);
-            for (path, hash) in chunk.iter().zip(text.lines()) {
-                hashes.insert(path.clone(), hash.trim().to_string());
+    fn disk_blobs(&self, paths: &[String]) -> HashMap<String, String> {
+        let mut blobs = HashMap::with_capacity(paths.len());
+        let mut regular = Vec::new();
+        for path in paths {
+            let full = self.root().join(path);
+            let blob = match std::fs::symlink_metadata(&full) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    let target = std::fs::read_link(&full)
+                        .map(|t| t.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    format!("link:{target}")
+                }
+                Ok(meta) if meta.is_dir() => match command::run(&full, &["rev-parse", "HEAD"]) {
+                    Ok(out) => format!("commit:{}", text(&out)),
+                    Err(_) => "commit:?".to_string(),
+                },
+                Ok(meta) if meta.is_file() => {
+                    regular.push(path.clone());
+                    continue;
+                }
+                _ => "missing".to_string(),
+            };
+            blobs.insert(path.clone(), blob);
+        }
+        for batch in hash_batches(&regular) {
+            match self.hash_objects(batch) {
+                Ok(hashes) => blobs.extend(batch.iter().cloned().zip(hashes)),
+                Err(_) => {
+                    for path in batch {
+                        let blob = self
+                            .hash_objects(std::slice::from_ref(path))
+                            .ok()
+                            .and_then(|mut h| h.pop())
+                            .unwrap_or_else(|| "unreadable".to_string());
+                        blobs.insert(path.clone(), blob);
+                    }
+                }
             }
         }
-        Ok(hashes)
+        blobs
     }
+
+    fn hash_objects(&self, paths: &[String]) -> Result<Vec<String>, GitError> {
+        let mut args = vec!["hash-object".to_string(), "--".to_string()];
+        args.extend(paths.iter().cloned());
+        let out = self.git(&args)?;
+        let hashes: Vec<String> = String::from_utf8_lossy(&out)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .collect();
+        if hashes.len() == paths.len() {
+            Ok(hashes)
+        } else {
+            Err(GitError::Parse(format!(
+                "hash-object returned {} ids for {} paths",
+                hashes.len(),
+                paths.len()
+            )))
+        }
+    }
+}
+
+fn hash_batches(paths: &[String]) -> Vec<&[String]> {
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut length = 0;
+    for (ix, path) in paths.iter().enumerate() {
+        if ix > start && (ix - start >= HASH_BATCH || length + path.len() > HASH_BATCH_BYTES) {
+            batches.push(&paths[start..ix]);
+            start = ix;
+            length = 0;
+        }
+        length += path.len() + 1;
+    }
+    if start < paths.len() {
+        batches.push(&paths[start..]);
+    }
+    batches
 }
 
 fn null_blob(base: &str) -> String {
@@ -230,10 +308,12 @@ fn line_count(content: &str) -> usize {
     }
 }
 
+fn escaped(c: char) -> bool {
+    c < ' ' || c == '\x7f'
+}
+
 fn quote_path(prefix: &str, path: &str) -> String {
-    let needs = path
-        .chars()
-        .any(|c| c == '"' || c == '\\' || c.is_control());
+    let needs = path.chars().any(|c| c == '"' || c == '\\' || escaped(c));
     if !needs {
         return format!("{prefix}{path}");
     }
@@ -247,7 +327,7 @@ fn quote_path(prefix: &str, path: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
-            c if c.is_control() => {
+            c if escaped(c) => {
                 let _ = write!(out, "\\{:03o}", c as u32);
             }
             c => out.push(c),
@@ -288,5 +368,32 @@ fn append_new_file(patch: &mut String, entry: &Untracked, null: &str, hash: &str
                 patch.push_str("\n\\ No newline at end of file\n");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HASH_BATCH, HASH_BATCH_BYTES, hash_batches};
+
+    #[test]
+    fn hash_batches_respect_the_count_and_the_command_line_length() {
+        let short: Vec<String> = (0..600).map(|i| format!("f{i}")).collect();
+        let sizes: Vec<usize> = hash_batches(&short).iter().map(|b| b.len()).collect();
+        assert_eq!(sizes, vec![HASH_BATCH, HASH_BATCH, 600 - 2 * HASH_BATCH]);
+
+        let long: Vec<String> = (0..10)
+            .map(|i| format!("{i}{}", "x".repeat(5000)))
+            .collect();
+        let batches = hash_batches(&long);
+        assert!(
+            batches
+                .iter()
+                .all(
+                    |b| b.iter().map(|p| p.len() + 1).sum::<usize>() <= HASH_BATCH_BYTES
+                        || b.len() == 1
+                )
+        );
+        assert_eq!(batches.iter().map(|b| b.len()).sum::<usize>(), 10);
+        assert!(hash_batches(&[]).is_empty());
     }
 }
