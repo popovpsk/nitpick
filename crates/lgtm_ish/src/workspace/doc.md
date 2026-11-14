@@ -26,8 +26,9 @@ window options and opening windows (`main.rs`).
   nothing in the window may be focused, so it would not reach `Workspace`. Every screen
   switch ends in `focus_screen`: the settings screen, the review's tree (its diff when the
   tree is hidden), or the window root, so menu items and shortcuts keep reaching the window.
-  As a safety net, a render that finds focus nowhere inside the window (and no dialog or
-  sheet open, while the window is active) focuses the current screen on the next frame.
+  As a safety net, a render that finds nothing focused at all (no dialog or sheet open,
+  the window active) focuses the current screen on the next frame. A focused element that
+  is merely scrolled out of a virtualized list (a comment being typed) keeps its focus.
 - In fullscreen the title bar drops gpui-component's 80px macOS traffic-light inset (the
   lights are hidden there), so the repository picker starts at the edge.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with

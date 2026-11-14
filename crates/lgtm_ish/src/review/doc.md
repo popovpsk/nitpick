@@ -86,7 +86,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   files, and, while hidden files are not in the tree, a scrolling list of them with the
   part of each path its pattern matched highlighted; a click shows that file. "Edit hidden
   files…" there or in the row menu emits `ReviewEvent::EditHiddenFiles`, which opens
-  Settings scrolled to the Hidden files group. The review's own `tree` is rebuilt from
+  Settings on its Hidden files page. A hidden file shown in the tree shows its own viewed
+  state; from a hidden file navigation continues with the nearest tracked file in the
+  order on screen (the flat list's path order in List mode). The review's own `tree` is rebuilt from
   `LoadedReview::tree` (reused when the shape is the default and nothing is left out)
   whenever the patterns or the view options change; if the shown file becomes hidden the
   next unviewed tracked file opens, and when files reappear after everything was hidden

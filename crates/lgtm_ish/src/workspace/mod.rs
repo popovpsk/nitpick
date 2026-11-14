@@ -309,6 +309,7 @@ impl Workspace {
     fn keep_focus_inside(&self, window: &mut Window, cx: &mut Context<Self>) {
         let stray = |this: &Self, window: &mut Window, cx: &mut Context<Self>| {
             window.is_window_active()
+                && window.focused(cx).is_none()
                 && !this.focus.contains_focused(window, cx)
                 && !window.has_active_dialog(cx)
                 && !window.has_active_sheet(cx)

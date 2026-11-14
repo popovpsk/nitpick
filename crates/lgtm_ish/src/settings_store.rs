@@ -322,15 +322,16 @@ pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) {
 
 fn reset_theme_metrics(cx: &mut App) {
     let defaults = Theme::default();
-    let theme = Theme::global_mut(cx);
-    theme.font_size = defaults.font_size;
-    theme.font_family = defaults.font_family.clone();
-    theme.mono_font_size = defaults.mono_font_size;
-    theme.mono_font_family = defaults.mono_font_family.clone();
-    theme.radius = defaults.radius;
-    theme.radius_lg = defaults.radius_lg;
-    theme.window_radius = defaults.window_radius;
-    theme.shadow = defaults.shadow;
+    Theme::update(cx, |theme| {
+        theme.font_size = defaults.font_size;
+        theme.font_family = defaults.font_family.clone();
+        theme.mono_font_size = defaults.mono_font_size;
+        theme.mono_font_family = defaults.mono_font_family.clone();
+        theme.radius = defaults.radius;
+        theme.radius_lg = defaults.radius_lg;
+        theme.window_radius = defaults.window_radius;
+        theme.shadow = defaults.shadow;
+    });
 }
 
 fn apply_zoom(cx: &mut App) {
@@ -338,12 +339,13 @@ fn apply_zoom(cx: &mut App) {
         let current = settings(cx);
         (current.ui_scale, current.code_zoom)
     };
-    let theme = Theme::global_mut(cx);
-    let (min, max) = UI_SCALE_RANGE;
-    theme.font_size *= scale.clamp(min, max) as f32 / 100.;
-    let (min, max) = CODE_ZOOM_RANGE;
-    let mono = f32::from(theme.mono_font_size) + code.clamp(min, max) as f32;
-    theme.mono_font_size = px(mono.max(6.));
+    Theme::update(cx, |theme| {
+        let (min, max) = UI_SCALE_RANGE;
+        theme.font_size *= scale.clamp(min, max) as f32 / 100.;
+        let (min, max) = CODE_ZOOM_RANGE;
+        let mono = f32::from(theme.mono_font_size) + code.clamp(min, max) as f32;
+        theme.mono_font_size = px(mono.max(6.));
+    });
 }
 
 pub fn apply_theme(choice: &ThemeChoice, cx: &mut App) {
@@ -351,21 +353,26 @@ pub fn apply_theme(choice: &ThemeChoice, cx: &mut App) {
     match choice {
         ThemeChoice::System => Theme::sync_system_appearance(None, cx),
         ThemeChoice::Named(name) => {
-            let Some(config) = ThemeRegistry::global(cx)
+            let config = ThemeRegistry::global(cx)
                 .themes()
                 .get(name.as_str())
-                .cloned()
-            else {
-                return;
-            };
-            let mode = config.mode;
-            let theme = cx.global_mut::<Theme>();
-            if mode.is_dark() {
-                theme.dark_theme = config;
-            } else {
-                theme.light_theme = config;
+                .cloned();
+            match config {
+                Some(config) => {
+                    let mode = config.mode;
+                    let theme = cx.global_mut::<Theme>();
+                    if mode.is_dark() {
+                        theme.dark_theme = config;
+                    } else {
+                        theme.light_theme = config;
+                    }
+                    Theme::change(mode, None, cx);
+                }
+                None => {
+                    let mode = Theme::global(cx).mode;
+                    Theme::change(mode, None, cx);
+                }
             }
-            Theme::change(mode, None, cx);
         }
     }
     apply_zoom(cx);

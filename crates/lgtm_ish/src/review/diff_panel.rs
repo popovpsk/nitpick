@@ -230,6 +230,7 @@ impl ReviewView {
             label.file == file
                 && Rc::ptr_eq(&label.review, review)
                 && Arc::ptr_eq(&label.tree, &self.tree)
+                && label.nav_generation == self.nav_generation
         }) {
             return;
         }
@@ -243,6 +244,7 @@ impl ReviewView {
         self.file_label = Some(FileLabel {
             review: review.clone(),
             tree: self.tree.clone(),
+            nav_generation: self.nav_generation,
             file,
             path: shown.path.clone(),
             name_start,
@@ -704,6 +706,7 @@ const SPLIT_HANDLE: f32 = 8.;
 const SPLIT_GRIP: f32 = 2.;
 
 pub(super) struct FileLabel {
+    nav_generation: u64,
     review: Rc<LoadedReview>,
     tree: Arc<FileTree>,
     file: usize,

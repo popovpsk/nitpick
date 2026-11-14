@@ -221,6 +221,7 @@ pub struct ReviewView {
     hidden: Rc<Vec<HiddenFile>>,
     hidden_mask: Vec<bool>,
     nav_order: Vec<usize>,
+    nav_generation: u64,
     tree_view: TreeView,
     hide_patterns: (Vec<String>, Vec<String>),
     viewed_store: Entity<SharedViewed>,
@@ -307,6 +308,7 @@ impl ReviewView {
             hidden: Rc::default(),
             hidden_mask: Vec::new(),
             nav_order: Vec::new(),
+            nav_generation: 0,
             tree_view: TreeView::default(),
             hide_patterns: (Vec::new(), Vec::new()),
             viewed_store,
@@ -465,6 +467,7 @@ impl ReviewView {
                 view.shape,
             ))
         };
+        self.nav_generation += 1;
         self.nav_order = self
             .tree
             .file_order()
@@ -726,7 +729,13 @@ impl ReviewView {
                     },
                     file,
                     status: file.map_or(FileStatus::Modified, |f| review.files[f].status),
-                    progress: progress[row.node],
+                    progress: match file {
+                        Some(f) if mask.get(f).copied().unwrap_or(false) => Progress {
+                            viewed: usize::from(self.viewed.get(f).copied().unwrap_or(false)),
+                            total: 1,
+                        },
+                        _ => progress[row.node],
+                    },
                     comments: file
                         .and_then(|f| self.by_file.get(&review.files[f].path))
                         .map_or(0, Vec::len),
@@ -922,10 +931,22 @@ impl ReviewView {
                 pos.checked_sub(1).map(|p| order[p])
             };
         }
-        let all = if self.tree.file_node(from).is_some() {
+        let review = self.review.as_ref()?;
+        let sorted;
+        let all: &[usize] = if self.tree.file_node(from).is_some() {
             self.tree.file_order()
+        } else if self.tree_view.shape.flat {
+            sorted = {
+                let mut ixs: Vec<usize> = (0..review.files.len()).collect();
+                ixs.sort_by(|&a, &b| {
+                    let (a, b) = (&review.files[a].path, &review.files[b].path);
+                    (a.to_lowercase(), a).cmp(&(b.to_lowercase(), b))
+                });
+                ixs
+            };
+            &sorted
         } else {
-            self.review.as_ref()?.tree.file_order()
+            review.tree.file_order()
         };
         let pos = all.iter().position(|&f| f == from)?;
         let visible = |f: &&usize| self.is_tracked(**f) && self.tree.file_node(**f).is_some();
@@ -977,11 +998,13 @@ impl ReviewView {
         let order = &self.nav_order;
         let (after, before) = match order.iter().position(|&x| x == ix) {
             Some(pos) => (&order[pos + 1..], &order[..pos]),
-            None => {
-                let next = self.visible_neighbour(ix, true)?;
-                let pos = order.iter().position(|&x| x == next)?;
-                (&order[pos..], &order[..pos])
-            }
+            None => match self.visible_neighbour(ix, true) {
+                Some(next) => {
+                    let pos = order.iter().position(|&x| x == next)?;
+                    (&order[pos..], &order[..pos])
+                }
+                None => (&order[..], &order[..0]),
+            },
         };
         after
             .iter()

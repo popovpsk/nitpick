@@ -24,8 +24,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   narrower).
 - `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
   palettes per appearance; fitting the split ratio to a width.
-- `settings_view.rs` — the settings screen, two pages: Settings and Shortcuts (the
-  shortcut groups stay out of the general page). Back and Escape emit
+- `settings_view.rs` — the settings screen, three pages: Settings, Hidden files and
+  Shortcuts (the shortcut groups stay out of the general page). `reveal` opens a page by
+  re-creating gpui-component's `Settings` under a new id with that page selected: its
+  selection lives in keyed state and only a fresh state takes `default_selected_index`. Back and Escape emit
   `SettingsEvent::Close` to the window rather than dispatching an action, so they work
   wherever focus is; the screen takes focus when it opens. Settings page: theme and syntax colors (hover
   previews), Zed theme import, language, review options, hidden-file patterns (all
@@ -61,7 +63,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   radii, window radius, shadow) to gpui-component's defaults, since a theme only writes the
   fields it has: without the reset, Matrix's square corners stayed after switching away.
   Then `ui_scale` scales the UI font size (the window's rem) and `code_zoom` adds to the
-  mono font size the Diff uses, so both survive theme changes and previews.
+  mono font size the Diff uses, so both survive theme changes and previews. Both edits go
+  through `Theme::update`, which rebuilds gpui-component's Base layer (markdown code in
+  comments follows), and they apply even when the saved theme no longer exists.
 
 - Shortcuts: modules no longer bind their own keys; `keymap::init` runs after every other
   `init`, snapshots what gpui-component and the fixed bindings registered (`BaseKeymap`),

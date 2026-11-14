@@ -212,7 +212,7 @@ pub enum SettingsSection {
     HiddenFiles,
 }
 
-const HIDDEN_FILES_GROUP: usize = 2;
+const HIDDEN_FILES_PAGE: usize = 1;
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
@@ -313,13 +313,13 @@ impl SettingsView {
     }
 
     pub fn reveal(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
-        let group_ix = match section {
-            SettingsSection::HiddenFiles => HIDDEN_FILES_GROUP,
+        let page_ix = match section {
+            SettingsSection::HiddenFiles => HIDDEN_FILES_PAGE,
         };
         self.generation += 1;
         self.revealed = Some(SelectIndex {
-            page_ix: 0,
-            group_ix: Some(group_ix),
+            page_ix,
+            group_ix: None,
         });
         cx.notify();
     }
@@ -1015,8 +1015,8 @@ impl Render for SettingsView {
                         SettingPage::new(s.settings.clone())
                             .group(appearance)
                             .group(review)
-                            .group(hidden)
                             .group(gitlab),
+                        SettingPage::new(s.hidden_files_setting.clone()).group(hidden),
                         SettingPage::new(s.shortcuts.clone())
                             .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
                             .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
