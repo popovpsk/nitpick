@@ -564,6 +564,7 @@ impl ReviewView {
         let grip = theme.drag_border;
         let dragging = self.split_drag.is_some() && cx.has_active_drag();
         let blame = self.blame_marks();
+        let preview = self.render_image_preview(shown, cx);
         div()
             .id("diff-area")
             .relative()
@@ -609,33 +610,37 @@ impl ReviewView {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.end_split_drag(cx)),
             )
-            .child(
-                Diff::new(&self.diff)
-                    .header_visible(false)
-                    .hover_highlight(DiffHoverHighlight::LineNumber)
-                    .soft_wrap(split)
-                    .when(split_mode, |diff| diff.split_ratio(ratio))
-                    .change_background(!whole_file)
-                    .when(whole_file, |diff| {
-                        diff.change_indicator(DiffChangeIndicator::Bars)
-                    })
-                    .annotations(annotations.iter().cloned())
-                    .render_annotation(move |annotation, window, cx| {
-                        comments::render_annotation(&annotation_view, annotation, window, cx)
-                    })
-                    .when(can_comment, |diff| {
-                        diff.on_add_annotation(move |range, window, cx| {
-                            add_view
-                                .update(cx, |this, cx| this.open_line_composer(range, window, cx));
+            .map(|el| match preview {
+                Some(preview) => el.child(preview),
+                None => el.child(
+                    Diff::new(&self.diff)
+                        .header_visible(false)
+                        .hover_highlight(DiffHoverHighlight::LineNumber)
+                        .soft_wrap(split)
+                        .when(split_mode, |diff| diff.split_ratio(ratio))
+                        .change_background(!whole_file)
+                        .when(whole_file, |diff| {
+                            diff.change_indicator(DiffChangeIndicator::Bars)
                         })
-                    })
-                    .when_some(blame, |diff, marks| {
-                        diff.gutter_markers(marks.markers.iter().cloned())
-                            .render_gutter_marker(move |marker, window, cx| {
-                                marks.render_chip(marker, window, cx)
+                        .annotations(annotations.iter().cloned())
+                        .render_annotation(move |annotation, window, cx| {
+                            comments::render_annotation(&annotation_view, annotation, window, cx)
+                        })
+                        .when(can_comment, |diff| {
+                            diff.on_add_annotation(move |range, window, cx| {
+                                add_view.update(cx, |this, cx| {
+                                    this.open_line_composer(range, window, cx)
+                                });
                             })
-                    }),
-            )
+                        })
+                        .when_some(blame, |diff, marks| {
+                            diff.gutter_markers(marks.markers.iter().cloned())
+                                .render_gutter_marker(move |marker, window, cx| {
+                                    marks.render_chip(marker, window, cx)
+                                })
+                        }),
+                ),
+            })
             .child(
                 canvas(
                     move |bounds, _, cx| {

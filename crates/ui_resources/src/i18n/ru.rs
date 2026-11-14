@@ -214,4 +214,11 @@ pub static RU: Strings = lang! {
     days_ago_t: "{} день назад|{} дня назад|{} дней назад",
     months_ago_t: "{} месяц назад|{} месяца назад|{} месяцев назад",
     years_ago_t: "{} год назад|{} года назад|{} лет назад",
+    image_before: "Было",
+    image_after: "Стало",
+    image_too_large: "Слишком большой для предпросмотра",
+    image_failed: "Не удалось показать изображение",
+    size_bytes: "Б",
+    size_kb: "КБ",
+    size_mb: "МБ",
 };

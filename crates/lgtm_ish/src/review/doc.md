@@ -37,6 +37,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
+- `image_preview.rs` — `ImagePreview`: the before/after panes shown in place of the `Diff`
+  for a binary image, their off-thread loading and decoding, and their rendering.
 
 ## Spec
 
@@ -210,6 +212,23 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   `ReviewFile::display_map` keeps the shown patch's map (`shown_map`), from which `changes`
   and blame's block starts are taken.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
+- Image preview: a binary file (`ReviewFile::binary`) whose existing sides all have an image
+  extension (png, jpg/jpeg, gif, webp, bmp, svg, ico, tif/tiff: what gpui's `ImageFormat`
+  decodes) shows "Before" and "After" panes instead of the `Diff`; an added file only After,
+  a deleted one only Before. Each side's format comes from its own path, so a rename that
+  changes the extension decodes both. Other binaries keep the `Diff`. An SVG git diffs as
+  text stays a text diff. The panes sit side by side and stack when the diff area is
+  narrower than `STACK_BELOW`; each image is scaled down to fit its pane, never up
+  (`ObjectFit::ScaleDown`, one image pixel per logical pixel), with its pixel size and byte
+  size under it. A side is read with `Repo::blob` (the work-tree review reads its new side
+  from disk, since `hash-object` there writes no object); over `MAX_PREVIEW_BYTES` (20 MB,
+  checked with `blob_size` or the file's metadata before reading) it says too large, and a
+  read or decode failure says so in the pane and logs a warning. Reading and decoding run
+  on the background executor, one task per side; the state is built when `show_file` puts a
+  new file in and when a side lands, keyed by path + fingerprint (an unchanged reload keeps
+  it) and a generation, so a result for a file the user has left is dropped. Only the shown
+  file's images are kept; replaced ones are removed from the sprite atlas (`drop_image`,
+  deferred so every window is free), as are the last ones when the review is released.
 - Header branch chips: the name opens a fuzzy branch picker for that side only (the branch
   list is read with `git for-each-ref` each time a picker opens, off the UI thread);
   picking emits `ReviewEvent::Open` with that side replaced and the other kept, and the
@@ -239,3 +258,4 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - "Viewed" has one control, the toolbar button.
 - Blame is compact: one initials chip per run of a commit in the marker lane, details in the
   tooltip; not Zed's per-line author and date column.
+- Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.

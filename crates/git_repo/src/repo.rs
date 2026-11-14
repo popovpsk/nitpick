@@ -172,6 +172,16 @@ impl Repo {
             .is_ok_and(|output| output.status.success())
     }
 
+    pub fn blob(&self, id: &str) -> Result<Vec<u8>, GitError> {
+        self.git(&["cat-file", "blob", checked_arg(id)?])
+    }
+
+    pub fn blob_size(&self, id: &str) -> Result<u64, GitError> {
+        let size = text(&self.git(&["cat-file", "-s", checked_arg(id)?])?);
+        size.parse()
+            .map_err(|_| GitError::Parse(format!("{id}: not a blob size {size:?}")))
+    }
+
     pub(crate) fn ref_records(&self) -> Result<Vec<RefRecord>, GitError> {
         let out = self.git(&[
             "for-each-ref",

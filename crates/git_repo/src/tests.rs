@@ -738,6 +738,25 @@ fn resolve_and_has_commit() {
 }
 
 #[test]
+fn blob_reads_raw_bytes_by_id() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let content: &[u8] = b"\x89PNG\r\n\x1a\n\0\x01\x02\xff no newline";
+    std::fs::write(path.join("image.png"), content).unwrap();
+    fixture.commit(&path, &[], "image");
+    let repo = Repo::open(&path).unwrap();
+    let id = fixture.rev(&path, "HEAD:image.png");
+    assert_eq!(repo.blob(&id).unwrap(), content);
+    assert_eq!(repo.blob_size(&id).unwrap(), content.len() as u64);
+    let missing = "1".repeat(40);
+    assert!(repo.blob(&missing).is_err());
+    assert!(repo.blob_size(&missing).is_err());
+    assert!(repo.blob(&fixture.rev(&path, "HEAD")).is_err());
+    assert!(repo.blob("--batch").is_err());
+    assert!(repo.blob("").is_err());
+}
+
+#[test]
 fn remotes_and_upstream_remote() {
     let fixture = Fixture::new();
     let path = fixture.init("repo");

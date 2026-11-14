@@ -214,4 +214,11 @@ pub static EN: Strings = lang! {
     days_ago_t: "{} day ago|{} days ago",
     months_ago_t: "{} month ago|{} months ago",
     years_ago_t: "{} year ago|{} years ago",
+    image_before: "Before",
+    image_after: "After",
+    image_too_large: "Too large to preview",
+    image_failed: "Could not show this image",
+    size_bytes: "B",
+    size_kb: "KB",
+    size_mb: "MB",
 };

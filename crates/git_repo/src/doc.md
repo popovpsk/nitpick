@@ -17,7 +17,8 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `command.rs` — building and running every `git` process, blocking and async, with the
   fixed config/env; NUL-record splitting; `NETWORK_TIMEOUT`.
 - `repo.rs` — `Repo`: open, branches, current branch, default target, resolve, `compare`,
-  commits, remotes, upstream remote.
+  commits, remotes, upstream remote; `blob` / `blob_size` (`cat-file blob` / `-s`: an
+  object's raw bytes and size by id, for the image preview).
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
 - `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
   `working_tree_diff`), untracked files included, and `head_or_empty_tree`.

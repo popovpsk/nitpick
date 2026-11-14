@@ -2,6 +2,7 @@ mod blame;
 mod branch_picker;
 mod comments;
 mod diff_panel;
+mod image_preview;
 pub mod model;
 mod tree_panel;
 mod viewed;
@@ -255,6 +256,7 @@ pub struct ReviewView {
     _tree_close: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
     blame: blame::BlameState,
+    image_preview: image_preview::ImagePreview,
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -346,6 +348,7 @@ impl ReviewView {
             _tree_close: Task::ready(()),
             branch_pickers,
             blame: blame::BlameState::new(cx),
+            image_preview: image_preview::ImagePreview::new(cx),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
             _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
@@ -793,6 +796,7 @@ impl ReviewView {
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
             self.request_blame(cx);
+            self.request_image_preview(cx);
         }
         if let Some(node) = self.tree.file_node(ix) {
             let mut changed = false;
