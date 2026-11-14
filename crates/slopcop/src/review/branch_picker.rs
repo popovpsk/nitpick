@@ -57,6 +57,12 @@ impl BranchPickers {
 }
 
 impl ReviewView {
+    pub fn close_branch_pickers(&mut self, cx: &mut Context<Self>) {
+        for picker in [&self.branch_pickers.target, &self.branch_pickers.source] {
+            picker.update(cx, |picker, cx| picker.close(cx));
+        }
+    }
+
     fn on_branch_picker(
         &mut self,
         side: PullSide,

@@ -57,9 +57,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   controlled), so the owner observes it to re-render. Entries are replaced with
   `set_entries` when the data changes, never built in `render`; matching runs on the
   background executor with `review_core::rank`, and match ranges are precomputed per row.
-  Rows are drawn from the entry list they were ranked against, and a confirm is dropped
-  while newer entries are still being ranked, so an index in `Confirm` always refers to
-  the entries the owner set last.
+  Rows are drawn from the entry list they were ranked against. New entries under the same
+  query keep the selected entry; a new query resets the selection. Enter before the
+  background ranking lands ranks once on the UI thread, so `Confirm` always refers to the
+  latest query and the entries the owner set last.
   With an empty query the checked entry (the current repository or branch) is selected,
   otherwise the best match. Enter or click confirms; ⌘/Ctrl-Enter or ⌘/Ctrl-click confirms
   with `secondary`; Escape or a click outside closes.

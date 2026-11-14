@@ -214,6 +214,7 @@ impl Workspace {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        self.close_screen_pickers(cx);
         cx.global_mut::<RecentRepos>()
             .set_last_review(repo.root(), StoredReview::from_source(&source));
         if let (Some(start), ReviewSource::Branches { target, source }) = (&self.start, &source) {
@@ -256,7 +257,17 @@ impl Workspace {
         }
     }
 
+    fn close_screen_pickers(&self, cx: &mut Context<Self>) {
+        if let Some(start) = &self.start {
+            start.update(cx, |start, cx| start.close_pickers(cx));
+        }
+        if let Some(review) = &self.review {
+            review.update(cx, |review, cx| review.close_branch_pickers(cx));
+        }
+    }
+
     pub fn show_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_screen_pickers(cx);
         if self.screen == Screen::Settings {
             self.screen = self.previous_screen;
         } else {
@@ -285,6 +296,7 @@ impl Workspace {
         if self.repo.is_none() {
             return;
         }
+        self.close_screen_pickers(cx);
         if let Some(start) = &self.start {
             start.update(cx, |start, cx| start.refresh(window, cx));
         }
@@ -294,6 +306,7 @@ impl Workspace {
 
     fn back_to_review(&mut self, cx: &mut Context<Self>) {
         if self.review.is_some() {
+            self.close_screen_pickers(cx);
             self.screen = Screen::Review;
             cx.notify();
         }

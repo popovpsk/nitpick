@@ -44,8 +44,8 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
   `diff --git` header; the caller checks the counts match.
 
 - Fuzzy matching: the query's characters (whitespace dropped, case folded per char) must
-  appear in order. Among all alignments the best score wins (a DP, fzf-style), not the
-  greedy first one: each matched char scores, a char after `/` or `\` or at the start gets
+  appear in order. An fzf-style DP picks the best-scoring alignment, not the greedy first
+  one (approximately: the carried run bonus is not part of its state, as in fzf): each matched char scores, a char after `/` or `\` or at the start gets
   the biggest bonus, then after other separators (`-_.` and spaces), then camelCase humps
   and letter→digit; the first query char's bonus counts double; a run of consecutive
   matches carries its first char's bonus; gaps cost a start penalty plus one per skipped

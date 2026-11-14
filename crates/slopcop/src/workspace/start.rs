@@ -34,7 +34,7 @@ enum Side {
 }
 
 struct BranchField {
-    name: Option<String>,
+    name: Option<SharedString>,
     hint: Option<SharedString>,
     picker: Entity<Picker>,
 }
@@ -175,6 +175,7 @@ impl StartView {
     fn load_branches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         self.loading_branches = true;
+        self.set_pickers_loading(true, cx);
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -190,7 +191,10 @@ impl StartView {
                     Ok((branches, current, default)) => {
                         this.install_branches(branches, current, default, window, cx)
                     }
-                    Err(err) => log::warn!("branches: {err}"),
+                    Err(err) => {
+                        log::warn!("branches: {err}");
+                        this.set_pickers_loading(false, cx);
+                    }
                 }
                 cx.notify();
             });
@@ -208,7 +212,7 @@ impl StartView {
     ) {
         let known = |name: Option<&str>| {
             name.filter(|name| branches.iter().any(|b| b.name == *name))
-                .map(str::to_string)
+                .map(|name| SharedString::from(name.to_string()))
         };
         let target = known(self.target.name.as_deref()).or_else(|| known(default.as_deref()));
         let source = known(self.source.name.as_deref())
@@ -226,9 +230,24 @@ impl StartView {
         self.sync_selection(cx);
     }
 
+    fn set_pickers_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
+        for picker in [&self.target.picker, &self.source.picker] {
+            picker.update(cx, |picker, cx| {
+                let loading = loading && picker.is_empty(cx);
+                picker.set_loading(loading, cx);
+            });
+        }
+    }
+
+    pub fn close_pickers(&mut self, cx: &mut Context<Self>) {
+        for picker in [&self.target.picker, &self.source.picker] {
+            picker.update(cx, |picker, cx| picker.close(cx));
+        }
+    }
+
     pub fn select_branches(&mut self, target: &str, source: &str, cx: &mut Context<Self>) {
-        self.target.name = Some(target.to_string());
-        self.source.name = Some(source.to_string());
+        self.target.name = Some(SharedString::from(target.to_string()));
+        self.source.name = Some(SharedString::from(source.to_string()));
         self.sync_selection(cx);
     }
 
@@ -239,7 +258,7 @@ impl StartView {
         let Some(branch) = self.branches.get(*entry) else {
             return;
         };
-        let name = Some(branch.name.clone());
+        let name = Some(SharedString::from(branch.name.clone()));
         match side {
             Side::Target => self.target.name = name,
             Side::Source => self.source.name = name,
@@ -315,8 +334,8 @@ impl StartView {
             && target != source
         {
             cx.emit(StartEvent::Open(ReviewSource::Branches {
-                target: target.clone(),
-                source: source.clone(),
+                target: target.to_string(),
+                source: source.to_string(),
             }));
         }
     }
@@ -502,7 +521,7 @@ impl Render for StartView {
         };
         let branch_field = |label: SharedString, field: &BranchField, id: &'static str| {
             let (name, color) = match &field.name {
-                Some(name) => (SharedString::from(name.clone()), theme.foreground),
+                Some(name) => (name.clone(), theme.foreground),
                 None => (s.choose_branch.clone(), theme.muted_foreground),
             };
             let trigger = Button::new(id).outline().w_full().child(

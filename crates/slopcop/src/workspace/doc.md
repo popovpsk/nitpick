@@ -33,6 +33,8 @@ window options and opening windows (`main.rs`).
   added to `recent.json` without opening it, and a notification gives the count.
 - The review button shows only the review's title; viewed progress lives in the review
   header.
+- Leaving the start or review screen closes its pickers: a popover's state lives in element
+  state, which a hidden screen loses, so a picker left open would pop up again on return.
 - Window tabs: gpui hides AppKit's own tab bar, so the strip is drawn here from
   `SystemWindowTabController` and only when the window has more than one tab. The tab title
   is the window title (`repo — review`), kept in sync with `update_tab_title`.

@@ -75,6 +75,7 @@ impl Picker {
             shown: Arc::default(),
             rows: Vec::new(),
             query: String::new(),
+            reset_selection: true,
             checked: None,
             selected: None,
             confirmed: None,
@@ -114,8 +115,7 @@ impl Picker {
             delegate.entries = Arc::new(entries);
             delegate.checked = checked;
             delegate.loading = false;
-            let query = delegate.query.clone();
-            delegate.start_search(query, window, cx);
+            delegate.start_search(window, cx);
             cx.notify();
         });
     }
@@ -232,6 +232,7 @@ pub struct PickerDelegate {
     shown: Arc<Vec<PickerEntry>>,
     rows: Vec<PickerRow>,
     query: String,
+    reset_selection: bool,
     checked: Option<usize>,
     selected: Option<usize>,
     confirmed: Option<(usize, bool)>,
@@ -240,28 +241,40 @@ pub struct PickerDelegate {
 }
 
 impl PickerDelegate {
-    fn initial_row(&self) -> Option<usize> {
+    fn is_stale(&self) -> bool {
+        self.reset_selection || !Arc::ptr_eq(&self.shown, &self.entries)
+    }
+
+    fn selected_key(&self) -> Option<(SharedString, SharedString)> {
+        let entry = self.shown.get(self.rows.get(self.selected?)?.entry)?;
+        Some((entry.label.clone(), entry.detail.clone()))
+    }
+
+    fn install(&mut self, entries: Arc<Vec<PickerEntry>>, rows: Vec<PickerRow>) -> Option<usize> {
+        let keep = (!self.reset_selection)
+            .then(|| self.selected_key())
+            .flatten();
+        self.shown = entries;
+        self.rows = rows;
+        self.reset_selection = false;
         if self.rows.is_empty() {
             return None;
         }
-        let checked_row = self
+        let kept = keep.and_then(|(label, detail)| {
+            self.rows.iter().position(|row| {
+                let entry = &self.shown[row.entry];
+                entry.label == label && entry.detail == detail
+            })
+        });
+        let checked = self
             .checked
             .filter(|_| self.query.trim().is_empty())
             .and_then(|checked| self.rows.iter().position(|row| row.entry == checked));
-        Some(checked_row.unwrap_or(0))
+        Some(kept.or(checked).unwrap_or(0))
     }
 
-    fn is_current(&self) -> bool {
-        Arc::ptr_eq(&self.shown, &self.entries)
-    }
-
-    fn start_search(
-        &mut self,
-        query: String,
-        window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) {
-        self.query = query.clone();
+    fn start_search(&mut self, window: &mut Window, cx: &mut Context<ListState<Self>>) {
+        let query = self.query.clone();
         let entries = self.entries.clone();
         self.search = cx.spawn_in(window, async move |list, cx| {
             let rows = cx
@@ -271,10 +284,10 @@ impl PickerDelegate {
                 })
                 .await;
             let _ = list.update_in(cx, |list, window, cx| {
-                let delegate = list.delegate_mut();
-                delegate.shown = entries;
-                delegate.rows = rows;
-                let row = delegate.initial_row().map(IndexPath::new);
+                let row = list
+                    .delegate_mut()
+                    .install(entries, rows)
+                    .map(IndexPath::new);
                 list.set_selected_index(row, window, cx);
                 if let Some(row) = row {
                     list.scroll_to_item(row, ScrollStrategy::Center, window, cx);
@@ -314,7 +327,9 @@ impl ListDelegate for PickerDelegate {
         window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
-        self.start_search(query.to_string(), window, cx);
+        self.query = query.to_string();
+        self.reset_selection = true;
+        self.start_search(window, cx);
         Task::ready(())
     }
 
@@ -343,7 +358,9 @@ impl ListDelegate for PickerDelegate {
             ListItem::new(("picker-row", ix.row))
                 .px_2()
                 .check_icon(IconName::Check)
-                .confirmed(self.is_current() && self.checked == Some(row.entry))
+                .confirmed(
+                    Arc::ptr_eq(&self.shown, &self.entries) && self.checked == Some(row.entry),
+                )
                 .child(
                     h_flex()
                         .w_full()
@@ -410,9 +427,14 @@ impl ListDelegate for PickerDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, _: &mut Window, _: &mut Context<ListState<Self>>) {
+        if self.is_stale() {
+            self.search = Task::ready(());
+            let entries = self.entries.clone();
+            let rows = rank_rows(&self.query, &entries);
+            self.selected = self.install(entries, rows);
+        }
         self.confirmed = self
             .selected
-            .filter(|_| self.is_current())
             .and_then(|row| self.rows.get(row))
             .map(|row| (row.entry, secondary));
     }
