@@ -12,6 +12,7 @@ A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "
   Scala, Swift, C, C++, C#, Ruby, PHP, Lua, Elixir, Zig, SQL, GraphQL, JSON, YAML, TOML,
   Markdown, Bash, Protobuf, CSS, HTML, Make, CMake, diff), split or unified layout, expandable
   context.
+- Bundled themes, syntax colors from any of them chosen separately, and Zed theme import.
 - One fast-forward-only "pull" button per branch to bring in fresh changes.
 - Optional GitLab connection: open merge requests by list, URL or `!iid`, read every
   discussion on the lines it belongs to, comment, reply, resolve.

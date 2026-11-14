@@ -7429,7 +7429,10 @@ dependencies = [
  "gpui-pre",
  "log",
  "rust-embed",
+ "serde_json",
  "sys-locale",
+ "tempfile",
+ "zed_theme",
 ]
 
 [[package]]
@@ -9152,6 +9155,15 @@ dependencies = [
  "x11rb",
  "xim-ctext",
  "xim-parser",
+]
+
+[[package]]
+name = "zed_theme"
+version = "0.1.0"
+dependencies = [
+ "rstest 0.28.0",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

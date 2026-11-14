@@ -1,0 +1,15 @@
+[package]
+name = "zed_theme"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+rstest = "0.28"
+
+[lints]
+workspace = true

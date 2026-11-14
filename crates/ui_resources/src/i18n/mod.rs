@@ -101,6 +101,16 @@ pub struct Strings {
     pub gitlab_token_desc: SharedString,
     pub save_and_check: SharedString,
     pub checking: SharedString,
+    pub syntax_colors: SharedString,
+    pub syntax_colors_dark_desc: SharedString,
+    pub syntax_colors_light_desc: SharedString,
+    pub same_as_theme: SharedString,
+    pub zed_themes: SharedString,
+    pub import_zed_theme: SharedString,
+    pub import_zed_theme_desc: SharedString,
+    pub installed_in_zed: SharedString,
+    pub choose_file: SharedString,
+    pub zed_theme_prompt: SharedString,
 
     pub update_ready_t: SharedString,
     pub update_check_failed_t: SharedString,
@@ -111,6 +121,8 @@ pub struct Strings {
     pub pull_failed_t: SharedString,
     pub pull_up_to_date_t: SharedString,
     pub pull_updated_t: SharedString,
+    pub zed_imported_t: SharedString,
+    pub zed_import_failed_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -161,6 +173,14 @@ impl Strings {
 
     pub fn pull_updated(&self, branch: &str) -> String {
         fill(&self.pull_updated_t, &[branch])
+    }
+
+    pub fn zed_imported(&self, themes: &str) -> String {
+        fill(&self.zed_imported_t, &[themes])
+    }
+
+    pub fn zed_import_failed(&self, err: &str) -> String {
+        fill(&self.zed_import_failed_t, &[err])
     }
 }
 
@@ -292,6 +312,8 @@ mod tests {
                 &s.pull_failed_t,
                 &s.pull_up_to_date_t,
                 &s.pull_updated_t,
+                &s.zed_imported_t,
+                &s.zed_import_failed_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }
