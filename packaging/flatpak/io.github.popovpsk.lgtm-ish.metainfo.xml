@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.popovpsk.slopcop</id>
+  <id>io.github.popovpsk.lgtm-ish</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
 
-  <name>Slopcop</name>
+  <name>LGTM-ish</name>
   <summary>Side-by-side diff reviewer for huge merge requests</summary>
 
   <developer id="io.github.popovpsk">
@@ -13,17 +13,17 @@
 
   <description>
     <p>
-      Slopcop is a native side-by-side diff reviewer for huge merge requests, built in
+      LGTM-ish is a native side-by-side diff reviewer for huge merge requests, built in
       Rust. It tracks per-file "viewed" progress so a long review can be picked up where it
       was left.
     </p>
   </description>
 
-  <launchable type="desktop-id">io.github.popovpsk.slopcop.desktop</launchable>
+  <launchable type="desktop-id">io.github.popovpsk.lgtm-ish.desktop</launchable>
 
-  <url type="homepage">https://github.com/popovpsk/slopcop</url>
-  <url type="bugtracker">https://github.com/popovpsk/slopcop/issues</url>
-  <url type="vcs-browser">https://github.com/popovpsk/slopcop</url>
+  <url type="homepage">https://github.com/popovpsk/lgtm-ish</url>
+  <url type="bugtracker">https://github.com/popovpsk/lgtm-ish/issues</url>
+  <url type="vcs-browser">https://github.com/popovpsk/lgtm-ish</url>
 
   <categories>
     <category>Development</category>

@@ -902,14 +902,16 @@ impl Render for SettingsView {
             )
             .child(
                 div().flex_1().min_h_0().child(
-                    Settings::new("slopcop-settings").pages([SettingPage::new(s.settings.clone())
-                        .group(appearance)
-                        .group(review)
-                        .group(hidden)
-                        .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
-                        .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
-                        .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s))
-                        .group(gitlab)]),
+                    Settings::new("lgtm-ish-settings").pages([SettingPage::new(
+                        s.settings.clone(),
+                    )
+                    .group(appearance)
+                    .group(review)
+                    .group(hidden)
+                    .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
+                    .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
+                    .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s))
+                    .group(gitlab)]),
                 ),
             )
     }

@@ -19,7 +19,7 @@ pub mod shortcut_dialog;
 pub mod window_registry;
 pub mod workspace;
 
-const TABBING_IDENTIFIER: &str = "slopcop";
+const TABBING_IDENTIFIER: &str = "lgtm-ish";
 
 pub(crate) fn build_window_options(cx: &mut App) -> WindowOptions {
     let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
@@ -27,11 +27,11 @@ pub(crate) fn build_window_options(cx: &mut App) -> WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(720.0), px(480.0))),
         titlebar: Some(TitlebarOptions {
-            title: Some("Slopcop".into()),
+            title: Some("LGTM-ish".into()),
             ..TitleBar::title_bar_options()
         }),
         app_owns_titlebar_drag: true,
-        app_id: Some("slopcop".into()),
+        app_id: Some("lgtm-ish".into()),
         tabbing_identifier: Some(TABBING_IDENTIFIER.into()),
         #[cfg(target_os = "linux")]
         window_background: WindowBackgroundAppearance::Transparent,

@@ -70,4 +70,4 @@ Owner's calls; ask before changing.
   no threads.
 - Personal/project access token in `PRIVATE-TOKEN`, not OAuth.
 - Timeouts: whole request 60 s on top of `http_client`'s connect 15 s and read 60 s.
-  User-Agent `slopcop`.
+  User-Agent `lgtm-ish`.

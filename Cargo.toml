@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/slopcop",
+    "crates/lgtm_ish",
     "crates/ui_resources",
     "crates/net_runtime",
     "crates/diagnostics",
@@ -14,7 +14,7 @@ members = [
     "crates/zed_theme",
 ]
 
-default-members = ["crates/slopcop"]
+default-members = ["crates/lgtm_ish"]
 
 
 [workspace.package]

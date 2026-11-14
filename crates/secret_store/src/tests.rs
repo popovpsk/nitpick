@@ -28,7 +28,7 @@ fn load(json: &str) -> (Account, bool) {
 fn a_secret_round_trips_and_is_never_written_in_the_clear() {
     let json = save("hunter2");
     assert!(!json.contains("hunter2"));
-    assert!(json.contains("slopcop:v1:"));
+    assert!(json.contains("lgtm-ish:v1:"));
     let (account, reseal) = load(&json);
     assert_eq!(account.password, "hunter2");
     assert!(!reseal);
@@ -162,5 +162,5 @@ fn builds_with_different_binary_keys_keep_separate_files() {
 
 #[test]
 fn the_binary_key_never_changes() {
-    assert_eq!(embedded::key().id(), "6f436112");
+    assert_eq!(embedded::key().id(), "230c6c65");
 }

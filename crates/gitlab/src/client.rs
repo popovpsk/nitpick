@@ -15,7 +15,7 @@ use crate::request::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-const USER_AGENT: &str = "slopcop";
+const USER_AGENT: &str = "lgtm-ish";
 const TOKEN_HEADER: HeaderName = HeaderName::from_static("private-token");
 const NEXT_PAGE_HEADER: &str = "x-next-page";
 pub(crate) const DISCUSSIONS_PER_PAGE: u32 = 100;

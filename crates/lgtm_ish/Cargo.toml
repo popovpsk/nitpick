@@ -1,15 +1,15 @@
 [package]
-name = "slopcop"
+name = "lgtm_ish"
 version.workspace = true
 edition.workspace = true
 publish = false
 authors = ["Aleksandr Popov <popov.psk@gmail.com>"]
 description = "A side-by-side diff reviewer for huge merge requests"
-homepage = "https://github.com/popovpsk/slopcop"
+homepage = "https://github.com/popovpsk/lgtm-ish"
 license = "MIT"
 
 [[bin]]
-name = "slopcop"
+name = "lgtm-ish"
 path = "src/main.rs"
 
 [features]
@@ -78,11 +78,11 @@ tempfile = "3"
 winresource = "0.1"
 
 [package.metadata.packager]
-product-name = "Slopcop"
-identifier = "io.github.popovpsk.slopcop"
+product-name = "LGTM-ish"
+identifier = "io.github.popovpsk.lgtm-ish"
 category = "DeveloperTool"
 long-description = """
-Slopcop is a native side-by-side diff reviewer for huge merge requests, \
+LGTM-ish is a native side-by-side diff reviewer for huge merge requests, \
 with per-file "viewed" progress so a long review can be picked up where it \
 was left.
 """
@@ -107,7 +107,7 @@ depends = [
 ]
 
 [package.metadata.packager.pacman.files]
-"../../LICENSE" = "/usr/share/licenses/slopcop-bin/LICENSE"
+"../../LICENSE" = "/usr/share/licenses/lgtm-ish-bin/LICENSE"
 
 [package.metadata.packager.deb]
 section = "devel"
@@ -123,7 +123,7 @@ depends = [
 ]
 
 [package.metadata.packager.deb.files]
-"../../LICENSE" = "/usr/share/doc/slopcop/copyright"
+"../../LICENSE" = "/usr/share/doc/lgtm-ish/copyright"
 
 [package.metadata.packager.macos]
 minimum-system-version = "10.15"

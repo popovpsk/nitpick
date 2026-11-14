@@ -19,9 +19,9 @@ jobs:
     name: Build and publish the Flatpak repository
     runs-on: ubuntu-latest
     env:
-      APP_ID: io.github.popovpsk.slopcop
+      APP_ID: io.github.popovpsk.lgtm-ish
       BRANCH: stable
-      MANIFEST: packaging/flatpak/io.github.popovpsk.slopcop.yml
+      MANIFEST: packaging/flatpak/io.github.popovpsk.lgtm-ish.yml
     steps:
       - uses: actions/checkout@v5
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Stamp the release into the metainfo
         env:
-          METAINFO: packaging/flatpak/io.github.popovpsk.slopcop.metainfo.xml
+          METAINFO: packaging/flatpak/io.github.popovpsk.lgtm-ish.metainfo.xml
         run: |
           version="$VERSION"
           case "$version" in
@@ -87,7 +87,7 @@ jobs:
             entry.add_attribute("version", version)
             entry.add_attribute("date", Time.now.utc.strftime("%Y-%m-%d"))
             url = entry.add_element("url", {"type" => "details"})
-            url.text = "https://github.com/popovpsk/slopcop/releases/tag/v#{version}"
+            url.text = "https://github.com/popovpsk/lgtm-ish/releases/tag/v#{version}"
             first = releases.elements[1]
             first ? releases.insert_before(first, entry) : releases.add_element(entry)
             File.write(path, doc.to_s)
@@ -114,7 +114,7 @@ jobs:
       - name: Update the repository metadata
         run: |
           flatpak build-update-repo \
-            --title="Slopcop" \
+            --title="LGTM-ish" \
             --generate-static-deltas \
             --prune --prune-depth=1 \
             --gpg-sign="$GPG_KEY_ID" \
@@ -124,35 +124,35 @@ jobs:
       - name: Assemble the site
         run: |
           gpg --export "$GPG_KEY_ID" | base64 | tr -d "\n" > /tmp/key.b64
-          base="https://popovpsk.github.io/slopcop"
+          base="https://popovpsk.github.io/lgtm-ish"
           mkdir -p site
           cp -a repo site/repo
           {
             echo "[Flatpak Ref]"
             echo "Name=$APP_ID"
             echo "Branch=$BRANCH"
-            echo "Title=Slopcop"
+            echo "Title=LGTM-ish"
             echo "Url=$base/repo"
-            echo "SuggestRemoteName=slopcop"
-            echo "Homepage=https://github.com/popovpsk/slopcop"
+            echo "SuggestRemoteName=lgtm-ish"
+            echo "Homepage=https://github.com/popovpsk/lgtm-ish"
             echo "Icon=$base/icon.png"
             echo "RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo"
             echo "IsRuntime=false"
             echo "GPGKey=$(cat /tmp/key.b64)"
-          } > site/slopcop.flatpakref
+          } > site/lgtm-ish.flatpakref
           {
             echo "[Flatpak Repo]"
-            echo "Title=Slopcop"
+            echo "Title=LGTM-ish"
             echo "Url=$base/repo"
-            echo "Homepage=https://github.com/popovpsk/slopcop"
+            echo "Homepage=https://github.com/popovpsk/lgtm-ish"
             echo "GPGKey=$(cat /tmp/key.b64)"
-          } > site/slopcop.flatpakrepo
+          } > site/lgtm-ish.flatpakrepo
           cp crates/ui_resources/assets/app-icon/256x256.png site/icon.png
           cat > site/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Slopcop for Linux</title>
+          <title>LGTM-ish for Linux</title>
           <style>
             body{max-width:40rem;margin:0 auto;padding:3rem 1.25rem;
                  font:16px/1.6 system-ui,sans-serif;color:#1c1b1a;background:#e8e6e3}
@@ -164,18 +164,18 @@ jobs:
               pre{background:#262523;border-color:#383533}
               a{color:#56b4e3}}
           </style>
-          <h1>Slopcop</h1>
+          <h1>LGTM-ish</h1>
           <p>A side-by-side diff reviewer for huge merge requests.</p>
-          <pre>flatpak install --user https://popovpsk.github.io/slopcop/slopcop.flatpakref</pre>
+          <pre>flatpak install --user https://popovpsk.github.io/lgtm-ish/lgtm-ish.flatpakref</pre>
           <p>Updates arrive through <code>flatpak update</code> like any other remote.</p>
-          <p><a href="https://github.com/popovpsk/slopcop">Source and other downloads</a></p>
+          <p><a href="https://github.com/popovpsk/lgtm-ish">Source and other downloads</a></p>
           HTML
           mkdir -p site/dl
           cat > site/dl/go.js <<'JS'
-          const FALLBACK = "https://github.com/popovpsk/slopcop/releases/latest";
+          const FALLBACK = "https://github.com/popovpsk/lgtm-ish/releases/latest";
           const suffix = document.documentElement.dataset.asset;
           const go = (url) => location.replace(url);
-          fetch("https://api.github.com/repos/popovpsk/slopcop/releases/latest", {
+          fetch("https://api.github.com/repos/popovpsk/lgtm-ish/releases/latest", {
             headers: { Accept: "application/vnd.github+json" },
           })
             .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
@@ -193,8 +193,8 @@ jobs:
           <html lang="en" data-asset="$suffix">
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Downloading Slopcop</title>
-          <noscript><meta http-equiv="refresh" content="0;url=https://github.com/popovpsk/slopcop/releases/latest"></noscript>
+          <title>Downloading LGTM-ish</title>
+          <noscript><meta http-equiv="refresh" content="0;url=https://github.com/popovpsk/lgtm-ish/releases/latest"></noscript>
           <style>
             body{max-width:30rem;margin:0 auto;padding:4rem 1.25rem;
                  font:16px/1.6 system-ui,sans-serif;color:#1c1b1a;background:#e8e6e3}
@@ -203,8 +203,8 @@ jobs:
               body{color:#e8e6e3;background:#1c1b1a}
               a{color:#56b4e3}}
           </style>
-          <p>Fetching the latest Slopcop release&hellip;</p>
-          <p><a href="https://github.com/popovpsk/slopcop/releases/latest">All downloads</a></p>
+          <p>Fetching the latest LGTM-ish release&hellip;</p>
+          <p><a href="https://github.com/popovpsk/lgtm-ish/releases/latest">All downloads</a></p>
           <script src="../go.js"></script>
           HTML
             echo "dl/$slug -> *$suffix"

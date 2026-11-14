@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Slopcop
+Name=LGTM-ish
 GenericName=Diff Reviewer
 Comment=A side-by-side diff reviewer for huge merge requests
-Exec=slopcop
-Icon=io.github.popovpsk.slopcop
+Exec=lgtm-ish
+Icon=io.github.popovpsk.lgtm-ish
 Terminal=false
 Categories=Development;RevisionControl;
 Keywords=diff;review;merge;git;code;

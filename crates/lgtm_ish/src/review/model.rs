@@ -355,7 +355,7 @@ fn host_of(url: &str) -> Option<String> {
 
 pub fn mr_refspecs(mr: &gitlab::MergeRequest) -> Vec<String> {
     vec![format!(
-        "+refs/merge-requests/{0}/head:refs/slopcop/mr/{0}",
+        "+refs/merge-requests/{0}/head:refs/lgtm-ish/mr/{0}",
         mr.iid
     )]
 }

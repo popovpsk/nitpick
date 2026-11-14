@@ -7,8 +7,8 @@ the syntax language of paths the diff component does not recognise. GPUI-free an
 only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
-drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the picker UI
-(`slopcop/src/picker.rs`).
+drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the picker UI
+(`lgtm-ish/src/picker.rs`).
 
 ## Files
 

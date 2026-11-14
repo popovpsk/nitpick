@@ -43,13 +43,13 @@ Not here: when to check, which asset, toasts (`../doc.md`); the feature-off stan
   later, and an `open` in that gap resolves to the old, dead instance and launches nothing
   (`-600 procNotFound`); the gap grows under load. Waiting on the LaunchServices view is what
   Sparkle does.
-- Not `open -n`: `crates/slopcop/Info.plist` sets `LSMultipleInstancesProhibited` (macOS's
+- Not `open -n`: `crates/lgtm_ish/Info.plist` sets `LSMultipleInstancesProhibited` (macOS's
   single-instance guard; `single_instance.rs` is compiled out there), and with it
   LaunchServices ignores `-n` and picks the stale instance.
 
 ## Windows
 
-- The `-setup.exe` goes to `cache_dir/slopcop/updates` (a running `.exe` cannot be overwritten)
+- The `-setup.exe` goes to `cache_dir/lgtm-ish/updates` (a running `.exe` cannot be overwritten)
   and runs once, from the quit handler: detached and windowless, `/S`, plus a `start` of the
   exe after an explicit apply.
 - Unverified: that `/S` is silent for the cargo-packager NSIS installer
@@ -60,4 +60,4 @@ Not here: when to check, which asset, toasts (`../doc.md`); the feature-off stan
 ## Linux
 
 - The AppImage is downloaded as `<name>.new` beside `$APPIMAGE`, set to 0755 and renamed
-  over it. A permission error becomes "update Slopcop the same way it was installed".
+  over it. A permission error becomes "update LGTM-ish the same way it was installed".
