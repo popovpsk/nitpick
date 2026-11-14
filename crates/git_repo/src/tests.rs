@@ -620,6 +620,12 @@ fn diff_of_two_blobs_is_named_after_the_file() {
     let same = repo.diff_blobs(&new, &new, "src/a.txt", &full).unwrap();
     assert!(!same.contains("@@"));
     assert!(repo.diff_blobs("--output=x", &new, "a", &full).is_err());
+    assert!(repo.has_blob(&old));
+    assert!(!repo.has_blob(&base));
+    assert!(!repo.has_blob("0123456789012345678901234567890123456789"));
+    let binary = fixture.commit(&path, &[("src/a.txt", "one\0two\n")], "binary");
+    let binary = fixture.rev(&path, &format!("{binary}:src/a.txt"));
+    assert!(repo.diff_blobs(&new, &binary, "src/a.txt", &full).is_err());
 }
 
 #[test]

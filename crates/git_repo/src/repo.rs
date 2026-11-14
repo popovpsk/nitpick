@@ -172,6 +172,15 @@ impl Repo {
             .is_ok_and(|output| output.status.success())
     }
 
+    pub fn has_blob(&self, id: &str) -> bool {
+        let Ok(id) = checked_arg(id) else {
+            return false;
+        };
+        let spec = format!("{id}^{{blob}}");
+        command::output(&self.root, &["cat-file", "-e", spec.as_str()])
+            .is_ok_and(|output| output.status.success())
+    }
+
     pub fn blob(&self, id: &str) -> Result<Vec<u8>, GitError> {
         self.git(&["cat-file", "blob", checked_arg(id)?])
     }

@@ -277,6 +277,18 @@ impl ReviewView {
     }
 
     pub(super) fn render_search_results(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let results = self.render_search_list(cx)?;
+        Some(
+            div()
+                .id("file-search-results-area")
+                .size_full()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(results)
+                .into_any_element(),
+        )
+    }
+
+    fn render_search_list(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let search = self.file_search.as_ref().filter(|s| s.is_filtering())?;
         if search.rows.is_empty() {
             return Some(

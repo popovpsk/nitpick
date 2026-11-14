@@ -259,13 +259,16 @@ pub struct ReviewView {
     split_width: f32,
     split_drag: Option<(Pixels, f32)>,
     file_label: Option<diff_panel::FileLabel>,
+    header_text: Option<diff_panel::HeaderText>,
     file_search: Option<file_search::FileSearch>,
     find: Option<find_bar::FindBar>,
     seen_before: Vec<Option<String>>,
     since_mode: bool,
     interdiff: Option<model::Interdiff>,
     interdiff_loading: Option<String>,
-    interdiff_failed: HashSet<String>,
+    blob_known: HashMap<String, bool>,
+    blob_checking: bool,
+    _blob_check: Task<()>,
     pending_jump: Option<bool>,
     _interdiff: Task<()>,
     search_opens: usize,
@@ -369,13 +372,16 @@ impl ReviewView {
             split_width: 0.,
             split_drag: None,
             file_label: None,
+            header_text: None,
             file_search: None,
             find: None,
             seen_before: Vec::new(),
             since_mode: false,
             interdiff: None,
             interdiff_loading: None,
-            interdiff_failed: HashSet::new(),
+            blob_known: HashMap::new(),
+            blob_checking: false,
+            _blob_check: Task::ready(()),
             pending_jump: None,
             _interdiff: Task::ready(()),
             search_opens: 0,
@@ -1072,14 +1078,19 @@ impl ReviewView {
     }
 
     pub fn viewed_count(&self) -> usize {
-        self.viewed.iter().filter(|v| **v).count()
+        self.progress().0
     }
 
     pub fn reset_progress(&mut self, cx: &mut Context<Self>) {
         let Some(review) = self.review.clone() else {
             return;
         };
-        let files: Vec<usize> = (0..self.viewed.len()).filter(|&f| self.viewed[f]).collect();
+        let files: Vec<usize> = self
+            .nav_order
+            .iter()
+            .copied()
+            .filter(|&f| self.viewed[f])
+            .collect();
         if files.is_empty() {
             return;
         }

@@ -102,6 +102,9 @@ impl Repo {
             Ok(text) => text,
             Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
         };
+        if text.starts_with("Binary files ") || text.contains("\nBinary files ") {
+            return Err(GitError::Parse(format!("{path}: binary content")));
+        }
         let mut patch = format!(
             "diff --git a/{path} b/{path}\nindex {old}..{new}\n--- a/{path}\n+++ b/{path}\n"
         );

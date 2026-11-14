@@ -17,8 +17,8 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
   list sorted by path or a tree without folder compression; `progress_tracked` counts only
   the files a filter tracks), `rows` (the visible rows for a set of
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`.
-- `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `last_viewed_except` (the
-  newest other version of a path marked viewed), `snapshot` / `save`), `fingerprint`,
+- `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `viewed_versions_except` (the
+  other versions of a path marked viewed, newest first), `snapshot` / `save`), `fingerprint`,
   `fingerprint_blobs`, `write_atomic`.
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);

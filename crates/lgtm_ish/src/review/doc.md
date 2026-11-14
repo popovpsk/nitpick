@@ -92,7 +92,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   view only (the default, as before), always, or never; with no wrapping in split view each
   column clips and both scroll together.
 - Progress reset: the header's progress opens a menu with "Reset viewed progress…"; after a
-  confirmation every viewed file of the review is unmarked and forgotten as "kept unviewed",
+  confirmation every viewed tracked file of the review (the ones the progress counts) is unmarked and forgotten as "kept unviewed",
   so auto-mark works on them again.
 - What a branch review shows is `git_repo::Repo::compare`: the merge base of the source with
   the target and the target's upstream, so commits the target gained since never show up.

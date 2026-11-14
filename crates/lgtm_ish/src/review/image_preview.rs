@@ -15,6 +15,7 @@ use super::{ReviewSource, ReviewView};
 use crate::localization::tr;
 
 const MAX_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_PREVIEW_PIXELS: u64 = 50_000_000;
 const STACK_BELOW: f32 = 520.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -284,6 +285,14 @@ fn load(
         Source::Disk(path) => std::fs::read(path)?,
     };
     let length = bytes.len() as u64;
+    if format != ImageFormat::Svg {
+        let (width, height) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()?
+            .into_dimensions()?;
+        if u64::from(width) * u64::from(height) > MAX_PREVIEW_PIXELS {
+            return Ok(Loaded::TooLarge(length));
+        }
+    }
     let image = Image::from_bytes(format, bytes).to_image_data(svg)?;
     Ok(Loaded::Image(image, length))
 }

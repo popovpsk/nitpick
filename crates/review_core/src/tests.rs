@@ -102,19 +102,22 @@ fn viewed_marks_follow_the_fingerprint() {
 }
 
 #[test]
-fn the_last_viewed_version_other_than_the_current_one_is_found() {
+fn other_viewed_versions_come_newest_first() {
     let mut store = ViewedStore::in_memory();
     let (a, b, c) = (
         fingerprint("o", "a"),
         fingerprint("o", "b"),
         fingerprint("o", "c"),
     );
-    assert_eq!(store.last_viewed_except("f", &c), None);
+    assert!(store.viewed_versions_except("f", &c).is_empty());
     store.set_viewed("f", &a, true, 10);
     store.set_viewed("f", &b, true, 20);
     store.set_viewed("g", &c, true, 30);
-    assert_eq!(store.last_viewed_except("f", &c), Some(b.as_str()));
-    assert_eq!(store.last_viewed_except("f", &b), Some(a.as_str()));
+    assert_eq!(
+        store.viewed_versions_except("f", &c),
+        vec![b.as_str(), a.as_str()]
+    );
+    assert_eq!(store.viewed_versions_except("f", &b), vec![a.as_str()]);
     assert_eq!(fingerprint_blobs(&b), Some(("o", "b")));
 }
 

@@ -22,7 +22,8 @@ pub(super) fn is_blob(id: &str) -> bool {
 }
 
 impl ReviewView {
-    pub(super) fn refresh_seen_before(&mut self, cx: &App) -> bool {
+    pub(super) fn refresh_seen_before(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut unknown: Vec<String> = Vec::new();
         let seen: Vec<Option<String>> = match self.review.as_ref() {
             Some(review) if self.source != ReviewSource::WorkingTree => {
                 let store = self.viewed_store.read(cx).store();
@@ -33,18 +34,65 @@ impl ReviewView {
                         if file.binary || !is_blob(&file.new_blob) {
                             return None;
                         }
-                        let mark = store.last_viewed_except(&file.path, &file.fingerprint)?;
-                        let (_, new) = fingerprint_blobs(mark)?;
-                        (is_blob(new) && !self.interdiff_failed.contains(new))
-                            .then(|| new.to_string())
+                        for mark in store.viewed_versions_except(&file.path, &file.fingerprint) {
+                            let Some((_, new)) = fingerprint_blobs(mark) else {
+                                continue;
+                            };
+                            if !is_blob(new) {
+                                continue;
+                            }
+                            match self.blob_known.get(new) {
+                                Some(true) => return Some(new.to_string()),
+                                Some(false) => continue,
+                                None => {
+                                    unknown.push(new.to_string());
+                                    return None;
+                                }
+                            }
+                        }
+                        None
                     })
                     .collect()
             }
             _ => Vec::new(),
         };
+        if !unknown.is_empty() {
+            self.check_blobs(unknown, cx);
+        }
         let changed = seen != self.seen_before;
         self.seen_before = seen;
         changed
+    }
+
+    fn check_blobs(&mut self, mut ids: Vec<String>, cx: &mut Context<Self>) {
+        if self.blob_checking {
+            return;
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        self.blob_checking = true;
+        let repo = self.repo.clone();
+        self._blob_check = cx.spawn(async move |this, cx| {
+            let known: Vec<(String, bool)> = cx
+                .background_spawn(async move {
+                    ids.into_iter()
+                        .map(|id| {
+                            let exists = repo.has_blob(&id);
+                            (id, exists)
+                        })
+                        .collect()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.blob_checking = false;
+                this.blob_known.extend(known);
+                if this.refresh_seen_before(cx) {
+                    this.rebuild_rows();
+                    this.sync_since_viewed(cx);
+                    cx.notify();
+                }
+            });
+        });
     }
 
     pub(super) fn seen_before(&self, file: usize) -> bool {
@@ -57,7 +105,10 @@ impl ReviewView {
         }
         let previous = self.seen_before.get(file)?.as_ref()?;
         let shown = self.review.as_ref()?.files.get(file)?;
-        Some(format!("{}\0{}\0{previous}", shown.path, shown.fingerprint))
+        Some(format!(
+            "{}\0{}\0{previous}\0{}",
+            shown.path, shown.fingerprint, self.installed_whitespace
+        ))
     }
 
     pub(super) fn install_content(&mut self, file: usize, cx: &mut Context<Self>) {
@@ -77,7 +128,8 @@ impl ReviewView {
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
             return;
         };
-        if self.interdiff.as_ref().is_some_and(|d| d.key == key) {
+        if let Some(interdiff) = self.interdiff.as_mut().filter(|d| d.key == key) {
+            interdiff.file = file;
             let files: Vec<DiffFile> = self
                 .interdiff
                 .as_ref()
@@ -127,11 +179,14 @@ impl ReviewView {
         }
         self.interdiff_loading = None;
         match result {
-            Ok(interdiff) => {
-                let file = interdiff.file;
-                if self.current_file != Some(file) {
+            Ok(mut interdiff) => {
+                let Some(file) = self.current_file else {
+                    return;
+                };
+                if self.interdiff_key(file).as_ref() != Some(&key) {
                     return;
                 }
+                interdiff.file = file;
                 let files: Vec<DiffFile> = interdiff.diff.clone().into_iter().collect();
                 self.interdiff = Some(interdiff);
                 self.diff.update(cx, |state, cx| state.set_files(files, cx));
@@ -145,7 +200,7 @@ impl ReviewView {
             }
             Err((previous, err)) => {
                 log::warn!("comparing with the version viewed before: {err:#}");
-                self.interdiff_failed.insert(previous);
+                self.blob_known.insert(previous, false);
                 self.refresh_seen_before(cx);
                 self.rebuild_rows();
                 self.notify(
@@ -154,6 +209,7 @@ impl ReviewView {
                 );
                 if let Some(file) = self.current_file {
                     self.install_content(file, cx);
+                    self.rebuild_annotations();
                     self.sync_find(cx);
                 }
             }

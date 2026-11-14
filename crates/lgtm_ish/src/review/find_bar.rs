@@ -187,7 +187,10 @@ impl ReviewView {
             (_, side) => side,
         };
         Some(FindSource {
-            key: format!("{}:{}", file.path, file.fingerprint),
+            key: format!(
+                "{}\0{}\0{}",
+                file.path, file.fingerprint, self.installed_whitespace
+            ),
             path: file.path.clone(),
             old: text_side(&file.old_blob),
             new,

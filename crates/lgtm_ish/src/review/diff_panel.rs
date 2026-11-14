@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use gpui::{
     Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context,
-    CursorStyle, DragMoveEvent, ElementId, Empty, Entity, HighlightStyle, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    StyledText, Window, canvas, div, ease_out_quint, prelude::FluentBuilder as _, px,
+    CursorStyle, DragMoveEvent, ElementId, Empty, Entity, FocusHandle, Focusable as _,
+    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, StyledText, Window, canvas, div, ease_out_quint, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -59,7 +59,13 @@ impl ReviewView {
             )),
             ReviewSource::MergeRequest { .. } | ReviewSource::WorkingTree => None,
         };
+        self.refresh_header_text();
         let commits = self.render_commits_button(cx);
+        let (progress_label, progress_tooltip) = self
+            .header_text
+            .as_ref()
+            .map(|text| (text.progress.clone(), text.progress_tooltip.clone()))
+            .unwrap_or_default();
         let theme = cx.theme();
         let (viewed, total) = self.progress();
         let progress = (total > 0).then(|| {
@@ -80,7 +86,7 @@ impl ReviewView {
                                 } else {
                                     theme.muted_foreground
                                 })
-                                .child(format!("{viewed}/{total}")),
+                                .child(progress_label),
                         )
                         .child(
                             ProgressBar::new("viewed-progress-bar")
@@ -90,7 +96,7 @@ impl ReviewView {
                                 .when(complete, |bar| bar.color(theme.success)),
                         ),
                 )
-                .tooltip(s.viewed_progress(viewed, total))
+                .tooltip(progress_tooltip)
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                     let view = view.clone();
                     menu.item(
@@ -227,22 +233,51 @@ impl ReviewView {
             .into_any_element()
     }
 
+    fn refresh_header_text(&mut self) {
+        let (viewed, total) = self.progress();
+        let commits = self
+            .review
+            .as_ref()
+            .map_or(0, |review| review.commits.len());
+        let review = self.review.as_ref().map_or(std::ptr::null(), Rc::as_ptr);
+        let key = (viewed, total, commits, review, ui_resources::i18n::active());
+        if self
+            .header_text
+            .as_ref()
+            .is_some_and(|text| text.key == key)
+        {
+            return;
+        }
+        let s = tr();
+        let commits_tooltip = match (&self.source, &self.review) {
+            (ReviewSource::Branches { .. }, Some(review)) => s
+                .merge_base(short_sha(&review.merge_base_sha), commits)
+                .into(),
+            _ => s.pick_commit.clone(),
+        };
+        self.header_text = Some(HeaderText {
+            key,
+            progress: format!("{viewed}/{total}").into(),
+            progress_tooltip: s.viewed_progress(viewed, total).into(),
+            commits: s.commits_count(commits).into(),
+            commits_tooltip,
+        });
+    }
+
     fn render_commits_button(&self, cx: &App) -> Option<AnyElement> {
         let review = self.review.as_ref()?;
         if review.commits.is_empty() && review.commit.is_none() {
             return None;
         }
         let picker = &self.commit_picker;
+        let text = self.header_text.as_ref()?;
         let label: SharedString = match picker.label() {
             Some(label) => label.clone(),
-            None => tr().commits_count(review.commits.len()).into(),
+            None => text.commits.clone(),
         };
-        let tooltip: SharedString = match (picker.tooltip(), &self.source) {
-            (Some(tooltip), _) => tooltip.clone(),
-            (None, ReviewSource::Branches { .. }) => tr()
-                .merge_base(short_sha(&review.merge_base_sha), review.commits.len())
-                .into(),
-            (None, _) => tr().pick_commit.clone(),
+        let tooltip: SharedString = match picker.tooltip() {
+            Some(tooltip) => tooltip.clone(),
+            None => text.commits_tooltip.clone(),
         };
         let button = Button::new("pick-commit")
             .ghost()
@@ -572,15 +607,21 @@ impl ReviewView {
         let Some(review) = self.review.clone() else {
             return div().into_any_element();
         };
+        let diff_focus = self.diff.read(cx).focus_handle(cx);
         if review.files.is_empty() {
-            return empty_state(tr().no_changes.clone(), cx);
+            return focus_holder(&diff_focus, empty_state(tr().no_changes.clone(), cx));
         }
         if self.nav_order.is_empty() && self.current_file.is_none() {
-            return empty_state(tr().all_files_hidden.clone(), cx);
+            return focus_holder(&diff_focus, empty_state(tr().all_files_hidden.clone(), cx));
         }
-        if self.interdiff.as_ref().is_some_and(|d| d.is_empty()) {
-            return empty_state(tr().no_changes_since_viewed.clone(), cx);
-        }
+        let placeholder =
+            match self.render_image_preview(shown_file(&review, self.current_file), cx) {
+                Some(preview) => Some(preview),
+                None if self.interdiff.as_ref().is_some_and(|d| d.is_empty()) => {
+                    Some(empty_state(tr().no_changes_since_viewed.clone(), cx))
+                }
+                None => None,
+            };
         let wrap = match settings(cx).wrap_lines {
             WrapLines::SplitOnly => settings(cx).diff_layout == DiffLayout::Split,
             WrapLines::Always => true,
@@ -625,7 +666,6 @@ impl ReviewView {
         };
         let find_decorations = self.find.as_ref().map(|find| find.decorations());
         let find_bar = self.render_find_bar(cx);
-        let preview = self.render_image_preview(shown, cx);
         div()
             .id("diff-area")
             .relative()
@@ -671,8 +711,8 @@ impl ReviewView {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.end_split_drag(cx)),
             )
-            .map(|el| match preview {
-                Some(preview) => el.child(preview),
+            .map(|el| match placeholder {
+                Some(placeholder) => el.child(focus_holder(&diff_focus, placeholder)),
                 None => el.child(
                     Diff::new(&self.diff)
                         .header_visible(false)
@@ -775,6 +815,20 @@ const DIFF_BORDER: f32 = 1.;
 const SPLIT_HANDLE: f32 = 8.;
 const SPLIT_GRIP: f32 = 2.;
 
+pub(super) struct HeaderText {
+    key: (
+        usize,
+        usize,
+        usize,
+        *const LoadedReview,
+        ui_resources::i18n::Lang,
+    ),
+    progress: SharedString,
+    progress_tooltip: SharedString,
+    commits: SharedString,
+    commits_tooltip: SharedString,
+}
+
 pub(super) struct FileLabel {
     nav_generation: u64,
     review: Rc<LoadedReview>,
@@ -874,6 +928,19 @@ fn confirm_reset_progress(view: &Entity<ReviewView>, window: &mut Window, cx: &m
 
 fn short_sha(sha: &str) -> &str {
     sha.get(..8).unwrap_or(sha)
+}
+
+fn shown_file(review: &LoadedReview, file: Option<usize>) -> Option<&super::model::ReviewFile> {
+    file.and_then(|ix| review.files.get(ix))
+}
+
+fn focus_holder(focus: &FocusHandle, content: AnyElement) -> AnyElement {
+    div()
+        .id("diff-focus-holder")
+        .track_focus(focus)
+        .size_full()
+        .child(content)
+        .into_any_element()
 }
 
 fn empty_state(message: SharedString, cx: &mut Context<ReviewView>) -> AnyElement {

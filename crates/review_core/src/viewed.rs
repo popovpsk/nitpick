@@ -99,14 +99,18 @@ impl ViewedStore {
             .is_some_and(|marks| marks.contains_key(fingerprint))
     }
 
-    pub fn last_viewed_except(&self, path: &str, fingerprint: &str) -> Option<&str> {
-        self.data
+    pub fn viewed_versions_except(&self, path: &str, fingerprint: &str) -> Vec<&str> {
+        let mut versions: Vec<(&str, i64)> = self
+            .data
             .viewed
-            .get(path)?
-            .iter()
+            .get(path)
+            .into_iter()
+            .flatten()
             .filter(|(mark, _)| mark.as_str() != fingerprint)
-            .max_by_key(|(_, at)| **at)
-            .map(|(mark, _)| mark.as_str())
+            .map(|(mark, at)| (mark.as_str(), *at))
+            .collect();
+        versions.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        versions.into_iter().map(|(mark, _)| mark).collect()
     }
 
     pub fn set_viewed(&mut self, path: &str, fingerprint: &str, viewed: bool, now: i64) {
