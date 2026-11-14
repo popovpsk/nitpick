@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use forge::ForgeKind;
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +11,16 @@ use crate::review::ReviewSource;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoredReview {
-    Branches { target: String, source: String },
-    MergeRequest { project: String, iid: u64 },
+    Branches {
+        target: String,
+        source: String,
+    },
+    MergeRequest {
+        #[serde(default, skip_serializing_if = "ForgeKind::is_gitlab")]
+        forge: ForgeKind,
+        project: String,
+        iid: u64,
+    },
     WorkingTree,
 }
 
@@ -22,9 +31,14 @@ impl StoredReview {
                 target: target.clone(),
                 source: source.clone(),
             },
-            ReviewSource::MergeRequest { project, iid } => StoredReview::MergeRequest {
+            ReviewSource::MergeRequest {
+                forge,
+                project,
+                number,
+            } => StoredReview::MergeRequest {
+                forge: *forge,
                 project: project.clone(),
-                iid: *iid,
+                iid: *number,
             },
             ReviewSource::WorkingTree => StoredReview::WorkingTree,
         }
@@ -36,9 +50,14 @@ impl StoredReview {
                 target: target.clone(),
                 source: source.clone(),
             },
-            StoredReview::MergeRequest { project, iid } => ReviewSource::MergeRequest {
+            StoredReview::MergeRequest {
+                forge,
+                project,
+                iid,
+            } => ReviewSource::MergeRequest {
+                forge: *forge,
                 project: project.clone(),
-                iid: *iid,
+                number: *iid,
             },
             StoredReview::WorkingTree => ReviewSource::WorkingTree,
         }

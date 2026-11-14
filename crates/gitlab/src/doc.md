@@ -6,9 +6,9 @@ included), and writing diff comments, general comments, replies and resolve flag
 parses merge-request URLs and `!123` references. GPUI-free; plain async on tokio, awaited by
 the app through `net_runtime::spawn`.
 
-Not here: mapping diff lines to positions and hiding system notes (`review_core` / the app),
-finding the GitLab instance from git remotes (`git_repo`), storing the token
-(`secret_store`).
+Not here: the host-neutral types the app uses (`forge`, which converts these models),
+mapping diff lines to positions and hiding system notes (`review_core` / the app), finding
+the GitLab instance from git remotes (`git_repo`), storing the token (`secret_store`).
 
 ## Files
 

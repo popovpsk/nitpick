@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use forge::ForgeKind;
 use gpui::{App, Global, px};
 use gpui_component::{
     Theme, ThemeRegistry, WindowExt as _, highlighter::HighlightTheme, notification::Notification,
@@ -126,6 +127,10 @@ pub struct Settings {
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
     #[serde(default)]
+    pub github_url: String,
+    #[serde(default, with = "secret_store::serde_string")]
+    pub github_token: String,
+    #[serde(default)]
     pub syntax_colors: SyntaxPalettes,
     #[serde(default)]
     pub show_blame: bool,
@@ -196,6 +201,8 @@ impl Default for Settings {
             code_zoom: 0,
             gitlab_url: String::new(),
             gitlab_token: String::new(),
+            github_url: String::new(),
+            github_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
             show_blame: false,
             show_whole_file: false,
@@ -234,18 +241,40 @@ impl Settings {
             .map_or(&[], Vec::as_slice)
     }
 
-    pub fn gitlab_configured(&self) -> bool {
-        !self.gitlab_url.trim().is_empty() && !self.gitlab_token.trim().is_empty()
+    pub fn forge_url(&self, kind: ForgeKind) -> String {
+        kind.web_url(match kind {
+            ForgeKind::GitLab => &self.gitlab_url,
+            ForgeKind::GitHub => &self.github_url,
+        })
     }
 
-    pub fn gitlab_client(&self) -> Option<gitlab::Client> {
-        if !self.gitlab_configured() {
+    fn forge_token(&self, kind: ForgeKind) -> &str {
+        match kind {
+            ForgeKind::GitLab => self.gitlab_token.trim(),
+            ForgeKind::GitHub => self.github_token.trim(),
+        }
+    }
+
+    pub fn forge_configured(&self, kind: ForgeKind) -> bool {
+        !self.forge_url(kind).is_empty() && !self.forge_token(kind).is_empty()
+    }
+
+    pub fn forge_hosts(&self) -> Vec<(ForgeKind, String)> {
+        [ForgeKind::GitLab, ForgeKind::GitHub]
+            .into_iter()
+            .map(|kind| (kind, self.forge_url(kind)))
+            .filter(|(_, url)| !url.is_empty())
+            .collect()
+    }
+
+    pub fn forge_client(&self, kind: ForgeKind) -> Option<forge::Client> {
+        if !self.forge_configured(kind) {
             return None;
         }
-        match gitlab::Client::new(self.gitlab_url.trim(), self.gitlab_token.trim()) {
+        match forge::Client::new(kind, &self.forge_url(kind), self.forge_token(kind)) {
             Ok(client) => Some(client),
             Err(err) => {
-                log::warn!("gitlab client: {err}");
+                log::warn!("{} client: {err}", kind.name());
                 None
             }
         }

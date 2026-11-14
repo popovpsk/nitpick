@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use forge::ForgeKind;
 use tempfile::TempDir;
 
 use super::{RecentRepos, StoredReview};
+use crate::review::ReviewSource;
 
 fn paths(recent: &RecentRepos) -> Vec<String> {
     recent
@@ -92,4 +94,47 @@ fn the_existing_file_format_still_loads_and_round_trips() {
     assert_eq!(json["repos"][2]["opened_at"], 0);
     assert_eq!(json["open_windows"][0], "/r/new");
     assert_eq!(paths(&RecentRepos::load(file)), paths(&recent));
+}
+
+#[test]
+fn a_stored_merge_request_without_a_forge_is_gitlab() {
+    let stored: StoredReview =
+        serde_json::from_str(r#"{"kind":"merge_request","project":"g/p","iid":5}"#).unwrap();
+    assert_eq!(
+        stored,
+        StoredReview::MergeRequest {
+            forge: ForgeKind::GitLab,
+            project: "g/p".into(),
+            iid: 5,
+        }
+    );
+    assert_eq!(
+        stored.to_source(),
+        ReviewSource::MergeRequest {
+            forge: ForgeKind::GitLab,
+            project: "g/p".into(),
+            number: 5,
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(&stored).unwrap(),
+        serde_json::json!({"kind": "merge_request", "project": "g/p", "iid": 5})
+    );
+}
+
+#[test]
+fn a_stored_github_pull_request_round_trips() {
+    let source = ReviewSource::MergeRequest {
+        forge: ForgeKind::GitHub,
+        project: "o/r".into(),
+        number: 9,
+    };
+    let stored = StoredReview::from_source(&source);
+    let json = serde_json::to_value(&stored).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"kind": "merge_request", "forge": "github", "project": "o/r", "iid": 9})
+    );
+    let back: StoredReview = serde_json::from_value(json).unwrap();
+    assert_eq!(back.to_source(), source);
 }

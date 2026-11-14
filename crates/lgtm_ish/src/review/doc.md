@@ -1,12 +1,14 @@
 # review
 
-One review: a branch comparison, a GitLab merge request or the uncommitted changes of the work
-tree, loaded into a file tree, a diff of one file at a time, per-file "viewed" marks, an
-optional blame of the shown file and, for a merge request, its discussions.
+One review: a branch comparison, a merge request (a GitLab merge request or a GitHub pull
+request, through `forge`) or the uncommitted changes of the work tree, loaded into a file
+tree, a diff of one file at a time, per-file "viewed" marks, an optional blame of the shown
+file and, for a merge request, its discussions.
 `ReviewView` is the entity; the window creates one per opened review.
 
 Not here: choosing what to review (`workspace/start.rs`), the git operations
-(`git_repo`), the tree and viewed models (`review_core`), the GitLab API (`gitlab`).
+(`git_repo`), the tree and viewed models (`review_core`), the hosts' APIs (`forge`, which
+wraps `gitlab` and `github`; nothing here names those crates).
 
 ## Files
 
@@ -16,7 +18,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile` (with both blob ids), `build` (the range's commits,
   optionally narrowed to one of them; changed files + full context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
   maps (plus the shown patch's map with "ignore whitespace"), fingerprints, tree),
-  `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`; `interdiff` (one file's diff from the
+  `MrContext` / `MrRefs`, `forge_remote` / `ForgeRemote`, `resolve_mr_refs`,
+  `comparison_for_mr`; `interdiff` (one file's diff from the
   version viewed before to the current blob, `Interdiff`).
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
   gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
@@ -37,7 +40,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   commit's label and tooltip) and its fuzzy `Picker`, entries built when it opens, and the
   pick → a reload of the same review at that commit.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
-  general and outdated discussions.
+  general and outdated discussions (titled by `comments_title`: merge request or pull request
+  comments).
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
@@ -106,10 +110,22 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   so auto-mark works on them again.
 - What a branch review shows is `git_repo::Repo::compare`: the merge base of the source with
   the target and the target's upstream, so commits the target gained since never show up.
-  A merge request shows GitLab's own `diff_refs` (`base_sha`..`head_sha`); when either commit
-  is missing locally, `refs/merge-requests/<iid>/head` is fetched into `refs/lgtm-ish/mr/<iid>`
-  (hidden from branch lists) from the remote whose URL path is the MR's project, else
-  `origin`, else any remote on the GitLab host.
+  A merge request shows the host's diff refs: GitLab reports the merge base (`base_sha`), so
+  the review is `base_sha`..`head_sha`; GitHub reports only the target tip (`start_sha`) and
+  `head_sha`, so `resolve_mr_refs` takes `git merge-base` of the two locally (`MrRefs`), which
+  is the three-dot diff GitHub shows. When a needed commit (`forge::DiffRefs::needed_commits`:
+  head and the merge base, or head and the target tip) is missing, `Request::refspecs` are
+  fetched (GitLab: `refs/merge-requests/<n>/head` into `refs/lgtm-ish/mr/<n>`; GitHub:
+  `refs/pull/<n>/head` and the target branch into `refs/lgtm-ish/pr/<n>/{head,base}`, hidden
+  from branch lists) from the remote whose URL path is the project, else `origin`, else any
+  remote on the host (`forge_remote` with just that host).
+- Comments go through `forge::Client` with the request's own number and `MrRefs`. A card
+  offers Reply only when `can_reply` (GitHub conversation comments take none) and
+  Resolve/Unresolve only with a `resolve_id` (GitHub: a review thread the viewer may toggle,
+  from GraphQL; none when GraphQL failed), so no button is shown that cannot work. GitHub
+  accepts a line comment only inside its own diff hunks, so for it a line farther than
+  `ForgeKind::comment_context` from a change (`LineMap::near_change`) opens no composer and
+  says the line cannot be commented on. The UI names a request by `Request::reference` (`!5` / `#5`).
 - The work-tree review (`ReviewSource::WorkingTree`) diffs `HEAD` (the empty tree in an
   unborn repository) against the files on disk: staged, unstaged and untracked
   (`git_repo::Repo::working_tree_*`). It has no commits, no pull and no comments. It reloads
@@ -270,7 +286,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   Markers and chip data are built when a result lands; render only clones the marker list
   the component's builder takes and looks a chip up by binary search.
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
-  so comment positions follow GitLab's real diff rather than the whitespace-blind one;
+  so comment positions follow the host's real diff rather than the whitespace-blind one;
   `ReviewFile::display_map` keeps the shown patch's map (`shown_map`), from which `changes`
   and blame's block starts are taken.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
@@ -313,7 +329,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   `install` treats a different commit as a new review: no "unchanged" fast path, the shown
   file is not kept and the first unviewed file opens. In commit mode no discussion is placed
   on a line (all go to the sheet), the diff offers no line comment and a pending line draft
-  is neither drawn nor sent, since GitLab positions refer to the MR's diff. Viewed marks key
+  is neither drawn nor sent, since comment positions refer to the request's diff. Viewed marks key
   on the commit's blob pairs, so they are shared with the full diff only for a file that one
   commit changed alone. A pick during a pull or a post loads without taking `busy`, so it
   never clears theirs. The unchanged-reload check also compares the commit list and the
@@ -361,10 +377,10 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   servers, rather than as a lone file (JetBrains' LightEdit).
 - Open in browser: the file at the review's head commit, `{project}/-/blob/{sha}/{path}#L{line}`
   (GitLab, and any host other than github.com) or `{project}/blob/{sha}/{path}#L{line}`
-  (github.com), the path percent-encoded,
+  (github.com, or a pull request's host), the path percent-encoded,
   the line as for the editor; a deleted file links its old path at `base_sha`, without a
   line. The project address is `WebLink`, set in `install` (never in render): an MR's
-  `web_url` without `/-/merge_requests/<iid>`; for a branch review the `origin` remote, else
+  `web_url` without `/-/merge_requests/<iid>` (GitLab) or `/pull/<n>` (GitHub); for a branch review the `origin` remote, else
   the first one, through `git_repo::parse_remote_url` (`https_base/path`, read off the UI
   thread). None for the uncommitted-changes review or when nothing parses, and then the item
   is not offered. The MR header's own open-in-browser button stays.
@@ -377,7 +393,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 ## Decisions
 
 - One file at a time rather than all files in one scrolling list.
-- Viewed progress is local; GitLab has no API for its "viewed" checkboxes.
+- Viewed progress is local; neither GitLab nor GitHub has an API for its "viewed" checkboxes.
 - The uncommitted-changes review compares with `HEAD`, not with a target branch.
 - Pull is fast-forward only and only from the branch chips of a branch review.
 - Added and deleted files show as one whole file, never as a split with an empty side, and

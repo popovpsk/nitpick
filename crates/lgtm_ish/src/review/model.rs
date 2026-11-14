@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
+use forge::ForgeKind;
 use git_repo::{ChangeStatus, ChangedFile, Comparison, DiffOptions, Repo};
 use gpui::SharedString;
 use gpui_component::diff::{DiffFile, DiffParseOptions};
@@ -13,8 +14,15 @@ const FULL_CONTEXT_PATCH_LIMIT: usize = 48 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewSource {
-    Branches { target: String, source: String },
-    MergeRequest { project: String, iid: u64 },
+    Branches {
+        target: String,
+        source: String,
+    },
+    MergeRequest {
+        forge: ForgeKind,
+        project: String,
+        number: u64,
+    },
     WorkingTree,
 }
 
@@ -22,7 +30,7 @@ impl ReviewSource {
     pub fn label(&self) -> SharedString {
         match self {
             ReviewSource::Branches { target, source } => format!("{target} ← {source}").into(),
-            ReviewSource::MergeRequest { iid, .. } => format!("!{iid}").into(),
+            ReviewSource::MergeRequest { forge, number, .. } => forge.reference(*number).into(),
             ReviewSource::WorkingTree => crate::localization::tr().uncommitted_changes.clone(),
         }
     }
@@ -62,11 +70,23 @@ impl Head<'_> {
 
 #[derive(Clone)]
 pub struct MrContext {
-    pub client: gitlab::Client,
-    pub project: gitlab::ProjectRef,
-    pub project_path: String,
-    pub mr: gitlab::MergeRequest,
-    pub refs: gitlab::DiffRefs,
+    pub client: forge::Client,
+    pub project: String,
+    pub request: forge::Request,
+    pub refs: MrRefs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MrRefs {
+    pub base_sha: String,
+    pub start_sha: String,
+    pub head_sha: String,
+}
+
+impl MrContext {
+    pub fn kind(&self) -> ForgeKind {
+        self.request.kind
+    }
 }
 
 pub struct ReviewFile {
@@ -448,12 +468,22 @@ fn index_blobs(diff: &DiffFile) -> Option<(String, String)> {
     })
 }
 
-pub fn gitlab_remote(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeRemote {
+    pub kind: ForgeKind,
+    pub remote: String,
+    pub project: String,
+}
+
+pub fn forge_remote(
     repo: &Repo,
-    base_url: &str,
+    forges: &[(ForgeKind, String)],
     project: Option<&str>,
-) -> Option<(String, String)> {
-    let host = host_of(base_url)?;
+) -> Option<ForgeRemote> {
+    let hosts: Vec<(ForgeKind, String)> = forges
+        .iter()
+        .filter_map(|(kind, url)| Some((*kind, host_of(url)?)))
+        .collect();
     let remotes = repo.remotes().ok()?;
     let mut origin = None;
     let mut fallback = None;
@@ -461,16 +491,24 @@ pub fn gitlab_remote(
         let Some(location) = git_repo::parse_remote_url(&remote.url) else {
             continue;
         };
-        if host_of(&location.https_base).as_deref() != Some(host.as_str()) {
+        let Some(host) = host_of(&location.https_base) else {
             continue;
+        };
+        let Some(kind) = hosts.iter().find(|(_, h)| *h == host).map(|(k, _)| *k) else {
+            continue;
+        };
+        let found = ForgeRemote {
+            kind,
+            remote: remote.name,
+            project: location.path,
+        };
+        if project.is_some_and(|p| p.eq_ignore_ascii_case(&found.project)) {
+            return Some(found);
         }
-        if project.is_some_and(|p| p.eq_ignore_ascii_case(&location.path)) {
-            return Some((remote.name, location.path));
-        }
-        if remote.name == "origin" {
-            origin = Some((remote.name, location.path));
+        if found.remote == "origin" {
+            origin = Some(found);
         } else {
-            fallback.get_or_insert((remote.name, location.path));
+            fallback.get_or_insert(found);
         }
     }
     origin.or(fallback)
@@ -484,21 +522,30 @@ fn host_of(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
-pub fn mr_refspecs(mr: &gitlab::MergeRequest) -> Vec<String> {
-    vec![format!(
-        "+refs/merge-requests/{0}/head:refs/lgtm-ish/mr/{0}",
-        mr.iid
-    )]
+pub fn resolve_mr_refs(repo: &Repo, refs: &forge::DiffRefs) -> anyhow::Result<MrRefs> {
+    let base_sha = match &refs.base_sha {
+        Some(base) => base.clone(),
+        None => {
+            repo.compare(&refs.start_sha, &refs.head_sha)
+                .context("finding the merge base")?
+                .base_sha
+        }
+    };
+    Ok(MrRefs {
+        base_sha,
+        start_sha: refs.start_sha.clone(),
+        head_sha: refs.head_sha.clone(),
+    })
 }
 
-pub fn comparison_for_mr(mr: &gitlab::MergeRequest, refs: &gitlab::DiffRefs) -> Comparison {
+pub fn comparison_for_mr(request: &forge::Request, refs: &MrRefs) -> Comparison {
     Comparison {
         base_sha: refs.base_sha.clone(),
         head_sha: refs.head_sha.clone(),
-        target: mr.target_branch.clone(),
-        source: mr.source_branch.clone(),
+        target: request.target_branch.clone(),
+        source: request.source_branch.clone(),
         target_sha: refs.start_sha.clone(),
-        merge_base_refs: vec![mr.target_branch.clone()],
+        merge_base_refs: vec![request.target_branch.clone()],
     }
 }
 

@@ -1,3 +1,4 @@
+use forge::ForgeKind;
 use rstest::rstest;
 
 use super::{Settings, SyntaxPalettes, WrapLines, fit_split_ratio};
@@ -11,6 +12,48 @@ fn settings_without_syntax_colors_still_load() {
     assert!(!settings.show_whole_file);
     assert_eq!(settings.wrap_lines, WrapLines::SplitOnly);
     assert!(settings.editor_command.is_empty());
+}
+
+#[test]
+fn gitlab_only_settings_still_load_and_github_defaults_to_github_com() {
+    let settings: Settings = serde_json::from_str(
+        r#"{ "gitlab_url": "https://gitlab.example.com", "gitlab_token": "glpat-plain" }"#,
+    )
+    .unwrap();
+    assert_eq!(settings.gitlab_url, "https://gitlab.example.com");
+    assert_eq!(settings.gitlab_token, "glpat-plain");
+    assert!(settings.github_url.is_empty());
+    assert!(settings.github_token.is_empty());
+    assert!(settings.forge_configured(ForgeKind::GitLab));
+    assert!(!settings.forge_configured(ForgeKind::GitHub));
+    assert!(settings.forge_client(ForgeKind::GitHub).is_none());
+    assert_eq!(settings.forge_url(ForgeKind::GitHub), "https://github.com");
+    assert_eq!(
+        settings.forge_hosts(),
+        vec![
+            (ForgeKind::GitLab, "https://gitlab.example.com".to_string()),
+            (ForgeKind::GitHub, "https://github.com".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn github_settings_pick_the_enterprise_host() {
+    let settings: Settings = serde_json::from_str(
+        r#"{ "github_url": " https://ghe.example.com ", "github_token": "ghp-plain" }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        settings.forge_url(ForgeKind::GitHub),
+        "https://ghe.example.com"
+    );
+    assert_eq!(
+        settings.forge_hosts(),
+        vec![(ForgeKind::GitHub, "https://ghe.example.com".to_string())]
+    );
+    let client = settings.forge_client(ForgeKind::GitHub).unwrap();
+    assert_eq!(client.kind(), ForgeKind::GitHub);
+    assert_eq!(client.base_url(), "https://ghe.example.com");
 }
 
 #[test]

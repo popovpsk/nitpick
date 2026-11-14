@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use forge::ForgeKind;
 use git_repo::Remote;
 use gpui::{App, AppContext as _, ClipboardItem, Context, Entity, SharedString, Task, actions};
 use gpui_component::{
@@ -55,27 +56,25 @@ const LOGIN_SHELLS: [&str; 8] = ["sh", "bash", "zsh", "fish", "dash", "ksh", "mk
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Forge {
-    GitLab,
-    GitHub,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectWeb {
     pub base: String,
-    pub forge: Forge,
+    pub forge: ForgeKind,
 }
 
 pub fn project_web_from_mr(web_url: &str) -> Option<ProjectWeb> {
     let url = web_url.trim().trim_end_matches('/');
-    let (base, _) = url
+    let (base, forge) = match url
         .rsplit_once("/-/merge_requests/")
-        .or_else(|| url.rsplit_once("/merge_requests/"))?;
+        .or_else(|| url.rsplit_once("/merge_requests/"))
+    {
+        Some((base, _)) => (base, ForgeKind::GitLab),
+        None => (url.rsplit_once("/pull/")?.0, ForgeKind::GitHub),
+    };
     let (_, rest) = base.split_once("://")?;
     rest.contains('/').then(|| ProjectWeb {
         base: base.to_string(),
-        forge: Forge::GitLab,
+        forge,
     })
 }
 
@@ -87,9 +86,9 @@ pub fn project_web_from_remotes(remotes: &[Remote]) -> Option<ProjectWeb> {
     let location = git_repo::parse_remote_url(&remote.url)?;
     let host = location.host.to_ascii_lowercase();
     let forge = if host == "github.com" || host == "www.github.com" {
-        Forge::GitHub
+        ForgeKind::GitHub
     } else {
-        Forge::GitLab
+        ForgeKind::GitLab
     };
     Some(ProjectWeb {
         base: format!("{}/{}", location.https_base, location.path),
@@ -99,8 +98,8 @@ pub fn project_web_from_remotes(remotes: &[Remote]) -> Option<ProjectWeb> {
 
 pub fn blob_url(web: &ProjectWeb, sha: &str, path: &str, line: Option<u32>) -> String {
     let blob = match web.forge {
-        Forge::GitLab => "-/blob",
-        Forge::GitHub => "blob",
+        ForgeKind::GitLab => "-/blob",
+        ForgeKind::GitHub => "blob",
     };
     let mut url = format!("{}/{blob}/{sha}/", web.base);
     for byte in path.bytes() {
@@ -448,7 +447,7 @@ impl ReviewView {
         match (&self.source, &self.mr) {
             (_, Some(ctx)) => {
                 self.web = WebLink {
-                    project: project_web_from_mr(&ctx.mr.web_url),
+                    project: project_web_from_mr(&ctx.request.web_url),
                     _task: Task::ready(()),
                 };
             }
@@ -626,8 +625,8 @@ impl ReviewView {
             return None;
         }
         Some(match project.forge {
-            Forge::GitLab => tr().open_in_gitlab.clone(),
-            Forge::GitHub => tr().open_on_github.clone(),
+            ForgeKind::GitLab => tr().open_in_gitlab.clone(),
+            ForgeKind::GitHub => tr().open_on_github.clone(),
         })
     }
 }

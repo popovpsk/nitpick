@@ -9,6 +9,8 @@ members = [
     "crates/http_client",
     "crates/git_repo",
     "crates/gitlab",
+    "crates/github",
+    "crates/forge",
     "crates/review_core",
     "crates/secret_store",
     "crates/zed_theme",

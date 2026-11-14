@@ -40,10 +40,15 @@ pub struct Strings {
     pub mr_input_placeholder: SharedString,
     pub filter_mrs: SharedString,
     pub no_mrs: SharedString,
+    pub pull_requests: SharedString,
+    pub no_prs: SharedString,
+    pub github_not_configured: SharedString,
     pub gitlab_not_configured: SharedString,
-    pub no_gitlab_remote: SharedString,
+    pub no_forge_remote: SharedString,
     pub no_remote_for_mr: SharedString,
+    pub no_remote_for_pr: SharedString,
     pub mr_not_ready: SharedString,
+    pub pr_not_ready: SharedString,
     pub loading_review: SharedString,
     pub retry: SharedString,
     pub files: SharedString,
@@ -59,6 +64,7 @@ pub struct Strings {
     pub refresh: SharedString,
     pub open_in_browser: SharedString,
     pub general_comments: SharedString,
+    pub pr_comments: SharedString,
     pub comments_failed: SharedString,
     pub comment_failed: SharedString,
     pub comment_line_unavailable: SharedString,
@@ -186,9 +192,11 @@ pub struct Strings {
     pub uncommitted_changes: SharedString,
     pub uncommitted_changes_desc: SharedString,
     pub gitlab_desc: SharedString,
-    pub gitlab_url: SharedString,
-    pub gitlab_token: SharedString,
+    pub server_url: SharedString,
+    pub access_token: SharedString,
     pub gitlab_token_desc: SharedString,
+    pub github_desc: SharedString,
+    pub github_token_desc: SharedString,
     pub save_and_check: SharedString,
     pub checking: SharedString,
     pub syntax_colors: SharedString,
@@ -222,7 +230,7 @@ pub struct Strings {
     pub update_ready_t: SharedString,
     pub update_check_failed_t: SharedString,
     pub settings_save_failed_t: SharedString,
-    pub gitlab_connected_t: SharedString,
+    pub connected_as_t: SharedString,
     pub merge_base_t: SharedString,
     pub pull_branch_t: SharedString,
     pub pull_failed_t: SharedString,
@@ -295,8 +303,8 @@ impl Strings {
         fill(&self.settings_save_failed_t, &[err])
     }
 
-    pub fn gitlab_connected(&self, user: &str) -> String {
-        fill(&self.gitlab_connected_t, &[user])
+    pub fn connected_as(&self, user: &str) -> String {
+        fill(&self.connected_as_t, &[user])
     }
 
     pub fn merge_base(&self, base: &str, commits: usize) -> String {
@@ -570,7 +578,7 @@ mod tests {
                 &s.update_ready_t,
                 &s.update_check_failed_t,
                 &s.settings_save_failed_t,
-                &s.gitlab_connected_t,
+                &s.connected_as_t,
                 &s.pull_branch_t,
                 &s.pull_failed_t,
                 &s.pull_up_to_date_t,

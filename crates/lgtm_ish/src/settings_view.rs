@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use forge::ForgeKind;
 use gpui::{
     Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _,
@@ -164,11 +165,47 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Clone)]
-enum GitlabStatus {
+enum ForgeStatus {
     Idle,
     Checking,
     Ok(SharedString),
     Failed(SharedString),
+}
+
+struct ForgeForm {
+    url: Entity<InputState>,
+    token: Entity<InputState>,
+    status: ForgeStatus,
+    _check: Task<()>,
+}
+
+impl ForgeForm {
+    fn new(
+        url: &str,
+        url_placeholder: &'static str,
+        token: &str,
+        token_placeholder: &'static str,
+        window: &mut Window,
+        cx: &mut Context<SettingsView>,
+    ) -> Self {
+        let url = url.to_string();
+        let token = token.to_string();
+        Self {
+            url: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(url_placeholder)
+                    .default_value(url)
+            }),
+            token: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(token_placeholder)
+                    .masked(true)
+                    .default_value(token)
+            }),
+            status: ForgeStatus::Idle,
+            _check: Task::ready(()),
+        }
+    }
 }
 
 struct HiddenRules {
@@ -228,8 +265,8 @@ pub struct SettingsView {
     focus: FocusHandle,
     generation: u64,
     revealed: Option<SelectIndex>,
-    gitlab_url: Entity<InputState>,
-    gitlab_token: Entity<InputState>,
+    gitlab: ForgeForm,
+    github: ForgeForm,
     editor_command: Entity<InputState>,
     editor_generation: Rc<Cell<u64>>,
     editor_baseline: String,
@@ -239,9 +276,7 @@ pub struct SettingsView {
     repo: Option<(PathBuf, SharedString)>,
     _hidden_subscriptions: [Subscription; 2],
     _settings_sync: Option<Subscription>,
-    status: GitlabStatus,
     zed_files: Rc<Vec<ZedThemeFile>>,
-    _check: Task<()>,
     _zed_discovery: Task<()>,
     _zed_import: Task<()>,
 }
@@ -249,17 +284,22 @@ pub struct SettingsView {
 impl SettingsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let current = settings(cx).clone();
-        let gitlab_url = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("https://gitlab.example.com")
-                .default_value(current.gitlab_url.clone())
-        });
-        let gitlab_token = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("glpat-…")
-                .masked(true)
-                .default_value(current.gitlab_token.clone())
-        });
+        let gitlab = ForgeForm::new(
+            &current.gitlab_url,
+            "https://gitlab.example.com",
+            &current.gitlab_token,
+            "glpat-…",
+            window,
+            cx,
+        );
+        let github = ForgeForm::new(
+            &current.github_url,
+            forge::GITHUB_DEFAULT_URL,
+            &current.github_token,
+            "github_pat_…",
+            window,
+            cx,
+        );
         let editor_command = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("code {root} -g {file}:{line}")
@@ -305,8 +345,8 @@ impl SettingsView {
             focus: cx.focus_handle(),
             generation: 0,
             revealed: None,
-            gitlab_url,
-            gitlab_token,
+            gitlab,
+            github,
             editor_command,
             editor_generation: Rc::default(),
             editor_baseline: current.editor_command.clone(),
@@ -316,9 +356,7 @@ impl SettingsView {
             repo: None,
             _hidden_subscriptions: subscriptions,
             _settings_sync: None,
-            status: GitlabStatus::Idle,
             zed_files: Rc::default(),
-            _check: Task::ready(()),
             _zed_discovery: zed_discovery,
             _zed_import: Task::ready(()),
         };
@@ -525,37 +563,133 @@ impl SettingsView {
         });
     }
 
-    fn save_gitlab(&mut self, cx: &mut Context<Self>) {
-        let url = self
-            .gitlab_url
+    fn form(&self, kind: ForgeKind) -> &ForgeForm {
+        match kind {
+            ForgeKind::GitLab => &self.gitlab,
+            ForgeKind::GitHub => &self.github,
+        }
+    }
+
+    fn form_mut(&mut self, kind: ForgeKind) -> &mut ForgeForm {
+        match kind {
+            ForgeKind::GitLab => &mut self.gitlab,
+            ForgeKind::GitHub => &mut self.github,
+        }
+    }
+
+    fn save_forge(&mut self, kind: ForgeKind, cx: &mut Context<Self>) {
+        let form = self.form(kind);
+        let url = form
+            .url
             .read(cx)
             .value()
             .trim()
             .trim_end_matches('/')
             .to_string();
-        let token = self.gitlab_token.read(cx).value().trim().to_string();
-        update_settings(cx, |s| {
-            s.gitlab_url = url;
-            s.gitlab_token = token;
+        let token = form.token.read(cx).value().trim().to_string();
+        update_settings(cx, |s| match kind {
+            ForgeKind::GitLab => {
+                s.gitlab_url = url;
+                s.gitlab_token = token;
+            }
+            ForgeKind::GitHub => {
+                s.github_url = url;
+                s.github_token = token;
+            }
         });
-        let Some(client) = settings(cx).gitlab_client() else {
-            self.status = GitlabStatus::Idle;
+        let Some(client) = settings(cx).forge_client(kind) else {
+            self.form_mut(kind).status = ForgeStatus::Idle;
             cx.notify();
             return;
         };
-        self.status = GitlabStatus::Checking;
-        cx.notify();
-        self._check = cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let result = net_runtime::spawn(async move { client.current_user().await }).await;
             let _ = this.update(cx, |this, cx| {
-                this.status = match result {
-                    Ok(user) => GitlabStatus::Ok(tr().gitlab_connected(&user.username).into()),
-                    Err(err) => GitlabStatus::Failed(err.to_string().into()),
+                this.form_mut(kind).status = match result {
+                    Ok(user) => ForgeStatus::Ok(tr().connected_as(&user.username).into()),
+                    Err(err) => ForgeStatus::Failed(err.to_string().into()),
                 };
                 cx.notify();
             });
         });
+        let form = self.form_mut(kind);
+        form.status = ForgeStatus::Checking;
+        form._check = task;
+        cx.notify();
     }
+}
+
+fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> SettingGroup {
+    let (description, token_description) = match kind {
+        ForgeKind::GitLab => (s.gitlab_desc.clone(), s.gitlab_token_desc.clone()),
+        ForgeKind::GitHub => (s.github_desc.clone(), s.github_token_desc.clone()),
+    };
+    let url_view = view.clone();
+    let token_view = view.clone();
+    let status_view = view.clone();
+    SettingGroup::new()
+        .title(kind.name())
+        .description(description)
+        .item(SettingItem::new(
+            s.server_url.clone(),
+            SettingField::render(move |_, _, cx| {
+                div()
+                    .w(px(320.))
+                    .child(Input::new(&url_view.read(cx).form(kind).url).small())
+            }),
+        ))
+        .item(
+            SettingItem::new(
+                s.access_token.clone(),
+                SettingField::render(move |_, _, cx| {
+                    div()
+                        .w(px(320.))
+                        .child(Input::new(&token_view.read(cx).form(kind).token).small())
+                }),
+            )
+            .description(token_description),
+        )
+        .item(SettingItem::render(move |_, _, cx| {
+            let status = status_view.read(cx).form(kind).status.clone();
+            let theme = cx.theme();
+            let save_view = status_view.clone();
+            h_flex()
+                .w_full()
+                .gap_2()
+                .justify_end()
+                .items_center()
+                .child(match status {
+                    ForgeStatus::Idle => div().into_any_element(),
+                    ForgeStatus::Checking => div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(tr().checking.clone())
+                        .into_any_element(),
+                    ForgeStatus::Ok(text) => div()
+                        .text_sm()
+                        .text_color(theme.success)
+                        .child(text)
+                        .into_any_element(),
+                    ForgeStatus::Failed(text) => div()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(text)
+                        .into_any_element(),
+                })
+                .child(
+                    Button::new(match kind {
+                        ForgeKind::GitLab => "gitlab-save",
+                        ForgeKind::GitHub => "github-save",
+                    })
+                    .primary()
+                    .small()
+                    .icon(IconName::Check)
+                    .label(tr().save_and_check.clone())
+                    .on_click(move |_, _, cx| {
+                        save_view.update(cx, |this, cx| this.save_forge(kind, cx))
+                    }),
+                )
+        }))
 }
 
 fn theme_label(choice: &ThemeChoice) -> SharedString {
@@ -1011,69 +1145,8 @@ impl Render for SettingsView {
                     )
                     .description(s.editor_command_desc.clone()),
                 );
-        let url_view = view.clone();
-        let token_view = view.clone();
-        let status_view = view.clone();
-        let gitlab = SettingGroup::new()
-            .title("GitLab")
-            .description(s.gitlab_desc.clone())
-            .item(SettingItem::new(
-                s.gitlab_url.clone(),
-                SettingField::render(move |_, _, cx| {
-                    div()
-                        .w(px(320.))
-                        .child(Input::new(&url_view.read(cx).gitlab_url).small())
-                }),
-            ))
-            .item(
-                SettingItem::new(
-                    s.gitlab_token.clone(),
-                    SettingField::render(move |_, _, cx| {
-                        div()
-                            .w(px(320.))
-                            .child(Input::new(&token_view.read(cx).gitlab_token).small())
-                    }),
-                )
-                .description(s.gitlab_token_desc.clone()),
-            )
-            .item(SettingItem::render(move |_, _, cx| {
-                let status = status_view.read(cx).status.clone();
-                let theme = cx.theme();
-                let save_view = status_view.clone();
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_end()
-                    .items_center()
-                    .child(match status {
-                        GitlabStatus::Idle => div().into_any_element(),
-                        GitlabStatus::Checking => div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(tr().checking.clone())
-                            .into_any_element(),
-                        GitlabStatus::Ok(text) => div()
-                            .text_sm()
-                            .text_color(theme.success)
-                            .child(text)
-                            .into_any_element(),
-                        GitlabStatus::Failed(text) => div()
-                            .text_sm()
-                            .text_color(theme.danger)
-                            .child(text)
-                            .into_any_element(),
-                    })
-                    .child(
-                        Button::new("gitlab-save")
-                            .primary()
-                            .small()
-                            .icon(IconName::Check)
-                            .label(tr().save_and_check.clone())
-                            .on_click(move |_, _, cx| {
-                                save_view.update(cx, |this, cx| this.save_gitlab(cx))
-                            }),
-                    )
-            }));
+        let gitlab = forge_group(&view, ForgeKind::GitLab, s);
+        let github = forge_group(&view, ForgeKind::GitHub, s);
         let global_view = view.clone();
         let repo_view = view.clone();
         let mut hidden = SettingGroup::new()
@@ -1137,7 +1210,8 @@ impl Render for SettingsView {
                         SettingPage::new(s.settings.clone())
                             .group(appearance)
                             .group(review)
-                            .group(gitlab),
+                            .group(gitlab)
+                            .group(github),
                         SettingPage::new(s.hidden_files_setting.clone()).group(hidden),
                         SettingPage::new(s.shortcuts.clone())
                             .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))

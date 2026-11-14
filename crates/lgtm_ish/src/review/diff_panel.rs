@@ -111,7 +111,8 @@ impl ReviewView {
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
         match (&self.source, &self.mr) {
             (_, Some(ctx)) => {
-                let url = ctx.mr.web_url.clone();
+                let request = &ctx.request;
+                let url = request.web_url.clone();
                 left = left
                     .child(
                         Icon::new(Icons::GitPullRequest)
@@ -125,7 +126,7 @@ impl ReviewView {
                             .text_ellipsis()
                             .whitespace_nowrap()
                             .font_semibold()
-                            .child(format!("!{} {}", ctx.mr.iid, ctx.mr.title)),
+                            .child(format!("{} {}", request.reference(), request.title)),
                     )
                     .child(
                         div()
@@ -134,7 +135,7 @@ impl ReviewView {
                             .text_color(theme.muted_foreground)
                             .child(format!(
                                 "{} → {} · {}",
-                                ctx.mr.source_branch, ctx.mr.target_branch, ctx.mr.author.name
+                                request.source_branch, request.target_branch, request.author.name
                             )),
                     )
                     .children(commits)
@@ -179,10 +180,10 @@ impl ReviewView {
                     );
                 }
             }
-            (ReviewSource::MergeRequest { iid, .. }, None) => {
+            (ReviewSource::MergeRequest { forge, number, .. }, None) => {
                 left = left
                     .child(Icon::new(Icons::GitPullRequest).small())
-                    .child(format!("!{iid}"));
+                    .child(forge.reference(*number));
             }
         }
         let comments_button =
@@ -194,7 +195,7 @@ impl ReviewView {
                     .icon(Icon::new(Icons::MessageSquareText))
                     .label(count.to_string())
                     .loading(self.discussions_loading)
-                    .tooltip(s.general_comments.clone())
+                    .tooltip(self.comments_title())
                     .on_click(cx.listener(|this, _, window, cx| {
                         comments::open_general_sheet(this, window, cx)
                     }))

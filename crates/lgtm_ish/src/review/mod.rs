@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
+use forge::ForgeKind;
 use git_repo::{PullOutcome, Repo};
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId, Entity, EntityId,
@@ -162,14 +163,15 @@ pub struct NoteView {
 pub struct DiscussionView {
     pub id: String,
     pub notes: Vec<NoteView>,
-    pub resolvable: bool,
+    pub can_reply: bool,
+    pub resolve_id: Option<String>,
     pub resolved: bool,
-    pub position: Option<gitlab::Position>,
+    pub position: Option<forge::Position>,
     pub location: Option<SharedString>,
 }
 
 impl DiscussionView {
-    fn from_gitlab(discussion: &gitlab::Discussion) -> Option<Self> {
+    fn from_forge(discussion: &forge::Discussion) -> Option<Self> {
         let notes: Vec<NoteView> = discussion
             .notes
             .iter()
@@ -191,7 +193,7 @@ impl DiscussionView {
         if notes.is_empty() {
             return None;
         }
-        let position = discussion.position().cloned();
+        let position = discussion.position.clone();
         let location = position
             .as_ref()
             .and_then(|p| p.new_path.clone().or_else(|| p.old_path.clone()))
@@ -199,8 +201,9 @@ impl DiscussionView {
         Some(Self {
             id: discussion.id.clone(),
             notes,
-            resolvable: discussion.is_resolvable(),
-            resolved: discussion.is_resolved(),
+            can_reply: discussion.can_reply,
+            resolve_id: discussion.resolve_id.clone(),
+            resolved: discussion.resolved,
             position,
             location,
         })
@@ -410,7 +413,7 @@ impl ReviewView {
 
     pub fn title(&self) -> SharedString {
         match (&self.source, &self.mr) {
-            (_, Some(mr)) => format!("!{} {}", mr.mr.iid, mr.mr.title).into(),
+            (_, Some(mr)) => format!("{} {}", mr.request.reference(), mr.request.title).into(),
             (source, None) => source.label(),
         }
     }
@@ -544,7 +547,10 @@ impl ReviewView {
         let repo = self.repo.clone();
         let source = self.source.clone();
         let commit = self.commit.clone();
-        let client = settings(cx).gitlab_client();
+        let client = match &source {
+            ReviewSource::MergeRequest { forge, .. } => settings(cx).forge_client(*forge),
+            _ => None,
+        };
         let ignore_whitespace = settings(cx).ignore_whitespace;
         self.loaded_whitespace = ignore_whitespace;
         if self.review.is_none() {
@@ -1285,7 +1291,9 @@ impl ReviewView {
         self.discussions_loading = true;
         self._discussions = cx.spawn(async move |this, cx| {
             let result = net_runtime::spawn(async move {
-                ctx.client.discussions(&ctx.project, ctx.mr.iid).await
+                ctx.client
+                    .discussions(&ctx.project, ctx.request.number)
+                    .await
             })
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -1295,7 +1303,7 @@ impl ReviewView {
                         this.discussions = Rc::new(
                             discussions
                                 .iter()
-                                .filter_map(DiscussionView::from_gitlab)
+                                .filter_map(DiscussionView::from_forge)
                                 .collect(),
                         );
                         this.index_discussions();
@@ -1400,6 +1408,13 @@ impl ReviewView {
         }
         let side = range.end_side();
         let position = DiffLinePosition::new(range.path().clone(), side, range.end());
+        if !self.line_commentable(&position) {
+            window.push_notification(
+                Notification::error(tr().comment_line_unavailable.clone()),
+                cx,
+            );
+            return;
+        }
         self.open_composer(ComposerTarget::Line(position), window, cx);
     }
 
@@ -1469,14 +1484,22 @@ impl ReviewView {
                     DiffSide::Original => Side::Old,
                     _ => Side::New,
                 };
-                let Some(kind) = file.line_map.locate(side, position.line() as u32) else {
+                let Some(kind) =
+                    file.line_map
+                        .locate(side, position.line() as u32)
+                        .filter(|&kind| {
+                            ctx.kind()
+                                .comment_context()
+                                .is_none_or(|context| file.line_map.near_change(kind, context))
+                        })
+                else {
                     window.push_notification(
                         Notification::error(tr().comment_line_unavailable.clone()),
                         cx,
                     );
                     return;
                 };
-                PostRequest::New(Some(gitlab::NewPosition {
+                PostRequest::New(Some(forge::NewPosition {
                     base_sha: ctx.refs.base_sha.clone(),
                     start_sha: ctx.refs.start_sha.clone(),
                     head_sha: ctx.refs.head_sha.clone(),
@@ -1492,16 +1515,16 @@ impl ReviewView {
         cx.spawn_in(window, async move |this, cx| {
             let result = net_runtime::spawn(async move {
                 match request {
-                    PostRequest::Reply(id) => ctx
-                        .client
-                        .reply(&ctx.project, ctx.mr.iid, &id, &body)
-                        .await
-                        .map(|_| ()),
-                    PostRequest::New(position) => ctx
-                        .client
-                        .create_discussion(&ctx.project, ctx.mr.iid, &body, position.as_ref())
-                        .await
-                        .map(|_| ()),
+                    PostRequest::Reply(id) => {
+                        ctx.client
+                            .reply(&ctx.project, ctx.request.number, &id, &body)
+                            .await
+                    }
+                    PostRequest::New(position) => {
+                        ctx.client
+                            .comment(&ctx.project, ctx.request.number, &body, position.as_ref())
+                            .await
+                    }
                 }
             })
             .await;
@@ -1535,7 +1558,7 @@ impl ReviewView {
 
     pub fn set_resolved(
         &mut self,
-        discussion: String,
+        resolve_id: String,
         resolved: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1546,7 +1569,7 @@ impl ReviewView {
         cx.spawn_in(window, async move |this, cx| {
             let result = net_runtime::spawn(async move {
                 ctx.client
-                    .set_resolved(&ctx.project, ctx.mr.iid, &discussion, resolved)
+                    .set_resolved(&ctx.project, ctx.request.number, &resolve_id, resolved)
                     .await
             })
             .await;
@@ -1642,6 +1665,37 @@ impl ReviewView {
         self.mr.is_some()
     }
 
+    fn line_commentable(&self, position: &DiffLinePosition) -> bool {
+        let Some(context) = self
+            .mr
+            .as_ref()
+            .and_then(|ctx| ctx.kind().comment_context())
+        else {
+            return true;
+        };
+        let Some(file) = self
+            .review
+            .as_ref()
+            .and_then(|review| review.files.get(review.file_index(position.path())?))
+        else {
+            return false;
+        };
+        let side = match position.side() {
+            DiffSide::Original => Side::Old,
+            _ => Side::New,
+        };
+        file.line_map
+            .locate(side, position.line() as u32)
+            .is_some_and(|kind| file.line_map.near_change(kind, context))
+    }
+
+    pub fn comments_title(&self) -> SharedString {
+        match self.mr.as_ref().map(MrContext::kind) {
+            Some(ForgeKind::GitHub) => tr().pr_comments.clone(),
+            _ => tr().general_comments.clone(),
+        }
+    }
+
     pub fn focus_tree(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.tree_focus, cx);
     }
@@ -1668,7 +1722,7 @@ fn context_lines(cx: &App) -> Option<usize> {
 
 enum PostRequest {
     Reply(String),
-    New(Option<gitlab::NewPosition>),
+    New(Option<forge::NewPosition>),
 }
 
 impl Focusable for ReviewView {
@@ -1681,7 +1735,7 @@ async fn load_review(
     repo: Repo,
     source: ReviewSource,
     commit: Option<String>,
-    client: Option<gitlab::Client>,
+    client: Option<forge::Client>,
     ignore_whitespace: bool,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<(LoadedReview, Option<MrContext>)> {
@@ -1703,47 +1757,60 @@ async fn load_review(
                 .await?;
             Ok((review, None))
         }
-        ReviewSource::MergeRequest { project, iid } => {
-            let client = client.ok_or_else(|| anyhow!(tr().gitlab_not_configured.to_string()))?;
-            let project_ref = gitlab::ProjectRef::Path(project.clone());
-            let mr = {
-                let client = client.clone();
-                let project_ref = project_ref.clone();
-                net_runtime::spawn(async move { client.merge_request(&project_ref, iid).await })
-                    .await?
+        ReviewSource::MergeRequest {
+            forge: kind,
+            project,
+            number,
+        } => {
+            let (not_configured, no_remote) = match kind {
+                ForgeKind::GitLab => (&tr().gitlab_not_configured, &tr().no_remote_for_mr),
+                ForgeKind::GitHub => (&tr().github_not_configured, &tr().no_remote_for_pr),
             };
-            let refs = mr
-                .diff_refs
-                .clone()
-                .ok_or_else(|| anyhow!(tr().mr_not_ready.to_string()))?;
+            let no_remote = no_remote.to_string();
+            let client = client.ok_or_else(|| anyhow!(not_configured.to_string()))?;
+            let request = {
+                let client = client.clone();
+                let project = project.clone();
+                net_runtime::spawn(async move { client.request(&project, number).await }).await?
+            };
+            let diff_refs = request.diff_refs.clone().ok_or_else(|| {
+                anyhow!(match kind {
+                    ForgeKind::GitLab => tr().mr_not_ready.to_string(),
+                    ForgeKind::GitHub => tr().pr_not_ready.to_string(),
+                })
+            })?;
             let missing_remote = {
                 let repo = repo.clone();
-                let refs = refs.clone();
-                let base_url = client.base_url().to_string();
-                let project_path = project.clone();
+                let needed = diff_refs.needed_commits().map(str::to_string);
+                let forges = vec![(kind, client.base_url().to_string())];
+                let project = project.clone();
                 cx.background_spawn(async move {
-                    if repo.has_commit(&refs.head_sha) && repo.has_commit(&refs.base_sha) {
+                    if needed.iter().all(|sha| repo.has_commit(sha)) {
                         Ok(None)
                     } else {
-                        model::gitlab_remote(&repo, &base_url, Some(&project_path))
-                            .map(|(remote, _)| remote)
+                        model::forge_remote(&repo, &forges, Some(&project))
+                            .map(|found| found.remote)
                             .or_else(|| repo.upstream_remote())
                             .map(Some)
-                            .ok_or_else(|| anyhow!(tr().no_remote_for_mr.to_string()))
+                            .ok_or_else(|| anyhow!(no_remote))
                     }
                 })
                 .await?
             };
             if let Some(remote) = missing_remote {
-                let specs = model::mr_refspecs(&mr);
+                let specs = request.refspecs();
                 let fetch_repo = repo.clone();
                 net_runtime::spawn(async move { fetch_repo.fetch(&remote, &specs).await }).await?;
             }
-            let comparison = model::comparison_for_mr(&mr, &refs);
-            let review = {
+            let (review, refs) = {
                 let repo = repo.clone();
+                let request = request.clone();
                 cx.background_spawn(async move {
-                    model::build(&repo, comparison, commit.as_deref(), ignore_whitespace)
+                    let refs = model::resolve_mr_refs(&repo, &diff_refs)?;
+                    let comparison = model::comparison_for_mr(&request, &refs);
+                    let review =
+                        model::build(&repo, comparison, commit.as_deref(), ignore_whitespace)?;
+                    anyhow::Ok((review, refs))
                 })
                 .await?
             };
@@ -1751,9 +1818,8 @@ async fn load_review(
                 review,
                 Some(MrContext {
                     client,
-                    project: project_ref,
-                    project_path: project,
-                    mr,
+                    project,
+                    request,
                     refs,
                 }),
             ))
