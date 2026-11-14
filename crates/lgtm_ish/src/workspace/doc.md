@@ -28,6 +28,8 @@ window options and opening windows (`main.rs`).
   tree is hidden), or the window root, so menu items and shortcuts keep reaching the window.
   As a safety net, a render that finds focus nowhere inside the window (and no dialog or
   sheet open, while the window is active) focuses the current screen on the next frame.
+- In fullscreen the title bar drops gpui-component's 80px macOS traffic-light inset (the
+  lights are hidden there), so the repository picker starts at the edge.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with
   `~` for the home dir; both are matched, the name preferred), in `recent.json` order, the
   current one checked. Enter or a click switches this window to the repository;

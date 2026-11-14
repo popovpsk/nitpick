@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, Context, IntoElement, ParentElement as _, SharedString, Styled as _,
-    WeakEntity, Window, div, prelude::FluentBuilder as _,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, TitleBar,
@@ -15,7 +15,7 @@ use crate::localization::tr;
 impl Workspace {
     pub(super) fn render_title_bar(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let s = tr();
@@ -67,6 +67,7 @@ impl Workspace {
 
         let theme = cx.theme();
         TitleBar::new()
+            .when(window.is_fullscreen(), |bar| bar.pl(px(0.)))
             .child(
                 h_flex()
                     .flex_1()
