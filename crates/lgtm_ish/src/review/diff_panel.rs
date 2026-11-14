@@ -59,6 +59,7 @@ impl ReviewView {
             )),
             ReviewSource::MergeRequest { .. } | ReviewSource::WorkingTree => None,
         };
+        let commits = self.render_commits_button(cx);
         let theme = cx.theme();
         let (viewed, total) = self.progress();
         let progress = (total > 0).then(|| {
@@ -130,6 +131,7 @@ impl ReviewView {
                                 ctx.mr.source_branch, ctx.mr.target_branch, ctx.mr.author.name
                             )),
                     )
+                    .children(commits)
                     .child(
                         Button::new("open-mr")
                             .ghost()
@@ -151,16 +153,7 @@ impl ReviewView {
                         .child(div().text_color(theme.muted_foreground).child("←"))
                         .child(source_chip);
                 }
-                if let Some(review) = &self.review {
-                    let base: String = review.base_sha.chars().take(8).collect();
-                    left = left.child(
-                        div()
-                            .flex_none()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(s.merge_base(&base, review.commits.len())),
-                    );
-                }
+                left = left.children(commits);
             }
             (ReviewSource::WorkingTree, None) => {
                 left = left
@@ -232,6 +225,43 @@ impl ReviewView {
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
             .into_any_element()
+    }
+
+    fn render_commits_button(&self, cx: &App) -> Option<AnyElement> {
+        let review = self.review.as_ref()?;
+        if review.commits.is_empty() && review.commit.is_none() {
+            return None;
+        }
+        let picker = &self.commit_picker;
+        let label: SharedString = match picker.label() {
+            Some(label) => label.clone(),
+            None => tr().commits_count(review.commits.len()).into(),
+        };
+        let tooltip: SharedString = match (picker.tooltip(), &self.source) {
+            (Some(tooltip), _) => tooltip.clone(),
+            (None, ReviewSource::Branches { .. }) => tr()
+                .merge_base(short_sha(&review.merge_base_sha), review.commits.len())
+                .into(),
+            (None, _) => tr().pick_commit.clone(),
+        };
+        let button = Button::new("pick-commit")
+            .ghost()
+            .xsmall()
+            .icon(Icon::new(Icons::GitCommitHorizontal))
+            .label(label)
+            .selected(review.commit.is_some())
+            .tooltip(tooltip);
+        Some(
+            div()
+                .flex_none()
+                .child(
+                    picker
+                        .picker()
+                        .read(cx)
+                        .popover("commit-picker", button, cx),
+                )
+                .into_any_element(),
+        )
     }
 
     fn refresh_file_label(&mut self) {
@@ -557,7 +587,7 @@ impl ReviewView {
         let annotation_view = view.clone();
         let add_view = view.clone();
         let measure_view = view.clone();
-        let can_comment = self.mr.is_some() && review.comments_aligned;
+        let can_comment = self.mr.is_some() && review.comments_aligned && review.commit.is_none();
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
             .current_file

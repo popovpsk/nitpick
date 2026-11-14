@@ -13,8 +13,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `mod.rs` — `ReviewView`: loading (`load_review`), installing results, viewed marks and their
   save, tree selection and collapse state, file navigation, pull, discussions and the comment
   composer; actions and key bindings.
-- `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile`, `build` (changed files + full
-  context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
+- `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile`, `build` (the range's commits,
+  optionally narrowed to one of them; changed files + full context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
   maps (plus the shown patch's map with "ignore whitespace"), fingerprints, tree),
   `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`.
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
@@ -27,11 +27,14 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
 - `diff_panel.rs` — the review header (branch pickers with pull buttons, the MR, or the work
-  tree; viewed progress), the file toolbar (change and file navigation, the shown file's
+  tree; the commits button; viewed progress), the file toolbar (change and file navigation, the shown file's
   label as a cached `FileLabel`, viewed and layout controls) and the `Diff` element with its
   movable split divider; the sliding, resizable tree panel; `Render for ReviewView`.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
+- `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
+  commit's label and tooltip) and its fuzzy `Picker`, entries built when it opens, and the
+  pick → a reload of the same review at that commit.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
   general and outdated discussions.
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
@@ -235,6 +238,27 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   window opens it as a new review exactly like the start screen does, recording it as the
   repository's last review. Picking the other side's branch, or the current one, does
   nothing.
+- One commit: branch and merge request reviews have a ghost commits button in the header
+  (after the branch chips, or after the MR's "source → target · author"; none for the work
+  tree or an empty range). It reads "N commits" (tooltip: the merge base and the count for
+  a branch review), or the chosen commit's short id and subject cut to 48 characters
+  (tooltip: subject and author). Its picker lists "All changes", then the range's commits
+  newest first (subject; short id · author · relative time, searchable), the current one
+  checked; entries are built when it opens, so times and language are current. A choice is
+  `ReviewView::commit`, view state only: not saved, gone with the view. `build` then diffs
+  the commit's first parent (the empty tree for a root commit,
+  `Repo::first_parent_or_empty_tree`) against the commit, so `base_sha`/`head_sha` are that
+  pair and blame runs at the commit; `commits` stays the whole range and `merge_base_sha`
+  the range's base. A load whose range no longer holds the commit falls back to all changes,
+  and `commit` follows what was installed (a failed load restores the installed one).
+  `install` treats a different commit as a new review: no "unchanged" fast path, the shown
+  file is not kept and the first unviewed file opens. In commit mode no discussion is placed
+  on a line (all go to the sheet), the diff offers no line comment and a pending line draft
+  is neither drawn nor sent, since GitLab positions refer to the MR's diff. Viewed marks key
+  on the commit's blob pairs, so they are shared with the full diff only for a file that one
+  commit changed alone. A pick during a pull or a post loads without taking `busy`, so it
+  never clears theirs. The unchanged-reload check also compares the commit list and the
+  merge base, since in commit mode a grown range keeps the same pair and files.
 - The review header shows viewed progress before the refresh button (`viewed/total` and a
   thin bar, the count in the tooltip), read from `progress()`; the title bar does not.
 - Highlight queries are registered once, by the first `parse`, through gpui-component's
@@ -256,6 +280,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - The split divider is movable; its ratio is one app-wide setting, not per file or
   repository.
 - "Viewed" has one control, the toolbar button.
+- One commit is a view of the same review (the header's commits button), not a separate
+  review kind; it is never persisted and disables line comments.
 - Blame is compact: one initials chip per run of a commit in the marker lane, details in the
   tooltip; not Zed's per-line author and date column.
 - Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.

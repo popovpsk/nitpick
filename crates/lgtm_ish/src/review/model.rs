@@ -103,21 +103,68 @@ pub struct LoadedReview {
     pub context_limited: bool,
     pub comments_aligned: bool,
     pub commits: Vec<git_repo::Commit>,
+    pub commit: Option<git_repo::Commit>,
+    pub merge_base_sha: String,
 }
 
 impl LoadedReview {
     pub fn file_index(&self, path: &str) -> Option<usize> {
         self.files.iter().position(|f| f.path.as_ref() == path)
     }
+
+    pub fn commit_sha(&self) -> Option<&str> {
+        self.commit.as_ref().map(|c| c.sha.as_str())
+    }
+}
+
+struct ReviewRange {
+    commits: Vec<git_repo::Commit>,
+    commit: Option<git_repo::Commit>,
+    merge_base_sha: String,
 }
 
 pub fn build(
     repo: &Repo,
     comparison: Comparison,
+    commit: Option<&str>,
     ignore_whitespace: bool,
 ) -> anyhow::Result<LoadedReview> {
-    let head = comparison.head_sha.clone();
-    build_range(repo, comparison, Head::Commit(&head), ignore_whitespace)
+    let (base, head) = (&comparison.base_sha, &comparison.head_sha);
+    let commits = repo.commits(base, head).unwrap_or_else(|err| {
+        log::warn!("commits {base}..{head}: {err}");
+        Vec::new()
+    });
+    let chosen = commit.and_then(|sha| commits.iter().find(|c| c.sha == sha).cloned());
+    let merge_base_sha = comparison.base_sha.clone();
+    let (comparison, head) = match &chosen {
+        Some(commit) => {
+            let parent = repo
+                .first_parent_or_empty_tree(&commit.sha)
+                .context("resolving the commit's parent")?;
+            let comparison = Comparison {
+                base_sha: parent,
+                head_sha: commit.sha.clone(),
+                ..comparison
+            };
+            (comparison, commit.sha.clone())
+        }
+        None => {
+            let head = comparison.head_sha.clone();
+            (comparison, head)
+        }
+    };
+    let range = ReviewRange {
+        commits,
+        commit: chosen,
+        merge_base_sha,
+    };
+    build_range(
+        repo,
+        comparison,
+        Head::Commit(&head),
+        range,
+        ignore_whitespace,
+    )
 }
 
 pub fn build_working_tree(repo: &Repo, ignore_whitespace: bool) -> anyhow::Result<LoadedReview> {
@@ -135,13 +182,25 @@ pub fn build_working_tree(repo: &Repo, ignore_whitespace: bool) -> anyhow::Resul
         target_sha: base,
         merge_base_refs: Vec::new(),
     };
-    build_range(repo, comparison, Head::WorkingTree, ignore_whitespace)
+    let range = ReviewRange {
+        commits: Vec::new(),
+        commit: None,
+        merge_base_sha: comparison.base_sha.clone(),
+    };
+    build_range(
+        repo,
+        comparison,
+        Head::WorkingTree,
+        range,
+        ignore_whitespace,
+    )
 }
 
 fn build_range(
     repo: &Repo,
     comparison: Comparison,
     range_head: Head<'_>,
+    range: ReviewRange,
     ignore_whitespace: bool,
 ) -> anyhow::Result<LoadedReview> {
     let base = comparison.base_sha.clone();
@@ -203,13 +262,6 @@ fn build_range(
         })
         .collect();
     let tree = Arc::new(FileTree::build(&tree_files(&files)));
-    let commits = match range_head {
-        Head::Commit(head) => repo.commits(&base, head).unwrap_or_else(|err| {
-            log::warn!("commits {base}..{head}: {err}");
-            Vec::new()
-        }),
-        Head::WorkingTree => Vec::new(),
-    };
     Ok(LoadedReview {
         base_sha: base,
         head_sha: head,
@@ -220,7 +272,9 @@ fn build_range(
         tree,
         context_limited,
         comments_aligned,
-        commits,
+        commits: range.commits,
+        commit: range.commit,
+        merge_base_sha: range.merge_base_sha,
     })
 }
 

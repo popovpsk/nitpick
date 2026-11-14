@@ -61,6 +61,7 @@ impl ReviewView {
         for picker in [&self.branch_pickers.target, &self.branch_pickers.source] {
             picker.update(cx, |picker, cx| picker.close(cx));
         }
+        self.close_commit_picker(cx);
     }
 
     fn on_branch_picker(

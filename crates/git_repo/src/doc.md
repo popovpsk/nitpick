@@ -17,11 +17,13 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `command.rs` — building and running every `git` process, blocking and async, with the
   fixed config/env; NUL-record splitting; `NETWORK_TIMEOUT`.
 - `repo.rs` — `Repo`: open, branches, current branch, default target, resolve, `compare`,
-  commits, remotes, upstream remote; `blob` / `blob_size` (`cat-file blob` / `-s`: an
-  object's raw bytes and size by id, for the image preview).
+  commits, `first_parent_or_empty_tree` (a commit's first parent, the empty tree for a root
+  commit), remotes, upstream remote; `blob` / `blob_size` (`cat-file blob` / `-s`: an
+  object's raw bytes and size by id, for the image preview and find in file).
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
 - `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
-  `working_tree_diff`), untracked files included, and `head_or_empty_tree`.
+  `working_tree_diff`), untracked files included, `head_or_empty_tree` and the empty tree id
+  (`hash-object -t tree` of nothing, so SHA-256 repositories get theirs).
 - `blame.rs` — `blame(rev, path)`: one `blame --porcelain` run parsed into a `BlameLine` per
   line of the file at a commit or in the work tree.
 - `pull.rs` — `fetch` and the fast-forward-only `pull`.

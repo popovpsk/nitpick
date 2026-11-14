@@ -50,7 +50,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   repository (opened or added from a folder) with the last review of each, and the
   repositories of the windows open at quit.
 - `recent_tests.rs` — ordering, bulk add, and the stored format on a `TempDir`.
-- `picker.rs` — `Picker`: the fuzzy picker every repository and branch chooser uses, a
+- `picker.rs` — `Picker`: the fuzzy picker every repository, branch and commit chooser uses, a
   `Popover` around gpui-component's searchable `List` with a `PickerDelegate`;
   `PickerEntry`, `branch_entries`, `PickerEvent` (`Open`, `Confirm { entry, secondary }`).
 - `window_registry.rs` — which repository each open window shows, persisted into

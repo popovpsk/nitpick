@@ -239,4 +239,8 @@ pub static RU: Strings = lang! {
     size_bytes: "Б",
     size_kb: "КБ",
     size_mb: "МБ",
+    all_changes: "Все изменения",
+    search_commits: "Поиск коммитов",
+    pick_commit: "Показать изменения одного коммита",
+    commits_count_t: "{} коммит|{} коммита|{} коммитов",
 };

@@ -239,4 +239,8 @@ pub static EN: Strings = lang! {
     size_bytes: "B",
     size_kb: "KB",
     size_mb: "MB",
+    all_changes: "All changes",
+    search_commits: "Search commits",
+    pick_commit: "Show the changes of one commit",
+    commits_count_t: "{} commit|{} commits",
 };
