@@ -91,6 +91,7 @@ fn main() {
 
         gpui_component::init(cx);
         cx.set_global(settings_store::SettingsStore::load());
+        settings_store::observe_theme_for_syntax_colors(cx);
         cx.set_global(recent::RecentRepos::load(data_dir.join("recent.json")));
         localization::sync_active_lang(cx);
         settings_store::apply_saved_theme(cx);

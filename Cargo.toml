@@ -11,6 +11,7 @@ members = [
     "crates/gitlab",
     "crates/review_core",
     "crates/secret_store",
+    "crates/zed_theme",
 ]
 
 default-members = ["crates/slopcop"]

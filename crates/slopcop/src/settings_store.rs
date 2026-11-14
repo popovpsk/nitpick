@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gpui::{App, Global};
-use gpui_component::{Theme, ThemeRegistry, WindowExt as _, notification::Notification};
+use gpui_component::{
+    Theme, ThemeRegistry, WindowExt as _, highlighter::HighlightTheme, notification::Notification,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::localization::tr;
@@ -38,6 +41,32 @@ pub enum DiffLayout {
     Unified,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntaxPalettes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dark: Option<String>,
+}
+
+impl SyntaxPalettes {
+    pub fn get(&self, dark: bool) -> Option<&String> {
+        if dark {
+            self.dark.as_ref()
+        } else {
+            self.light.as_ref()
+        }
+    }
+
+    pub fn set(&mut self, dark: bool, palette: Option<String>) {
+        if dark {
+            self.dark = palette;
+        } else {
+            self.light = palette;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -60,6 +89,8 @@ pub struct Settings {
     pub gitlab_url: String,
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
+    #[serde(default)]
+    pub syntax_colors: SyntaxPalettes,
 }
 
 fn default_true() -> bool {
@@ -85,6 +116,7 @@ impl Default for Settings {
             tree_width: default_tree_width(),
             gitlab_url: String::new(),
             gitlab_token: String::new(),
+            syntax_colors: SyntaxPalettes::default(),
         }
     }
 }
@@ -222,3 +254,72 @@ pub fn apply_saved_theme(cx: &mut App) {
     let choice = settings(cx).theme.clone();
     apply_theme(&choice, cx);
 }
+
+#[derive(Default)]
+struct SyntaxPreview(Option<Option<String>>);
+
+impl Global for SyntaxPreview {}
+
+pub fn observe_theme_for_syntax_colors(cx: &mut App) {
+    cx.set_global(SyntaxPreview::default());
+    cx.observe_global::<Theme>(apply_syntax_colors).detach();
+}
+
+pub fn preview_syntax_colors(palette: Option<String>, cx: &mut App) {
+    cx.set_global(SyntaxPreview(Some(palette)));
+    apply_syntax_colors(cx);
+}
+
+pub fn end_syntax_preview(cx: &mut App) {
+    cx.set_global(SyntaxPreview(None));
+    apply_syntax_colors(cx);
+}
+
+pub fn syntax_palette_names(dark: bool, cx: &App) -> Vec<String> {
+    let mut names: Vec<String> = ThemeRegistry::global(cx)
+        .themes()
+        .values()
+        .filter(|config| config.mode.is_dark() == dark && config.highlight.is_some())
+        .map(|config| config.name.to_string())
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names
+}
+
+pub fn apply_syntax_colors(cx: &mut App) {
+    let theme = Theme::global(cx);
+    let dark = theme.mode.is_dark();
+    let chosen = match cx.try_global::<SyntaxPreview>().and_then(|p| p.0.as_ref()) {
+        Some(previewed) => previewed.as_ref(),
+        None => settings(cx).syntax_colors.get(dark),
+    };
+    let palette = chosen
+        .and_then(|name| ThemeRegistry::global(cx).themes().get(name.as_str()))
+        .filter(|config| config.mode.is_dark() == dark)
+        .and_then(|config| config.highlight.as_ref());
+    let own = if dark {
+        &theme.dark_theme
+    } else {
+        &theme.light_theme
+    };
+    let fallback = if dark {
+        HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
+    };
+    let syntax = &palette
+        .or(own.highlight.as_ref())
+        .unwrap_or(&fallback.style)
+        .syntax;
+    if &theme.highlight_theme.style.syntax == syntax {
+        return;
+    }
+    let mut highlight = (*theme.highlight_theme).clone();
+    highlight.style.syntax = syntax.clone();
+    let highlight = Arc::new(highlight);
+    Theme::update(cx, |theme| theme.highlight_theme = highlight);
+}
+
+#[cfg(test)]
+#[path = "settings_store_tests.rs"]
+mod tests;

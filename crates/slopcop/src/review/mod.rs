@@ -425,16 +425,27 @@ impl ReviewView {
         }
     }
 
-    fn apply_settings(&mut self, cx: &mut Context<Self>) {
-        let current = settings(cx);
-        let mode = match current.diff_layout {
-            DiffLayout::Split => DiffMode::Split,
-            DiffLayout::Unified => DiffMode::Unified,
-        };
-        let whitespace = current.ignore_whitespace;
+    fn diff_mode(&self, cx: &App) -> DiffMode {
+        let whole_file = self
+            .current_file
+            .and_then(|f| self.review.as_ref()?.files.get(f))
+            .is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
+        match settings(cx).diff_layout {
+            DiffLayout::Split if !whole_file => DiffMode::Split,
+            _ => DiffMode::Unified,
+        }
+    }
+
+    fn sync_diff_mode(&mut self, cx: &mut Context<Self>) {
+        let mode = self.diff_mode(cx);
         if self.diff.read(cx).mode() != mode {
             self.diff.update(cx, |state, cx| state.set_mode(mode, cx));
         }
+    }
+
+    fn apply_settings(&mut self, cx: &mut Context<Self>) {
+        let whitespace = settings(cx).ignore_whitespace;
+        self.sync_diff_mode(cx);
         if whitespace != self.loaded_whitespace && self.review.is_some() {
             self.reload(cx);
         }
@@ -505,6 +516,7 @@ impl ReviewView {
             }
             self.current_file = Some(ix);
             let diff_file = file.diff.clone();
+            self.sync_diff_mode(cx);
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
         }
@@ -671,12 +683,8 @@ impl ReviewView {
     }
 
     pub fn set_layout(&mut self, layout: DiffLayout, cx: &mut Context<Self>) {
-        let mode = match layout {
-            DiffLayout::Split => DiffMode::Split,
-            DiffLayout::Unified => DiffMode::Unified,
-        };
-        self.diff.update(cx, |state, cx| state.set_mode(mode, cx));
         update_settings(cx, |s| s.diff_layout = layout);
+        self.sync_diff_mode(cx);
     }
 
     pub fn pull(&mut self, side: PullSide, window: &mut Window, cx: &mut Context<Self>) {

@@ -52,7 +52,6 @@ pub struct Strings {
     pub collapse_all: SharedString,
     pub mark_viewed: SharedString,
     pub mark_unviewed: SharedString,
-    pub viewed: SharedString,
     pub previous_file: SharedString,
     pub next_file: SharedString,
     pub split_view: SharedString,
@@ -103,6 +102,16 @@ pub struct Strings {
     pub gitlab_token_desc: SharedString,
     pub save_and_check: SharedString,
     pub checking: SharedString,
+    pub syntax_colors: SharedString,
+    pub syntax_colors_dark_desc: SharedString,
+    pub syntax_colors_light_desc: SharedString,
+    pub same_as_theme: SharedString,
+    pub zed_themes: SharedString,
+    pub import_zed_theme: SharedString,
+    pub import_zed_theme_desc: SharedString,
+    pub installed_in_zed: SharedString,
+    pub choose_file: SharedString,
+    pub zed_theme_prompt: SharedString,
 
     pub add_repositories_ellipsis: SharedString,
     pub switch_repository_tooltip: SharedString,
@@ -127,6 +136,8 @@ pub struct Strings {
 
     pub repositories_added_t: SharedString,
     pub viewed_progress_t: SharedString,
+    pub zed_imported_t: SharedString,
+    pub zed_import_failed_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -188,6 +199,14 @@ impl Strings {
             &self.viewed_progress_t,
             &[&viewed.to_string(), &total.to_string()],
         )
+    }
+
+    pub fn zed_imported(&self, themes: &str) -> String {
+        fill(&self.zed_imported_t, &[themes])
+    }
+
+    pub fn zed_import_failed(&self, err: &str) -> String {
+        fill(&self.zed_import_failed_t, &[err])
     }
 }
 
@@ -320,6 +339,8 @@ mod tests {
                 &s.pull_up_to_date_t,
                 &s.pull_updated_t,
                 &s.repositories_added_t,
+                &s.zed_imported_t,
+                &s.zed_import_failed_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

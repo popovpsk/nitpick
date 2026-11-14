@@ -2,8 +2,9 @@
 
 The review model the UI draws: the changed-file tree with folder compression and viewed
 roll-up, the per-repository store of "viewed" marks, the map from a diff line to the
-old/new line pair GitLab positions need, and the fuzzy matcher every picker filters with.
-GPUI-free and git-free; only the store does file I/O.
+old/new line pair GitLab positions need, the fuzzy matcher every picker filters with, and
+the syntax language of paths the diff component does not recognise. GPUI-free and git-free;
+only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
 drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the picker UI
@@ -19,8 +20,11 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed).
 - `fuzzy.rs` — `fuzzy_match(query, text)` → score and matched byte offsets; `rank` over
   `(label, optional detail)` items; `highlight_ranges` (offsets → byte ranges of whole chars).
+- `language.rs` — `language_override(path)`: the highlighter language for a path by file
+  name, extension, or a `Makefile.*` / `GNUmakefile.*` prefix (unless the extension names
+  another language, as in cargo-make's `Makefile.toml`).
 - `tests.rs` — tree shape and order, collapse, roll-up, store round trip and expiry,
-  line-map cases including a removed line that looks like a `---` header.
+  line-map cases including a removed line that looks like a `---` header, language cases.
 - `fuzzy_tests.rs` — match positions, ranking order, highlight ranges.
 
 ## Spec
@@ -42,6 +46,11 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
   `+++ y` is never taken for a file header. The result is index-aligned with
   gpui-component's `DiffFile::parse` of the same patch, which also yields one file per
   `diff --git` header; the caller checks the counts match.
+- `language_override` answers only for paths gpui-component's `detected_language` misses
+  (it already knows `Makefile`, `.proto`, `.cs`, `.java`, …), so the two never disagree;
+  `None` keeps the component's detection. Names are gpui-component highlighter names; a
+  language whose grammar is not compiled in renders as plain text. File names are matched
+  case-insensitively on the last path component, `/` or `\` separated.
 
 - Fuzzy matching: the query's characters (whitespace dropped, case folded per char) must
   appear in order. An fzf-style DP picks the best-scoring alignment, not the greedy first

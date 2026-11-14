@@ -219,8 +219,17 @@ fn build_range(
 }
 
 fn parse(patch: &str) -> anyhow::Result<Vec<DiffFile>> {
-    DiffFile::parse_with(patch, DiffParseOptions::new().truncated_hunks(true))
-        .map_err(|err| anyhow!("parsing the diff, line {}: {}", err.line(), err.message()))
+    grammars::register_highlight_queries();
+    let files = DiffFile::parse_with(patch, DiffParseOptions::new().truncated_hunks(true))
+        .map_err(|err| anyhow!("parsing the diff, line {}: {}", err.line(), err.message()))?;
+    Ok(files.into_iter().map(with_language).collect())
+}
+
+fn with_language(file: DiffFile) -> DiffFile {
+    match review_core::language_override(file.path()) {
+        Some(language) => file.with_language(language),
+        None => file,
+    }
 }
 
 fn aligned_maps(patch: &str, files: usize) -> (Vec<LineMap>, bool) {
@@ -343,6 +352,9 @@ pub fn comparison_for_mr(mr: &gitlab::MergeRequest, refs: &gitlab::DiffRefs) -> 
         merge_base_refs: vec![mr.target_branch.clone()],
     }
 }
+
+#[path = "model_grammars.rs"]
+mod grammars;
 
 #[cfg(test)]
 #[path = "model_tests.rs"]

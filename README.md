@@ -10,8 +10,11 @@ A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "
   marks that roll up to folders and reset when a file changes again; optionally a file is
   marked viewed as soon as you move on from it.
 - Review your own uncommitted changes (staged, unstaged and untracked) before you commit.
-- Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, YAML, TOML,
-  Markdown, Bash, Protobuf, CSS, HTML, Make), split or unified layout, expandable context.
+- Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, Java, Kotlin,
+  Scala, Swift, C, C++, C#, Ruby, PHP, Lua, Elixir, Zig, SQL, GraphQL, JSON, YAML, TOML,
+  Markdown, Bash, Protobuf, CSS, HTML, Make, CMake, diff), split or unified layout, expandable
+  context.
+- Bundled themes, syntax colors from any of them chosen separately, and Zed theme import.
 - One fast-forward-only "pull" button per branch to bring in fresh changes.
 - Optional GitLab connection: open merge requests by list, URL or `!iid`, read every
   discussion on the lines it belongs to, comment, reply, resolve.

@@ -1,23 +1,30 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::rc::Rc;
+
 use gpui::{
     Anchor, AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _,
-    IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
+    IntoElement, KeyBinding, ParentElement as _, PathPromptOptions, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
+    WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
+    notification::Notification,
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex,
 };
 use ui_resources::i18n::Lang;
+use ui_resources::themes::ZedThemeFile;
 
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
-    DiffLayout, LangChoice, ThemeChoice, TreeSide, apply_saved_theme, apply_theme, settings,
-    update_settings,
+    DiffLayout, LangChoice, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
+    end_syntax_preview, preview_syntax_colors, settings, syntax_palette_names, update_settings,
 };
 
 actions!(settings_view, [CloseSettings]);
@@ -42,7 +49,10 @@ pub struct SettingsView {
     gitlab_url: Entity<InputState>,
     gitlab_token: Entity<InputState>,
     status: GitlabStatus,
+    zed_files: Rc<Vec<ZedThemeFile>>,
     _check: Task<()>,
+    _zed_discovery: Task<()>,
+    _zed_import: Task<()>,
 }
 
 impl SettingsView {
@@ -59,12 +69,84 @@ impl SettingsView {
                 .masked(true)
                 .default_value(current.gitlab_token.clone())
         });
+        let zed_discovery = cx.spawn(async move |this, cx| {
+            let files = cx
+                .background_spawn(async { ui_resources::themes::zed_theme_files() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.zed_files = Rc::new(files);
+                cx.notify();
+            });
+        });
         Self {
             gitlab_url,
             gitlab_token,
             status: GitlabStatus::Idle,
+            zed_files: Rc::default(),
             _check: Task::ready(()),
+            _zed_discovery: zed_discovery,
+            _zed_import: Task::ready(()),
         }
+    }
+
+    fn import_zed_theme(
+        &mut self,
+        path: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = path.is_none().then(|| {
+            cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: false,
+                prompt: Some(tr().zed_theme_prompt.clone()),
+            })
+        });
+        let registered: HashSet<String> = ThemeRegistry::global(cx)
+            .themes()
+            .keys()
+            .map(|name| name.to_string())
+            .collect();
+        let window_handle = window.window_handle();
+        self._zed_import = cx.spawn(async move |_, cx| {
+            let path = match (path, picker) {
+                (Some(path), _) => path,
+                (None, Some(picker)) => match picker.await {
+                    Ok(Ok(Some(paths))) => match paths.into_iter().next() {
+                        Some(path) => path,
+                        None => return,
+                    },
+                    Ok(Err(err)) => {
+                        log::warn!("zed theme picker: {err:#}");
+                        return;
+                    }
+                    _ => return,
+                },
+                (None, None) => return,
+            };
+            let result = cx
+                .background_spawn(async move {
+                    let dir = ui_resources::themes::themes_dir()
+                        .ok_or_else(|| anyhow::anyhow!("data dir unavailable"))?;
+                    ui_resources::themes::import_zed_theme(&path, &dir, &registered)
+                })
+                .await;
+            let notification = match result {
+                Ok(converted) => {
+                    let names: Vec<&str> =
+                        converted.themes.iter().map(|t| t.name.as_str()).collect();
+                    Notification::success(tr().zed_imported(&names.join(", ")))
+                }
+                Err(err) => {
+                    log::warn!("zed theme import: {err:#}");
+                    Notification::error(tr().zed_import_failed(&format!("{err:#}")))
+                }
+            };
+            let _ = window_handle.update(cx, |_, window, cx| {
+                window.push_notification(notification, cx);
+            });
+        });
     }
 
     fn save_gitlab(&mut self, cx: &mut Context<Self>) {
@@ -162,6 +244,102 @@ fn theme_dropdown(cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+fn syntax_label(choice: Option<&String>) -> SharedString {
+    match choice {
+        None => tr().same_as_theme.clone(),
+        Some(name) => SharedString::from(name.clone()),
+    }
+}
+
+fn syntax_dropdown(cx: &App) -> AnyElement {
+    let dark = cx.theme().is_dark();
+    Button::new("settings-syntax-colors")
+        .small()
+        .label(syntax_label(settings(cx).syntax_colors.get(dark)))
+        .dropdown_caret(true)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
+            let current = settings(cx).syntax_colors.get(dark).cloned();
+            let options =
+                std::iter::once(None).chain(syntax_palette_names(dark, cx).into_iter().map(Some));
+            options.enumerate().fold(
+                menu.max_h(px(420.)).scrollable(true),
+                |menu, (ix, choice)| {
+                    let checked = choice == current;
+                    let label = syntax_label(choice.as_ref());
+                    let preview = choice.clone();
+                    menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            let preview = preview.clone();
+                            div()
+                                .id(("syntax-option", ix))
+                                .child(label.clone())
+                                .on_hover(move |hovered, _, cx| {
+                                    if *hovered {
+                                        preview_syntax_colors(preview.clone(), cx);
+                                    }
+                                })
+                        })
+                        .checked(checked)
+                        .on_click(move |_, _, cx| {
+                            let choice = choice.clone();
+                            update_settings(cx, |s| s.syntax_colors.set(dark, choice));
+                            end_syntax_preview(cx);
+                        }),
+                    )
+                },
+            )
+        })
+        .on_open_change(|open, _, cx| {
+            if !*open {
+                end_syntax_preview(cx);
+            }
+        })
+        .into_any_element()
+}
+
+fn import_zed_button(view: Entity<SettingsView>, cx: &App) -> AnyElement {
+    let files = view.read(cx).zed_files.clone();
+    let button = Button::new("settings-import-zed")
+        .small()
+        .label(tr().import_zed_theme.clone());
+    if files.is_empty() {
+        return button
+            .on_click(move |_, window, cx| {
+                view.update(cx, |this, cx| this.import_zed_theme(None, window, cx))
+            })
+            .into_any_element();
+    }
+    button
+        .dropdown_caret(true)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            let menu = files.iter().fold(
+                menu.max_h(px(420.))
+                    .scrollable(true)
+                    .label(tr().installed_in_zed.clone()),
+                |menu, file| {
+                    let path = file.path.clone();
+                    let view = view.clone();
+                    menu.item(PopupMenuItem::new(file.label.clone()).on_click(
+                        move |_, window, cx| {
+                            let path = path.clone();
+                            view.update(cx, |this, cx| {
+                                this.import_zed_theme(Some(path), window, cx)
+                            })
+                        },
+                    ))
+                },
+            );
+            let view = view.clone();
+            menu.separator()
+                .item(PopupMenuItem::new(tr().choose_file.clone()).on_click(
+                    move |_, window, cx| {
+                        view.update(cx, |this, cx| this.import_zed_theme(None, window, cx))
+                    },
+                ))
+        })
+        .into_any_element()
+}
+
 fn lang_label(choice: &LangChoice) -> SharedString {
     match choice {
         LangChoice::System => tr().system.clone(),
@@ -232,6 +410,12 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = tr();
         let view = cx.entity();
+        let syntax_desc = if cx.theme().is_dark() {
+            s.syntax_colors_dark_desc.clone()
+        } else {
+            s.syntax_colors_light_desc.clone()
+        };
+        let import_view = view.clone();
         let appearance = SettingGroup::new()
             .title(s.appearance.clone())
             .item(
@@ -240,6 +424,22 @@ impl Render for SettingsView {
                     SettingField::render(|_, _, cx| theme_dropdown(cx)),
                 )
                 .description(s.theme_desc.clone()),
+            )
+            .item(
+                SettingItem::new(
+                    s.syntax_colors.clone(),
+                    SettingField::render(|_, _, cx| syntax_dropdown(cx)),
+                )
+                .description(syntax_desc),
+            )
+            .item(
+                SettingItem::new(
+                    s.zed_themes.clone(),
+                    SettingField::render(move |_, _, cx| {
+                        import_zed_button(import_view.clone(), cx)
+                    }),
+                )
+                .description(s.import_zed_theme_desc.clone()),
             )
             .item(SettingItem::new(
                 s.language.clone(),

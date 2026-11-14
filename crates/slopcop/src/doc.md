@@ -16,9 +16,13 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab
   token sealed by `secret_store`), the `SettingsStore` global, `update_settings`,
-  `apply_theme`.
-- `settings_view.rs` — the one-page settings screen: theme (hover previews), language,
-  review options, GitLab URL + token with a connection check.
+  `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
+  observer that keeps it applied, hover previews, `syntax_palette_names`.
+- `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
+  palettes per appearance.
+- `settings_view.rs` — the one-page settings screen: theme and syntax colors (hover
+  previews), Zed theme import, language, review options, GitLab URL + token with a
+  connection check.
 - `localization.rs` — resolves the saved language and exposes `tr()`.
 - `recent.rs` — `RecentRepos` global (`recent.json` in the data dir): every known
   repository (opened or added from a folder) with the last review of each, and the
@@ -33,6 +37,17 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 
 ## Rules
 
+- Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
+  highlight fields. `Theme::change` (theme switch, theme files reloaded, startup) restores
+  the theme's own palette, so a `Theme` global observer re-applies the chosen one; it writes
+  only when the syntax differs, which also ends the loop its own write starts. A palette is
+  used only while its appearance matches the app's (light and dark are chosen separately);
+  a name the registry does not have yet (themes load asynchronously at startup) or no longer
+  has falls back to the theme's own palette, and a theme without one to gpui-component's
+  default palette for the appearance (the component itself would keep the previous one).
+- Zed import runs the picker and the conversion off the UI thread and reports success or
+  the error as a notification in the settings window. Zed's theme files are listed in the
+  import menu, found once when the settings screen opens.
 - Every window goes through `Root::new`: it mounts the notification, dialog and sheet layers
   and the Linux client-side border.
 - Window options: `tabbing_identifier` on every window, so on macOS a new window becomes a
@@ -64,9 +79,16 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   With an empty query the checked entry (the current repository or branch) is selected,
   otherwise the best match. Enter or click confirms; ⌘/Ctrl-Enter or ⌘/Ctrl-click confirms
   with `secondary`; Escape or a click outside closes.
+- Highlighting languages are gpui-component `tree-sitter-*` features in `Cargo.toml`. The SQL
+  grammar (`tree-sitter-sequel`) requires `cc ~1.2.1`, so `Cargo.lock` keeps `cc` on 1.2.x;
+  the grammar crates listed directly are there only for their highlight queries
+  (`review/model_grammars.rs`) and must stay on the versions gpui-component resolves.
 
 ## Decisions
 
 - One repository per window; switching repositories happens in the title bar, a new
   repository opens a new window (a native tab on macOS).
 - Settings are one screen inside the window, not a separate window.
+- Syntax colors default to the app theme's; the choices are the palettes of every registered
+  theme of the current appearance, bundled or imported, one choice per appearance.
+- Zed themes are imported as files (converted once), not read from Zed at startup.
