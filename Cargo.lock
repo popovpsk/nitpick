@@ -2134,8 +2134,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3e9ae5237737cfd110d0ff513fcd9c20f97d98ebabd0a73164068177f0aca4f"
+source = "git+https://github.com/longbridge/gpui-kit?rev=cf3e84bd367ef96678294153bece8cd7c52f0add#cf3e84bd367ef96678294153bece8cd7c52f0add"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2165,6 +2164,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "smol",
+ "sys-locale",
  "tracing",
  "unicode-linebreak",
  "unicode-segmentation",
@@ -2175,8 +2175,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e155c4914bd809d966660610d596f7b57c5cd38979ca2c132215057a91f23f03"
+source = "git+https://github.com/longbridge/gpui-kit?rev=cf3e84bd367ef96678294153bece8cd7c52f0add#cf3e84bd367ef96678294153bece8cd7c52f0add"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2253,8 +2252,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9676a5d12c59ce295b5c82cc18365ad8b96cb683682e2e74668a56fb92544300"
+source = "git+https://github.com/longbridge/gpui-kit?rev=cf3e84bd367ef96678294153bece8cd7c52f0add#cf3e84bd367ef96678294153bece8cd7c52f0add"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2265,8 +2263,7 @@ dependencies = [
 [[package]]
 name = "gpui-kit-assets"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb5abe0bbd8f9226170c8726e529f6574519e297e9ed1bde86d5fd4d3536079a"
+source = "git+https://github.com/longbridge/gpui-kit?rev=cf3e84bd367ef96678294153bece8cd7c52f0add#cf3e84bd367ef96678294153bece8cd7c52f0add"
 dependencies = [
  "anyhow",
  "gpui-pre",

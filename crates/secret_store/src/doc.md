@@ -57,8 +57,7 @@ Owner's calls; ask before changing.
 - macOS uses no keychain. A self-signed build gets a `cdhash:` partition, so every
   update or rebuild would ask for the login password. That changes only with a Developer
   ID (`teamid:` partition).
-- Linux uses no keychain either. The Secret Service, and the Flatpak secret portal behind
-  it, can show a dialog (create or unlock a keyring) that blocks startup with no timeout,
+- Linux uses no keychain either. The Secret Service can show a dialog (create or unlock a keyring) that blocks startup with no timeout,
   and a session where the keyring is locked or missing could not open values sealed in
   one where it was available. The user must never notice the sealing, so Linux takes the
   file key, as macOS does.

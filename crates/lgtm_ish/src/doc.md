@@ -124,6 +124,11 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 
 ## Decisions
 
+- gpui-component and gpui-kit-assets come from `longbridge/gpui-kit` at a pinned commit of
+  `main`, not crates.io: `Diff::split_ratio` (the movable split) is not in a release yet.
+  Move back to a crates.io version once one includes it; nothing is forked or patched.
+- No Flatpak build.
+
 - One repository per window; switching repositories happens in the title bar, a new
   repository opens a new window (a native tab on macOS).
 - Settings are one screen inside the window, not a separate window.

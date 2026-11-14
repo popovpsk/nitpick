@@ -20,7 +20,7 @@ Not here: the requests themselves (`gitlab`, `updater`); the tokio runtime (`net
   with `tls_backend_preconfigured`; reqwest is built with `rustls-no-provider`, so nothing
   installs a process-wide crypto provider and no other TLS stack is linked.
 - `ring`, not `aws-lc-rs`: no C/CMake build of aws-lc on every target (Windows arm64 and
-  Flatpak's offline build included), and `ring` is enough for a client.
+  offline package builds included), and `ring` is enough for a client.
 - Platform verifier, not bundled `webpki-roots`: certificates are checked by the OS store, so
   a corporate or self-hosted GitLab CA the user trusts works, and revocation follows the OS.
 - `builder` sets connect 15 s and read 60 s (per read, re-armed after each one: the stall

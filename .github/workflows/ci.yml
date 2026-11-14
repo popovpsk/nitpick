@@ -45,29 +45,6 @@ jobs:
       - name: Clippy (portable build, updater compiled out)
         run: cargo clippy -p lgtm_ish --no-default-features --all-targets -- -D warnings
 
-      - name: Flatpak offline sources match the lockfiles
-        run: |
-          if [ ! -f packaging/flatpak/cargo-sources.json ]; then
-            echo "::error::packaging/flatpak/cargo-sources.json is missing; the Flatpak manifest references it."
-            exit 1
-          fi
-          awk '
-            /^\[\[package\]\]/ { n=""; v=""; s=""; c=""; next }
-            /^name = / { sub(/^name = "/, ""); sub(/"$/, ""); n=$0; next }
-            /^version = / { sub(/^version = "/, ""); sub(/"$/, ""); v=$0; next }
-            /^source = / { sub(/^source = "/, ""); sub(/"$/, ""); s=$0; next }
-            /^checksum = / { sub(/^checksum = "/, ""); sub(/"$/, ""); c=$0; next }
-            /^$/ { if (n != "" && s ~ /^registry\+/) print n "-" v " " c; n=""; v=""; s=""; c=""; next }
-            END { if (n != "" && s ~ /^registry\+/) print n "-" v " " c }
-          ' Cargo.lock | sort > /tmp/cargo-lock.txt
-          jq -r '.[] | select(.type=="archive") | (.dest|sub("cargo/vendor/";"")) + " " + .sha256' \
-            packaging/flatpak/cargo-sources.json | sort > /tmp/cargo-src.txt
-          if ! diff -u /tmp/cargo-lock.txt /tmp/cargo-src.txt; then
-            echo "::error::cargo-sources.json no longer matches Cargo.lock — regenerate it with scripts/gen_flatpak_cargo_sources.py, or the offline Flathub build fails for the reviewer, not for us."
-            exit 1
-          fi
-          echo "cargo: $(wc -l < /tmp/cargo-lock.txt) crates in sync"
-
       - name: AUR template depends match the packager metadata
         run: |
           tmpl=$(grep '^depends=' packaging/aur/PKGBUILD.tmpl \

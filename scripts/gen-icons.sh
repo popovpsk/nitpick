@@ -7,7 +7,7 @@
 #   icon.ico                  - Windows exe + installer icon (multi-size, PNG-compressed)
 #   32x32.png 128x128.png
 #   128x128@2x.png 256x256.png
-#   icon.png                  - Linux / AppImage / .deb / Flatpak + cargo-packager sources
+#   icon.png                  - Linux / AppImage / .deb + cargo-packager sources
 #
 # Rasterization prefers rsvg-convert or ImageMagick if present, otherwise falls
 # back to AppKit via scripts/macos/svg2png.swift (keeps transparency), and last

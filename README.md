@@ -82,14 +82,13 @@ sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build
 - Windows x64 / arm64 NSIS installers and portable zips (portable builds have the updater compiled out)
 - Linux x86_64 / arm64 AppImage, `.deb` and pacman archive
 
-Publishing the release triggers `aur.yml` (`lgtm-ish-bin`) and `flatpak.yml` (signed repo on GitHub Pages).
+Publishing the release triggers `aur.yml` (`lgtm-ish-bin`).
 
-Repository secrets: `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` (optional macOS self-signed identity, see `scripts/macos/create-signing-cert.sh`), `AUR_SSH_PRIVATE_KEY` (optional), `FLATPAK_GPG_PRIVATE_KEY` (required by the Flatpak workflow).
+Repository secrets: `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` (optional macOS self-signed identity, see `scripts/macos/create-signing-cert.sh`), `AUR_SSH_PRIVATE_KEY` (optional).
 
 Maintenance scripts:
 
 - `scripts/gen-icons.sh` — regenerate all app icons from `crates/ui_resources/assets/lgtm-ish.svg`
-- `scripts/gen_flatpak_cargo_sources.py` — regenerate `packaging/flatpak/cargo-sources.json` after any `Cargo.lock` change (CI checks it)
 
 ## License
 

@@ -133,7 +133,7 @@ fn an_edit_keeps_patterns_added_elsewhere_meanwhile() {
 }
 
 #[rstest]
-#[case::extension("*.json", "packaging/flatpak/cargo-sources.json", &[".json"])]
+#[case::extension("*.json", "packaging/aur/sources.json", &[".json"])]
 #[case::suffix("*_mock.go", "internal/store/user_mock.go", &["_mock.go"])]
 #[case::dir_anywhere("vendor/", "a/vendor/lib/x.go", &["vendor"])]
 #[case::dir_not_the_file("x.go/", "x.go/x.go", &["x.go"])]
