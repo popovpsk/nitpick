@@ -89,6 +89,8 @@ pub struct Strings {
     pub advance_on_viewed: SharedString,
     pub advance_on_viewed_desc: SharedString,
     pub auto_mark_viewed: SharedString,
+    pub shortcut_needs_modifier: SharedString,
+    pub shortcut_builtin: SharedString,
     pub cmd_next_file: SharedString,
     pub cmd_previous_file: SharedString,
     pub cmd_toggle_viewed: SharedString,

@@ -43,7 +43,7 @@ Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https
 | Comment box | `⌘⏎` | Send |
 | Window | `⌘O`, `⌘N`, `⌘,` | Open repository, new review, settings |
 
-On Windows and Linux use `Ctrl` for `⌘`. Every shortcut can be changed in Settings → Shortcuts: click a key, press the new one.
+On Windows and Linux use `Ctrl` for `⌘`. Every shortcut can be changed in Settings → Shortcuts: click a key, press the new one. (The Ctrl variants of the ⌘ shortcuts are no longer bound on macOS.)
 
 ## Build
 

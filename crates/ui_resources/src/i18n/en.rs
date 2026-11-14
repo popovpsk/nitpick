@@ -85,6 +85,8 @@ pub static EN: Strings = lang! {
     advance_on_viewed: "Go to the next file when marked viewed",
     advance_on_viewed_desc: "Jumps to the next file that is not viewed yet",
     auto_mark_viewed: "Mark files viewed when leaving them",
+    shortcut_needs_modifier: "Window shortcuts need ⌘, Ctrl or a function key, so typing in text fields keeps working.",
+    shortcut_builtin: "Built-in controls also use this key, so it may not work while one of them has focus.",
     cmd_next_file: "Next file",
     cmd_previous_file: "Previous file",
     cmd_toggle_viewed: "Mark the file viewed or not viewed",

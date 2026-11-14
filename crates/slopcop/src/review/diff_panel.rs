@@ -711,12 +711,34 @@ impl Render for ReviewView {
                     this.toggle_file_viewed(file, cx);
                 }
             }))
-            .on_action(cx.listener(|this, _: &FocusTree, window, cx| this.focus_tree(window, cx)))
-            .on_action(cx.listener(|this, _: &FocusDiff, window, cx| this.focus_diff(window, cx)))
-            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
-            .on_action(
-                cx.listener(|this, _: &ToggleTree, window, cx| this.toggle_tree(window, cx)),
-            );
+            .on_action(cx.listener(|this, _: &FocusTree, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.focus_tree(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FocusDiff, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.focus_diff(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Refresh, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.refresh(cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleTree, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.toggle_tree(window, cx);
+                }
+            }));
         match &self.load_state {
             LoadState::Loading => {
                 return root

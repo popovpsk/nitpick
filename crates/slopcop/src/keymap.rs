@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use gpui::{
     Action, App, Global, KeyBinding, KeyBindingContextPredicate, Keystroke, OperatingSystem,
@@ -303,10 +304,21 @@ pub fn default_keys(command: &Command, os: OperatingSystem) -> Vec<String> {
         .collect()
 }
 
+fn cached_defaults(command: &Command, cx: &App) -> Vec<String> {
+    static CACHE: OnceLock<Vec<Vec<String>>> = OnceLock::new();
+    let os = cx.platform_info().os;
+    let all = CACHE.get_or_init(|| COMMANDS.iter().map(|c| default_keys(c, os)).collect());
+    COMMANDS
+        .iter()
+        .position(|c| c.id == command.id)
+        .and_then(|ix| all.get(ix).cloned())
+        .unwrap_or_default()
+}
+
 pub fn keys(command: &Command, cx: &App) -> Vec<String> {
     match settings(cx).keybindings.get(command.id) {
         Some(keys) => keys.clone(),
-        None => default_keys(command, cx.platform_info().os),
+        None => cached_defaults(command, cx),
     }
 }
 
@@ -318,44 +330,64 @@ fn overlaps(a: Option<&str>, b: Option<&str>) -> bool {
     a.is_none() || b.is_none() || a == b
 }
 
-pub fn conflict(key: &str, command: &Command, cx: &App) -> Option<&'static Command> {
-    COMMANDS.iter().find(|other| {
-        other.id != command.id
-            && overlaps(other.context, command.context)
-            && keys(other, cx).iter().any(|k| k == key)
+pub fn conflicts(key: &str, command: &Command, cx: &App) -> Vec<&'static Command> {
+    COMMANDS
+        .iter()
+        .filter(|other| {
+            other.id != command.id
+                && overlaps(other.context, command.context)
+                && keys(other, cx).iter().any(|k| k == key)
+        })
+        .collect()
+}
+
+pub fn builtin_conflict(key: &str, cx: &App) -> bool {
+    let Ok(keystroke) = Keystroke::parse_with_os(key, cx.platform_info().os) else {
+        return false;
+    };
+    cx.global::<BaseKeymap>().0.iter().any(|binding| {
+        matches!(binding.keystrokes(), [only]
+            if only.inner().modifiers == keystroke.modifiers && only.inner().key == keystroke.key)
     })
 }
 
-pub fn assign(
-    command: &'static Command,
-    original: Option<String>,
-    key: Option<String>,
-    cx: &mut App,
+pub fn needs_modifier(command: &Command, keystroke: &Keystroke) -> bool {
+    let function_key = keystroke
+        .key
+        .strip_prefix('f')
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    command.group == Group::Window
+        && !keystroke.modifiers.control
+        && !keystroke.modifiers.platform
+        && !function_key
+}
+
+fn release(
+    key: &str,
+    command: &Command,
+    changes: &mut Vec<(&'static Command, Vec<String>)>,
+    cx: &App,
 ) {
-    let os = cx.platform_info().os;
-    let mut changes: Vec<(&'static Command, Vec<String>)> = Vec::new();
-    let mut own = keys(command, cx);
-    if let Some(original) = &original {
-        own.retain(|k| k != original);
+    for other in conflicts(key, command, cx) {
+        let base = changes
+            .iter()
+            .find(|(c, _)| c.id == other.id)
+            .map(|(_, list)| list.clone())
+            .unwrap_or_else(|| keys(other, cx));
+        let rest: Vec<String> = base.into_iter().filter(|k| k != key).collect();
+        changes.retain(|(c, _)| c.id != other.id);
+        changes.push((other, rest));
     }
-    if let Some(key) = &key {
-        if let Some(other) = conflict(key, command, cx) {
-            let rest: Vec<String> = keys(other, cx).into_iter().filter(|k| k != key).collect();
-            changes.push((other, rest));
-        }
-        if !own.contains(key) {
-            let at = original
-                .as_ref()
-                .and_then(|o| keys(command, cx).iter().position(|k| k == o))
-                .unwrap_or(own.len())
-                .min(own.len());
-            own.insert(at, key.clone());
-        }
-    }
-    changes.push((command, own));
+}
+
+fn store(changes: Vec<(&'static Command, Vec<String>)>, cx: &mut App) {
+    let defaults: Vec<(&'static Command, Vec<String>)> = changes
+        .iter()
+        .map(|(command, _)| (*command, cached_defaults(command, cx)))
+        .collect();
     update_settings(cx, move |s| {
-        for (command, list) in changes {
-            if list == default_keys(command, os) {
+        for ((command, list), (_, default)) in changes.into_iter().zip(defaults) {
+            if list == default {
                 s.keybindings.remove(command.id);
             } else {
                 s.keybindings.insert(command.id.to_string(), list);
@@ -364,13 +396,46 @@ pub fn assign(
     });
 }
 
-pub fn reset(command: Option<&'static Command>, cx: &mut App) {
-    update_settings(cx, move |s| match command {
-        Some(command) => {
-            s.keybindings.remove(command.id);
+pub fn assign(
+    command: &'static Command,
+    original: Option<String>,
+    key: Option<String>,
+    cx: &mut App,
+) {
+    let current = keys(command, cx);
+    let mut own = current.clone();
+    if let Some(original) = &original {
+        own.retain(|k| k != original);
+    }
+    let mut changes = Vec::new();
+    if let Some(key) = &key {
+        release(key, command, &mut changes, cx);
+        if !own.contains(key) {
+            let at = original
+                .as_ref()
+                .and_then(|o| current.iter().position(|k| k == o))
+                .unwrap_or(own.len())
+                .min(own.len());
+            own.insert(at, key.clone());
         }
-        None => s.keybindings.clear(),
-    });
+    }
+    changes.push((command, own));
+    store(changes, cx);
+}
+
+pub fn reset(command: Option<&'static Command>, cx: &mut App) {
+    match command {
+        Some(command) => {
+            let defaults = cached_defaults(command, cx);
+            let mut changes = Vec::new();
+            for key in &defaults {
+                release(key, command, &mut changes, cx);
+            }
+            changes.push((command, defaults));
+            store(changes, cx);
+        }
+        None => update_settings(cx, |s| s.keybindings.clear()),
+    }
 }
 
 #[cfg(test)]

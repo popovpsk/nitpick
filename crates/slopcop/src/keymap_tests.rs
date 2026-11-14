@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use gpui::OperatingSystem;
 use rstest::rstest;
 
-use super::{COMMANDS, default_keys, normalize};
+use gpui::Keystroke;
+
+use super::{COMMANDS, command, default_keys, needs_modifier, normalize};
 
 #[rstest]
 #[case::mac(OperatingSystem::Mac)]
@@ -43,4 +45,17 @@ fn normalize_spells_keys_for_the_host(
     let once = normalize(key, os).unwrap();
     assert_eq!(normalize(&once, os).as_deref(), Some(once.as_str()));
     assert_eq!(normalize(expected, os).as_deref(), Some(once.as_str()));
+}
+
+#[rstest]
+#[case::window_letter("window.settings", "s", true)]
+#[case::window_shifted_letter("window.settings", "shift-s", true)]
+#[case::window_arrow("window.settings", "down", true)]
+#[case::window_cmd("window.settings", "cmd-s", false)]
+#[case::window_ctrl("window.settings", "ctrl-s", false)]
+#[case::window_function_key("window.settings", "f5", false)]
+#[case::review_letter("review.refresh", "r", false)]
+fn window_commands_need_a_modifier(#[case] id: &str, #[case] key: &str, #[case] refused: bool) {
+    let keystroke = Keystroke::parse_with_os(key, OperatingSystem::Mac).unwrap();
+    assert_eq!(needs_modifier(command(id).unwrap(), &keystroke), refused);
 }

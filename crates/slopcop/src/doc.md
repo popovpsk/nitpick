@@ -57,12 +57,20 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   so tooltips (`tooltip_with_action`) and menu key equivalents follow at once. An override
   is the whole key list of one command (an empty list unbinds it); a list equal to the
   defaults is dropped, so stored files only carry real changes. Keys are stored in the
-  host's spelling (`cmd-b` on macOS, `ctrl-b` elsewhere).
+  host's spelling (`cmd-b` on macOS, `ctrl-b` elsewhere). Defaults bind ⌘ on macOS and Ctrl
+  elsewhere only, not both.
 - Recording a shortcut uses `intercept_keystrokes`, which runs before key bindings, so
   ⌘W or Space are recorded instead of acting; it listens only in the dialog's window and
   only while recording, stops on Escape (never recorded) or after one keystroke, and ignores
-  bare modifiers. A key already used by another command in the same context, or where either
-  is global, is named in the dialog and moved on save.
+  bare modifiers. After a keystroke the interceptor stays until the dialog closes (`on_close`,
+  Cancel, Save, Remove) and swallows auto-repeats of that key, so holding Enter records it
+  without also confirming. Every command using the key in the same context, or where either
+  is global, is named and loses the key on save; resetting a command takes its defaults back
+  the same way, so no key ever ends up bound twice. Window commands refuse keys without ⌘,
+  Ctrl or a function key, since they would fire while typing in any field; review handlers
+  pass keys on (`cx.propagate`) while an input has focus, so a plain key there is safe. A key
+  also bound by gpui-component itself (the diff's arrows, `tab`) is flagged, since the deeper
+  built-in binding wins where that control has focus.
 
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
   highlight fields. `Theme::change` (theme switch, theme files reloaded, startup) restores

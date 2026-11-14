@@ -52,10 +52,14 @@ fn shortcut_group(title: SharedString, group: Group, s: &Strings) -> SettingGrou
         _ => where_label(group, s),
     };
     let mut items = SettingGroup::new().title(title).description(description);
-    for command in COMMANDS.iter().filter(|c| c.group == group) {
+    for (ix, command) in COMMANDS
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.group == group)
+    {
         items = items.item(SettingItem::new(
             (command.title)(s),
-            SettingField::render(move |_, _, cx| shortcut_keys(command, cx)),
+            SettingField::render(move |_, _, cx| shortcut_keys(command, ix as u64, cx)),
         ));
     }
     if group == Group::Window {
@@ -73,7 +77,7 @@ fn shortcut_group(title: SharedString, group: Group, s: &Strings) -> SettingGrou
     items
 }
 
-fn shortcut_keys(command: &'static Command, cx: &App) -> AnyElement {
+fn shortcut_keys(command: &'static Command, ix: u64, cx: &App) -> AnyElement {
     let s = tr();
     let theme = cx.theme();
     let hover = theme.list_hover;
@@ -101,7 +105,7 @@ fn shortcut_keys(command: &'static Command, cx: &App) -> AnyElement {
                 }),
         )
         .child(
-            Button::new(ElementId::Name(format!("{}-add", command.id).into()))
+            Button::new(ElementId::NamedInteger("shortcut-add".into(), ix))
                 .ghost()
                 .xsmall()
                 .icon(IconName::Plus)
@@ -110,7 +114,7 @@ fn shortcut_keys(command: &'static Command, cx: &App) -> AnyElement {
         )
         .when(customized, |el| {
             el.child(
-                Button::new(ElementId::Name(format!("{}-reset", command.id).into()))
+                Button::new(ElementId::NamedInteger("shortcut-reset".into(), ix))
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(Icons::Undo2))

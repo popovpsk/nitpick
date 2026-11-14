@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AnyWindowHandle, App, AppContext as _, Context,
@@ -53,10 +53,13 @@ pub fn open(
         let confirm = recorder.clone();
         let save = recorder.clone();
         let remove = recorder.clone();
+        let close = recorder.clone();
+        let cancel = recorder.clone();
         dialog
             .title((command.title)(s))
             .w(px(460.))
             .on_ok(move |_, _, cx| confirm.update(cx, |this, cx| this.save(cx)))
+            .on_close(move |_, _, cx| close.update(cx, |this, cx| this.stop(cx)))
             .child(recorder.clone())
             .footer(
                 h_flex()
@@ -81,7 +84,10 @@ pub fn open(
                             .outline()
                             .small()
                             .label(s.cancel.clone())
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(move |_, window, cx| {
+                                cancel.update(cx, |this, cx| this.stop(cx));
+                                window.close_dialog(cx);
+                            }),
                     )
                     .child(
                         Button::new("shortcut-save")
@@ -104,9 +110,17 @@ pub struct ShortcutRecorder {
     original: Option<String>,
     recorded: Option<String>,
     recording: bool,
+    conflicts: SharedString,
+    builtin: bool,
+    refused: bool,
+    last: Option<Keystroke>,
+    swallow_until: Option<Instant>,
     window: AnyWindowHandle,
     _intercept: Option<Subscription>,
 }
+
+const REPEAT_GRACE: Duration = Duration::from_millis(600);
+const REPEAT_EXTEND: Duration = Duration::from_millis(200);
 
 impl ShortcutRecorder {
     fn new(
@@ -120,6 +134,11 @@ impl ShortcutRecorder {
             recorded: original.clone(),
             original,
             recording: false,
+            conflicts: SharedString::default(),
+            builtin: false,
+            refused: false,
+            last: None,
+            swallow_until: None,
             window: window.window_handle(),
             _intercept: None,
         };
@@ -129,6 +148,11 @@ impl ShortcutRecorder {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         self.recording = true;
+        self.refused = false;
+        if self._intercept.is_some() {
+            cx.notify();
+            return;
+        }
         let handle = self.window;
         let this = cx.entity().downgrade();
         self._intercept = Some(cx.intercept_keystrokes(move |event, window, cx| {
@@ -153,17 +177,45 @@ impl ShortcutRecorder {
 
     fn on_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
         if !self.recording {
+            let repeat = self.last.as_ref().is_some_and(|last| {
+                last.key == keystroke.key && last.modifiers == keystroke.modifiers
+            }) && self
+                .swallow_until
+                .is_some_and(|until| Instant::now() < until);
+            if repeat {
+                self.swallow_until = Some(Instant::now() + REPEAT_EXTEND);
+                return true;
+            }
+            self.swallow_until = None;
             return false;
         }
         if keystroke.key == "escape" && !keystroke.modifiers.modified() {
-            self.stop(cx);
+            self.recording = false;
+            cx.notify();
             return true;
         }
         if keystroke.key.is_empty() || MODIFIER_KEYS.contains(&keystroke.key.as_str()) {
             return true;
         }
-        self.recorded = Some(keystroke.unparse(cx.platform_info().os));
-        self.stop(cx);
+        self.last = Some(keystroke.clone());
+        self.swallow_until = Some(Instant::now() + REPEAT_GRACE);
+        if keymap::needs_modifier(self.command, keystroke) {
+            self.refused = true;
+            cx.notify();
+            return true;
+        }
+        let key = keystroke.unparse(cx.platform_info().os);
+        let s = tr();
+        let names: Vec<String> = keymap::conflicts(&key, self.command, cx)
+            .iter()
+            .map(|other| (other.title)(s).to_string())
+            .collect();
+        self.conflicts = names.join(", ").into();
+        self.builtin = keymap::builtin_conflict(&key, cx);
+        self.refused = false;
+        self.recorded = Some(key);
+        self.recording = false;
+        cx.notify();
         true
     }
 
@@ -189,11 +241,7 @@ impl Render for ShortcutRecorder {
         let s = tr();
         let theme = cx.theme();
         let recording = self.recording;
-        let conflict = self
-            .recorded
-            .as_ref()
-            .filter(|key| self.original.as_ref() != Some(*key))
-            .and_then(|key| keymap::conflict(key, self.command, cx));
+        let changed = self.recorded != self.original;
         let shown = match &self.recorded {
             Some(key) if !recording => keystroke_element(key, cx),
             _ => div()
@@ -285,12 +333,28 @@ impl Render for ShortcutRecorder {
                             .child(badge),
                     ),
             )
-            .when_some(conflict, |el, other| {
+            .when(self.refused, |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(s.shortcut_needs_modifier.clone()),
+                )
+            })
+            .when(changed && !self.conflicts.is_empty(), |el| {
                 el.child(
                     div()
                         .text_xs()
                         .text_color(theme.warning)
-                        .child(s.shortcut_conflict(&(other.title)(s))),
+                        .child(s.shortcut_conflict(&self.conflicts)),
+                )
+            })
+            .when(changed && self.builtin, |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(s.shortcut_builtin.clone()),
                 )
             })
             .child(
