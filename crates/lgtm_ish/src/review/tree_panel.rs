@@ -14,8 +14,8 @@ use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
 use super::{
-    CollapseSelected, ExpandSelected, NextFile, OpenSelected, PreviousFile, ReviewView, SelectNext,
-    SelectPrevious, ToggleViewed, TreeRow,
+    CollapseSelected, ExpandSelected, NextFile, OpenSelected, PreviousFile, ReviewEvent,
+    ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow,
 };
 use crate::localization::tr;
 use crate::settings_store::{HideScope, add_hide_pattern};
@@ -64,10 +64,11 @@ fn hide_menu(
             None => menu,
         }
     };
+    let settings_view = view.clone();
     menu.separator()
         .item(
-            PopupMenuItem::new(s.edit_hidden_files.clone()).on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(crate::workspace::ShowSettings), cx)
+            PopupMenuItem::new(s.edit_hidden_files.clone()).on_click(move |_, _, cx| {
+                settings_view.update(cx, |_, cx| cx.emit(ReviewEvent::OpenSettings))
             }),
         )
 }

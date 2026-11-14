@@ -105,6 +105,7 @@ pub struct Strings {
     pub cmd_add_repositories: SharedString,
     pub cmd_next_tab: SharedString,
     pub cmd_previous_tab: SharedString,
+    pub shortcuts: SharedString,
     pub shortcuts_review: SharedString,
     pub shortcuts_tree: SharedString,
     pub shortcuts_window: SharedString,

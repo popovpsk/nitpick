@@ -56,7 +56,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   matching files from the review's own `tree` (`FileTree::build_with`), so they are out of
   the tree, the progress, change and file navigation, auto-mark and the "first unviewed"
   pick; `LoadedReview::tree` keeps every file and is reused when nothing is hidden. The
-  header's "N hidden" popover lists them with the pattern that hid each one, and a click
+  header's "N hidden" popover lists them with the pattern that hid each one, the part of the
+  path the pattern matched highlighted (`HiddenFile::matched`, computed with the rules), and
+  "Edit hidden files…" there or in the tree menu emits `ReviewEvent::OpenSettings`; a click
   shows that file without putting it back in the tree; from it, file and change navigation
   and `advance_on_viewed` continue with the nearest visible file in full tree order
   (`visible_neighbour`), and auto-mark never marks it. Changing the patterns re-applies

@@ -1,7 +1,8 @@
 use rstest::rstest;
 
 use crate::hidden::{
-    HideRules, dir_name_pattern, dir_pattern, family_pattern, file_pattern, merge_patterns,
+    HideRules, dir_name_pattern, dir_pattern, family_pattern, file_pattern, matched_ranges,
+    merge_patterns,
 };
 
 fn rules(global: &[&str], repository: &[&str]) -> HideRules {
@@ -129,4 +130,30 @@ fn an_edit_keeps_patterns_added_elsewhere_meanwhile() {
     let mut list = owned(&["a", "b", "*_mock.go"]);
     merge_patterns(&mut list, &owned(&["a", "b"]), &owned(&["a", "c"]));
     assert_eq!(list, owned(&["a", "*_mock.go", "c"]));
+}
+
+#[rstest]
+#[case::extension("*.json", "packaging/flatpak/cargo-sources.json", &[".json"])]
+#[case::suffix("*_mock.go", "internal/store/user_mock.go", &["_mock.go"])]
+#[case::dir_anywhere("vendor/", "a/vendor/lib/x.go", &["vendor"])]
+#[case::dir_not_the_file("x.go/", "x.go/x.go", &["x.go"])]
+#[case::anchored_dir("/gen/", "gen/api.pb.go", &["gen"])]
+#[case::exact_file("/src/store.rs", "src/store.rs", &["src", "store.rs"])]
+#[case::double_star("**/testdata/**", "pkg/a/testdata/in.json", &["testdata"])]
+#[case::inner_slash("docs/*.md", "docs/readme.md", &["docs", ".md"])]
+#[case::class("*.[jt]s", "web/app.ts", &[".", "s"])]
+#[case::escaped("/app/blog/\\[slug\\]/", "app/blog/[slug]/page.tsx", &["app", "blog", "[slug]"])]
+#[case::question("file?.txt", "a/file1.txt", &["file", ".txt"])]
+#[case::unicode("*ё.md", "docs/всё.md", &["ё.md"])]
+#[case::negation("!keep.go", "keep.go", &[])]
+fn matched_ranges_cover_the_literal_part(
+    #[case] pattern: &str,
+    #[case] path: &str,
+    #[case] expected: &[&str],
+) {
+    let parts: Vec<&str> = matched_ranges(pattern, path)
+        .into_iter()
+        .map(|range| &path[range])
+        .collect();
+    assert_eq!(parts, expected);
 }

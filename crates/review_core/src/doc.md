@@ -34,7 +34,9 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
   file); `matching_rule` names the pattern that hid a path; the pattern suggestions the tree
   menu offers (`file_pattern`, `dir_pattern`, `dir_name_pattern`, `family_pattern`), which
   `escape` glob characters and a leading `!`/`#` so `[slug]/` means that folder only;
-  `merge_patterns` (an edit applied as a diff against the list it started from); a rooted
+  `merge_patterns` (an edit applied as a diff against the list it started from);
+  `matched_ranges` (the byte ranges of a path that a pattern's literal characters matched,
+  for highlighting: wildcards and classes are not highlighted); a rooted
   path (a drive-like first component on Windows) never matches instead of panicking.
 - `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
 

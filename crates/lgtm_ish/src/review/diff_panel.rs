@@ -2,9 +2,10 @@ use std::rc::Rc;
 
 use gpui::{
     Anchor, Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle,
-    DragMoveEvent, ElementId, Empty, Entity, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, ease_out_quint, prelude::FluentBuilder as _, px, uniform_list,
+    DragMoveEvent, ElementId, Empty, Entity, HighlightStyle, InteractiveElement as _, IntoElement,
+    KeyDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, StyledText, Window, div, ease_out_quint, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -22,8 +23,8 @@ use ui_resources::Icons;
 
 use super::{
     Busy, CrossHint, FocusDiff, FocusTree, HiddenFile, LoadState, NextChange, NextFile,
-    PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
-    ToggleTree, ToggleViewed, comments,
+    PreviousChange, PreviousFile, PullSide, Refresh, ReviewEvent, ReviewSource, ReviewView,
+    TREE_SLIDE, ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -503,6 +504,7 @@ fn hidden_list(
     let popover = cx.entity();
     let rows = hidden.len();
     let list_view = view.clone();
+    let settings_view = view.clone();
     let list_hidden = hidden.clone();
     v_flex()
         .w(px(480.))
@@ -517,6 +519,10 @@ fn hidden_list(
             uniform_list("hidden-files-list", rows, move |range, _, cx| {
                 let hover = cx.theme().list_hover;
                 let muted = cx.theme().muted_foreground;
+                let highlight = HighlightStyle {
+                    color: Some(cx.theme().blue),
+                    ..Default::default()
+                };
                 range
                     .map(|ix| {
                         let file = &list_hidden[ix];
@@ -540,7 +546,9 @@ fn hidden_list(
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .text_sm()
-                                    .child(file.path.clone()),
+                                    .child(StyledText::new(file.path.clone()).with_highlights(
+                                        file.matched.iter().map(|range| (range.clone(), highlight)),
+                                    )),
                             )
                             .child(
                                 div()
@@ -570,8 +578,8 @@ fn hidden_list(
                         .small()
                         .icon(IconName::Settings)
                         .label(s.edit_hidden_files.clone())
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(crate::workspace::ShowSettings), cx)
+                        .on_click(move |_, _, cx| {
+                            settings_view.update(cx, |_, cx| cx.emit(ReviewEvent::OpenSettings))
                         }),
                 ),
         )

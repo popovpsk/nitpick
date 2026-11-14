@@ -22,7 +22,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   tree's path), `HideScope`, `add_hide_pattern`.
 - `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
   palettes per appearance.
-- `settings_view.rs` — the one-page settings screen: theme and syntax colors (hover
+- `settings_view.rs` — the settings screen, two pages: Settings and Shortcuts (the
+  shortcut groups stay out of the general page). Back and Escape emit
+  `SettingsEvent::Close` to the window rather than dispatching an action, so they work
+  wherever focus is; the screen takes focus when it opens. Settings page: theme and syntax colors (hover
   previews), Zed theme import, language, review options, hidden-file patterns (all
   repositories, and the window's repository when it has one; saved 400 ms after typing
   stops by a detached task, invalid lines named under the field), GitLab URL + token with a

@@ -23,7 +23,7 @@ use crate::localization::tr;
 use crate::picker::{Picker, PickerEntry, PickerEvent};
 use crate::recent::{RecentRepos, StoredReview, now, recent};
 use crate::review::{ReviewEvent, ReviewSource, ReviewView};
-use crate::settings_view::SettingsView;
+use crate::settings_view::{SettingsEvent, SettingsView};
 use start::{StartEvent, StartView};
 
 actions!(
@@ -55,6 +55,7 @@ pub struct Workspace {
     start: Option<Entity<StartView>>,
     review: Option<Entity<ReviewView>>,
     settings: Option<Entity<SettingsView>>,
+    _settings_events: Option<Subscription>,
     repo_picker: Entity<Picker>,
     repo_paths: Vec<PathBuf>,
     focus: FocusHandle,
@@ -100,6 +101,7 @@ impl Workspace {
             start: None,
             review: None,
             settings: None,
+            _settings_events: None,
             repo_picker,
             repo_paths: Vec::new(),
             focus: cx.focus_handle(),
@@ -213,6 +215,11 @@ impl Workspace {
                     cx.notify();
                 }
                 ReviewEvent::Open(source) => this.open_review(source.clone(), window, cx),
+                ReviewEvent::OpenSettings => {
+                    if this.screen != Screen::Settings {
+                        this.show_settings(window, cx);
+                    }
+                }
             },
         );
         self._subscriptions.truncate(1);
@@ -252,31 +259,47 @@ impl Workspace {
     pub fn show_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_screen_pickers(cx);
         if self.screen == Screen::Settings {
-            self.screen = self.previous_screen;
-        } else {
-            if self.settings.is_none() {
-                self.settings = Some(cx.new(|cx| SettingsView::new(window, cx)));
-            }
-            let root = self.repo_path().map(Path::to_path_buf);
-            if let Some(settings) = &self.settings {
-                settings.update(cx, |view, cx| view.set_repository(root, window, cx));
-            }
-            self.previous_screen = self.screen;
-            self.screen = Screen::Settings;
+            self.close_settings(window, cx);
+            return;
         }
+        if self.settings.is_none() {
+            let settings = cx.new(|cx| SettingsView::new(window, cx));
+            self._settings_events = Some(cx.subscribe_in(
+                &settings,
+                window,
+                |this, _, event: &SettingsEvent, window, cx| match event {
+                    SettingsEvent::Close => this.close_settings(window, cx),
+                },
+            ));
+            self.settings = Some(settings);
+        }
+        let root = self.repo_path().map(Path::to_path_buf);
+        if let Some(settings) = &self.settings {
+            settings.update(cx, |view, cx| view.set_repository(root, window, cx));
+            let focus = settings.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+        self.previous_screen = self.screen;
+        self.screen = Screen::Settings;
         cx.notify();
     }
 
     fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.screen == Screen::Settings {
-            self.screen = self.previous_screen;
-            if self.screen == Screen::Start
-                && let Some(start) = &self.start
-            {
-                start.update(cx, |start, cx| start.refresh(window, cx));
-            }
-            cx.notify();
+        if self.screen != Screen::Settings {
+            return;
         }
+        self.screen = self.previous_screen;
+        match (self.screen, &self.review, &self.start) {
+            (Screen::Review, Some(review), _) => {
+                review.update(cx, |review, cx| review.focus_tree(window, cx))
+            }
+            (Screen::Start, _, Some(start)) => {
+                start.update(cx, |start, cx| start.refresh(window, cx));
+                window.focus(&self.focus, cx);
+            }
+            _ => window.focus(&self.focus, cx),
+        }
+        cx.notify();
     }
 
     fn new_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {

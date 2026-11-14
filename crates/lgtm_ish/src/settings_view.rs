@@ -5,10 +5,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, Focusable as _,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
-    actions, div, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
@@ -202,7 +202,20 @@ impl HiddenRules {
     }
 }
 
+pub enum SettingsEvent {
+    Close,
+}
+
+impl EventEmitter<SettingsEvent> for SettingsView {}
+
+impl Focusable for SettingsView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 pub struct SettingsView {
+    focus: FocusHandle,
     gitlab_url: Entity<InputState>,
     gitlab_token: Entity<InputState>,
     hidden_global: HiddenRules,
@@ -262,6 +275,7 @@ impl SettingsView {
             }),
         ];
         let mut this = Self {
+            focus: cx.focus_handle(),
             gitlab_url,
             gitlab_token,
             hidden_global: HiddenRules::new(global_input),
@@ -879,6 +893,8 @@ impl Render for SettingsView {
         v_flex()
             .id("settings-screen")
             .key_context("SettingsScreen")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|_, _: &CloseSettings, _, cx| cx.emit(SettingsEvent::Close)))
             .size_full()
             .child(
                 h_flex()
@@ -894,24 +910,23 @@ impl Render for SettingsView {
                             .small()
                             .icon(IconName::ArrowLeft)
                             .label(s.back.clone())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(CloseSettings), cx)
-                            }),
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
                     )
                     .child(div().font_semibold().child(s.settings.clone())),
             )
             .child(
                 div().flex_1().min_h_0().child(
-                    Settings::new("lgtm-ish-settings").pages([SettingPage::new(
-                        s.settings.clone(),
-                    )
-                    .group(appearance)
-                    .group(review)
-                    .group(hidden)
-                    .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
-                    .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
-                    .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s))
-                    .group(gitlab)]),
+                    Settings::new("lgtm-ish-settings").pages([
+                        SettingPage::new(s.settings.clone())
+                            .group(appearance)
+                            .group(review)
+                            .group(hidden)
+                            .group(gitlab),
+                        SettingPage::new(s.shortcuts.clone())
+                            .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
+                            .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
+                            .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s)),
+                    ]),
                 ),
             )
     }

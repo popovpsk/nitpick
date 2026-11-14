@@ -92,6 +92,7 @@ pub struct HiddenFile {
     pub ix: usize,
     pub path: SharedString,
     pub rule: SharedString,
+    pub matched: Vec<std::ops::Range<usize>>,
 }
 
 pub enum LoadState {
@@ -186,6 +187,7 @@ impl DiscussionView {
 pub enum ReviewEvent {
     Changed,
     Open(ReviewSource),
+    OpenSettings,
 }
 
 impl EventEmitter<ReviewEvent> for ReviewView {}
@@ -383,6 +385,7 @@ impl ReviewView {
                     Some(HiddenFile {
                         ix,
                         path: file.path.clone(),
+                        matched: review_core::hidden::matched_ranges(&rule, &file.path),
                         rule: rule.into(),
                     })
                 })

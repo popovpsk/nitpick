@@ -20,6 +20,12 @@ window options and opening windows (`main.rs`).
 
 ## Spec
 
+- Settings open and close through calls and events (`StartEvent::OpenSettings`,
+  `ReviewEvent::OpenSettings`, `SettingsEvent::Close`), never only through a dispatched
+  action: an action starts from the focused element, and after a popover or menu closes
+  nothing in the window may be focused, so it would not reach `Workspace`. Opening focuses
+  the settings screen; closing focuses the review's tree (or the window root), so menu
+  items and shortcuts keep reaching the window.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with
   `~` for the home dir; both are matched, the name preferred), in `recent.json` order, the
   current one checked. Enter or a click switches this window to the repository;
