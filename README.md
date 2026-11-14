@@ -24,7 +24,7 @@ macOS · Windows · Linux
 - **Only what the branch brings** — the diff from the merge base, also against the target's upstream, like GitLab: commits the target gained since never leak in.
 - **Viewed progress** — mark files viewed, or let them be marked as you move on; marks roll up to folders and reset when a file changes again.
 - **Review like in IntelliJ** — step through changes with `⌥↓`/`F7` straight into the next file, a movable split, a compact blame.
-- **Hide the noise** — gitignore-style patterns (`*_mock.go`, `vendor/`) for one repository or all of them, added from the file tree.
+- **Hide the noise** — gitignore-style patterns (`package-lock.json`, `*.pb.go`, `dist/`) for one repository or all of them, added from the file tree.
 - **GitLab merge requests** — open by list, URL or `!iid`, read discussions on their lines, comment, reply, resolve.
 - **Your own changes** — review staged, unstaged and untracked files before you commit.
 

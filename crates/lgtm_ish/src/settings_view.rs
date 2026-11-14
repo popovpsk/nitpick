@@ -262,7 +262,7 @@ impl SettingsView {
         });
         let editor_command = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("code -g {file}:{line}")
+                .placeholder("code {root} -g {file}:{line}")
                 .default_value(current.editor_command.clone())
         });
         let editor_subscription =
@@ -284,7 +284,7 @@ impl SettingsView {
             cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(3, 12)
-                    .placeholder("*_mock.go\nvendor/")
+                    .placeholder("package-lock.json\n*.min.js\n*.pb.go\ndist/")
             })
         };
         let global_input = hidden_input(window, cx);

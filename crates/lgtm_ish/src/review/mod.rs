@@ -884,6 +884,13 @@ impl ReviewView {
             self.current_file = Some(ix);
             self.pending_jump = None;
             self.install_content(ix, cx);
+            if settings(cx).show_whole_file {
+                if self.content_pending() {
+                    self.pending_jump = Some(true);
+                } else if !self.shown_changes(ix).is_empty() {
+                    self.scroll_to_change(ix, 0, cx);
+                }
+            }
             self.request_blame(cx);
             self.sync_find(cx);
             self.request_image_preview(cx);

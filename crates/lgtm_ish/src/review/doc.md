@@ -96,7 +96,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   the lead. Escape or the close button closes it and focuses the diff. The bar stays open
   across file switches and recounts.
 - Whole files (`show_whole_file`): the `DiffState` gets `context_lines(None)` instead of
-  3, so nothing is folded; blame chips are recomputed for it. Wrapping (`wrap_lines`): split
+  3, so nothing is folded; blame chips are recomputed for it. Opening a file then lands on
+  its first change (the change cursor is on it, so Next goes to the second), as IntelliJ
+  does, instead of the top of the file. Wrapping (`wrap_lines`): split
   view only (the default, as before), always, or never; with no wrapping in split view each
   column clips and both scroll together.
 - Progress reset: the header's progress opens a menu with "Reset viewed progress…"; after a

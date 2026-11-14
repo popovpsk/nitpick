@@ -163,7 +163,7 @@ pub static RU: Strings = lang! {
     hide_folder_here: "Скрыть эту папку в этом репозитории",
     all_files_hidden: "Все изменённые файлы скрыты вашими правилами",
     hidden_files_setting: "Скрытые файлы",
-    hidden_files_setting_desc: "По одному шаблону в стиле gitignore на строку: *_mock.go, vendor/, /docs/, !keep_this.go. Скрытых файлов нет в дереве, прогрессе и навигации. Правый клик по файлу или папке в дереве добавляет шаблон.",
+    hidden_files_setting_desc: "По одному шаблону в стиле gitignore на строку: package-lock.json, *.min.js, *.pb.go, __snapshots__/, dist/, !src/keep.min.js. Скрытых файлов нет в дереве, прогрессе и навигации. Правый клик по файлу или папке в дереве добавляет шаблон.",
     hidden_files_global: "Все репозитории",
     hidden_files_global_desc: "Действует во всех репозиториях",
     hidden_files_repo_desc: "Добавляется к правилам для всех репозиториев; !шаблон снова показывает файл",
