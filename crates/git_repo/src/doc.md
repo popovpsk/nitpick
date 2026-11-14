@@ -2,9 +2,10 @@
 
 Everything the app needs from git, through the `git` CLI: opening a work tree, branches and
 remotes, the merge-base comparison a merge request shows, the changed-file list and the
-patch, the commits of a range, and the network operations (`fetch`, the per-branch `pull`).
-Local operations are blocking and never touch the network; network operations are `async`
-on `tokio::process` and run on `net_runtime`. GPUI-free.
+patch, the commits of a range, the network operations (`fetch`, the per-branch `pull`), and
+finding the repositories inside a folder. Local operations are blocking and never touch the
+network; network operations are `async` on `tokio::process` and run on `net_runtime`.
+GPUI-free.
 
 Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API calls
 (`gitlab`), deciding which branches to show or when to pull (the app).
@@ -20,6 +21,9 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
 - `pull.rs` — `fetch` and the fast-forward-only `pull`.
 - `remote_url.rs` — `parse_remote_url`: host, project path and web base of a remote URL.
+- `scan.rs` — `find_repositories(folder)`: the work trees under a folder, by file system
+  only (no `git` process); `SCAN_DEPTH`.
+- `scan_tests.rs` — the scan rules on a `TempDir` tree of fake `.git` dirs and files.
 - `tests.rs` — throwaway repositories in a `TempDir` with the real `git` and an empty
   global config; bare "origin" plus a second clone for the remote and pull cases.
 
@@ -51,6 +55,20 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `default_target`: the remote's HEAD (`origin` when any `origin/…` branch exists, else the
   upstream remote) as the local branch of that name if it exists, else as the remote ref;
   otherwise the first of `main`, `master`, `develop`, `trunk`, each tried local then remote.
+
+## Scan rule
+
+`find_repositories` walks the folder (the folder itself is depth 0) down to `SCAN_DEPTH`
+(5) and returns sorted, canonical paths, each once:
+
+- A dir whose `.git` is a directory is a repository; it is returned and not descended into.
+- A `.git` file (submodule, linked worktree) and a bare repository (`HEAD`, `objects/`,
+  `refs/`) are skipped whole, so every work tree appears once, as its main checkout.
+- Hidden dirs and `node_modules`, `target`, `vendor`, `build`, `dist` are skipped.
+- Symlinked dirs are followed by their canonical target, except a target that contains the
+  link (a loop); a visited set of canonical dirs keeps each dir to one visit.
+- Canonical paths drop Windows' `\\?\` prefix for drive paths, so they compare equal to
+  `Repo::root`. An unreadable dir is skipped; only an unreadable folder is an error.
 
 ## Comparison rule
 
