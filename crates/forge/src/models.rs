@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const GITHUB_DEFAULT_URL: &str = "https://github.com";
+const GITHUB_COM_HOSTS: [&str; 3] = ["github.com", "www.github.com", "api.github.com"];
+const GITHUB_COMMENT_CONTEXT: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ForgeKind {
@@ -30,7 +32,7 @@ impl ForgeKind {
         }
     }
 
-    pub fn refspecs(self, number: u64, target_branch: &str) -> Vec<String> {
+    pub fn refspecs(self, number: u64, target_tip: Option<&str>) -> Vec<String> {
         match self {
             ForgeKind::GitLab => vec![format!(
                 "+refs/merge-requests/{number}/head:refs/lgtm-ish/mr/{number}"
@@ -39,12 +41,38 @@ impl ForgeKind {
                 let mut specs = vec![format!(
                     "+refs/pull/{number}/head:refs/lgtm-ish/pr/{number}/head"
                 )];
-                if !target_branch.is_empty() {
-                    specs.push(format!(
-                        "+refs/heads/{target_branch}:refs/lgtm-ish/pr/{number}/base"
-                    ));
+                if let Some(tip) = target_tip.filter(|tip| !tip.is_empty()) {
+                    specs.push(format!("+{tip}:refs/lgtm-ish/pr/{number}/base"));
                 }
                 specs
+            }
+        }
+    }
+
+    pub fn comment_context(self) -> Option<u32> {
+        match self {
+            ForgeKind::GitLab => None,
+            ForgeKind::GitHub => Some(GITHUB_COMMENT_CONTEXT),
+        }
+    }
+
+    pub fn web_url(self, configured: &str) -> String {
+        let url = configured.trim().trim_end_matches('/');
+        match self {
+            ForgeKind::GitLab => url.to_string(),
+            ForgeKind::GitHub => {
+                let host = url
+                    .split_once("://")
+                    .map_or(url, |(_, rest)| rest)
+                    .split(['/', '?', '#'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if url.is_empty() || GITHUB_COM_HOSTS.contains(&host.as_str()) {
+                    GITHUB_DEFAULT_URL.to_string()
+                } else {
+                    url.to_string()
+                }
             }
         }
     }
@@ -100,7 +128,8 @@ impl Request {
     }
 
     pub fn refspecs(&self) -> Vec<String> {
-        self.kind.refspecs(self.number, &self.target_branch)
+        let tip = self.diff_refs.as_ref().map(|refs| refs.start_sha.as_str());
+        self.kind.refspecs(self.number, tip)
     }
 }
 

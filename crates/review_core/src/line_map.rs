@@ -63,6 +63,17 @@ impl LineMap {
         }
     }
 
+    pub fn near_change(&self, line: LineKind, context: u32) -> bool {
+        let LineKind::Context { old, new } = line else {
+            return true;
+        };
+        let removed = (old.saturating_sub(context)..=old.saturating_add(context))
+            .any(|o| matches!(self.locate(Side::Old, o), Some(LineKind::Removed { .. })));
+        removed
+            || (new.saturating_sub(context)..=new.saturating_add(context))
+                .any(|n| matches!(self.locate(Side::New, n), Some(LineKind::Added { .. })))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.old_to_new.is_empty() && self.new_to_old.is_empty()
     }

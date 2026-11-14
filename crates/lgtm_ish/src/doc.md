@@ -16,7 +16,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   `open_window`, restoring the windows open at the last quit, app-level action handlers.
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
-  GitHub tokens sealed by `secret_store`; `forge_url` (an empty GitHub URL is github.com),
+  GitHub tokens sealed by `secret_store`; `forge_url` (normalised by `ForgeKind::web_url`: an empty GitHub URL is github.com),
   `forge_configured`, `forge_hosts`, `forge_client`), the `SettingsStore` global, `update_settings`,
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file

@@ -44,6 +44,7 @@ pub static EN: Strings = lang! {
     no_remote_for_mr: "No remote to fetch the merge request from",
     no_remote_for_pr: "No remote to fetch the pull request from",
     mr_not_ready: "GitLab has not prepared this merge request's diff yet",
+    pr_not_ready: "GitHub did not report this pull request's commits",
     loading_review: "Computing the diff…",
     retry: "Retry",
     toggle_tree: "Show or hide the file tree",

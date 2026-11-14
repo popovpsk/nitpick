@@ -6,7 +6,8 @@ resolved state from GraphQL), conversation comments, and writing line comments, 
 conversation comments and thread resolution. Also parses pull-request URLs and `#123`.
 GPUI-free; plain async on tokio, awaited by the app through `net_runtime::spawn`.
 
-Not here: the host-neutral types and the merge base of a pull request (`forge` and the app),
+Not here: review summaries (the text of an approve / request-changes review, `/reviews`),
+the host-neutral types and the merge base of a pull request (`forge` and the app),
 finding the repository from git remotes (the app), storing the token (`secret_store`).
 
 ## Files

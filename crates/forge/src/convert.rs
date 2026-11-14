@@ -161,7 +161,7 @@ pub(crate) fn github_thread(thread: &github::ReviewThread) -> Discussion {
             })
             .collect(),
         position: Some(position),
-        can_reply: true,
+        can_reply: root.in_reply_to_id.is_none(),
         resolved,
         resolve_id,
     }

@@ -48,6 +48,7 @@ pub struct Strings {
     pub no_remote_for_mr: SharedString,
     pub no_remote_for_pr: SharedString,
     pub mr_not_ready: SharedString,
+    pub pr_not_ready: SharedString,
     pub loading_review: SharedString,
     pub retry: SharedString,
     pub files: SharedString,

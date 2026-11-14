@@ -96,7 +96,7 @@ fn a_github_pull_request_leaves_the_merge_base_to_git() {
         request.refspecs(),
         vec![
             "+refs/pull/9/head:refs/lgtm-ish/pr/9/head".to_string(),
-            "+refs/heads/main:refs/lgtm-ish/pr/9/base".to_string(),
+            "+tip1:refs/lgtm-ish/pr/9/base".to_string(),
         ]
     );
 }
@@ -112,7 +112,7 @@ fn github_states_map(#[case] state: &str, #[case] merged: bool, #[case] expected
 #[test]
 fn gitlab_refspec_is_the_merge_request_head() {
     assert_eq!(
-        ForgeKind::GitLab.refspecs(5, "main"),
+        ForgeKind::GitLab.refspecs(5, Some("s")),
         vec!["+refs/merge-requests/5/head:refs/lgtm-ish/mr/5".to_string()]
     );
 }
@@ -276,6 +276,47 @@ fn conversation_comments_take_no_replies_on_github() {
         github_reply_target("issue-5"),
         Err(Error::CannotReply(_))
     ));
+}
+
+#[test]
+fn a_thread_whose_root_is_gone_takes_no_replies() {
+    let orphan = review_comment(json!({
+        "id": 11, "in_reply_to_id": 10, "path": "a.rs", "line": 1, "side": "RIGHT",
+        "commit_id": "h", "body": "reply", "created_at": "2024-01-01T00:00:00Z"
+    }));
+    let threads = github::group_threads(vec![orphan], &[]);
+    let all = github_discussions(&threads, &[]);
+    assert_eq!(all[0].id, "11");
+    assert!(!all[0].can_reply);
+}
+
+#[rstest]
+#[case::gitlab(
+    ForgeKind::GitLab,
+    " https://gitlab.example.com/ ",
+    "https://gitlab.example.com"
+)]
+#[case::gitlab_unset(ForgeKind::GitLab, "", "")]
+#[case::github_unset(ForgeKind::GitHub, "  ", "https://github.com")]
+#[case::github_www(ForgeKind::GitHub, "https://www.github.com/", "https://github.com")]
+#[case::github_api(ForgeKind::GitHub, "https://API.github.com", "https://github.com")]
+#[case::enterprise(
+    ForgeKind::GitHub,
+    "https://ghe.example.com/",
+    "https://ghe.example.com"
+)]
+fn web_urls_normalise_the_configured_address(
+    #[case] kind: ForgeKind,
+    #[case] configured: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(kind.web_url(configured), expected);
+}
+
+#[test]
+fn only_github_limits_comments_to_its_hunks() {
+    assert_eq!(ForgeKind::GitLab.comment_context(), None);
+    assert_eq!(ForgeKind::GitHub.comment_context(), Some(3));
 }
 
 #[test]

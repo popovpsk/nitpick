@@ -293,7 +293,7 @@ impl StartView {
             .filter(|(kind, _)| settings(cx).forge_configured(*kind))
             .cloned()
             .collect();
-        let gitlab_ready = settings(cx).forge_configured(ForgeKind::GitLab);
+        let any_ready = !connected.is_empty();
         self.mr_state = MrListState::Loading;
         let repo = self.repo.clone();
         let task = cx.spawn(async move |this, cx| {
@@ -306,7 +306,7 @@ impl StartView {
             let Some(found) = found else {
                 let _ = this.update(cx, |this, cx| {
                     this.forge_project = None;
-                    this.mr_state = if gitlab_ready {
+                    this.mr_state = if any_ready {
                         MrListState::NoRemote
                     } else {
                         MrListState::Unconfigured(ForgeKind::GitLab)
@@ -378,8 +378,8 @@ impl StartView {
         if text.is_empty() {
             return;
         }
-        let gitlab_base = settings(cx).forge_url(ForgeKind::GitLab).to_string();
-        let github_base = settings(cx).forge_url(ForgeKind::GitHub).to_string();
+        let gitlab_base = settings(cx).forge_url(ForgeKind::GitLab);
+        let github_base = settings(cx).forge_url(ForgeKind::GitHub);
         if let Some(url) = forge::parse_request_url(&text, &gitlab_base, &github_base) {
             cx.emit(StartEvent::Open(ReviewSource::MergeRequest {
                 forge: url.kind,

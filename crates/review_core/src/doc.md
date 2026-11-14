@@ -27,7 +27,8 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
   `LineMap::rows()` → the patch's rows in display order (removed lines before the added
   lines of a change); `LineMap::shown_lines(side, context, min_folded)` → which lines of a
   side the diff shows with unchanged lines folded, and `shown_block_starts` → the first
-  line of each such block.
+  line of each such block; `near_change(line, context)` → whether a line would be inside a
+  hunk of a diff with that many context lines (changed lines always are).
 - `blame.rs` — `marker_lines` (the lines a blame chip goes on), `initials` of an author
   name, `tint_index` (a stable palette slot for a commit id).
 - `blame_tests.rs` — marker placement, initials, tint stability.

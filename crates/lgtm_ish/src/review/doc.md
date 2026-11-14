@@ -121,8 +121,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   offers Reply only when `can_reply` (GitHub conversation comments take none) and
   Resolve/Unresolve only with a `resolve_id` (GitHub: a review thread the viewer may toggle,
   from GraphQL; none when GraphQL failed), so no button is shown that cannot work. GitHub
-  accepts a line comment only on a line of its own diff hunks; elsewhere its 422 message is
-  shown as the comment error. The UI names a request by `Request::reference` (`!5` / `#5`).
+  accepts a line comment only inside its own diff hunks, so for it a line farther than
+  `ForgeKind::comment_context` from a change (`LineMap::near_change`) opens no composer and
+  says the line cannot be commented on. The UI names a request by `Request::reference` (`!5` / `#5`).
 - The work-tree review (`ReviewSource::WorkingTree`) diffs `HEAD` (the empty tree in an
   unborn repository) against the files on disk: staged, unstaged and untracked
   (`git_repo::Repo::working_tree_*`). It has no commits, no pull and no comments. It reloads

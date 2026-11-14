@@ -44,6 +44,7 @@ pub static RU: Strings = lang! {
     no_remote_for_mr: "Нет remote, из которого можно получить merge request",
     no_remote_for_pr: "Нет remote, из которого можно получить pull request",
     mr_not_ready: "GitLab ещё не подготовил дифф этого merge request",
+    pr_not_ready: "GitHub не сообщил коммиты этого pull request",
     loading_review: "Считаю дифф…",
     retry: "Повторить",
     toggle_tree: "Показать или скрыть дерево файлов",

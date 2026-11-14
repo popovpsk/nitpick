@@ -329,6 +329,26 @@ fn shown_block_starts_follow_the_folding(
     assert_eq!(map.shown_block_starts(side, context, 2), expected);
 }
 
+#[rstest]
+#[case::changed_line(".........+..........", Side::New, 10, true)]
+#[case::three_below_an_added_line(".........+..........", Side::New, 13, true)]
+#[case::four_below_an_added_line(".........+..........", Side::New, 14, false)]
+#[case::three_above_a_removed_line(".........-..........", Side::Old, 7, true)]
+#[case::four_above_a_removed_line(".........-..........", Side::Old, 6, false)]
+#[case::three_below_a_removed_block("......----..........", Side::New, 9, true)]
+#[case::four_below_a_removed_block("......----..........", Side::New, 10, false)]
+#[case::no_changes("..........", Side::New, 5, false)]
+fn near_change_follows_unified_context(
+    #[case] ops: &str,
+    #[case] side: Side,
+    #[case] line: u32,
+    #[case] expected: bool,
+) {
+    let map = &line_maps(&whole_file_patch(ops))[0];
+    let kind = map.locate(side, line).unwrap();
+    assert_eq!(map.near_change(kind, 3), expected);
+}
+
 #[test]
 fn rows_follow_the_patch_order() {
     let maps = line_maps(PATCH);

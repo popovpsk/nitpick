@@ -241,14 +241,11 @@ impl Settings {
             .map_or(&[], Vec::as_slice)
     }
 
-    pub fn forge_url(&self, kind: ForgeKind) -> &str {
-        match kind {
-            ForgeKind::GitLab => self.gitlab_url.trim(),
-            ForgeKind::GitHub => match self.github_url.trim() {
-                "" => forge::GITHUB_DEFAULT_URL,
-                url => url,
-            },
-        }
+    pub fn forge_url(&self, kind: ForgeKind) -> String {
+        kind.web_url(match kind {
+            ForgeKind::GitLab => &self.gitlab_url,
+            ForgeKind::GitHub => &self.github_url,
+        })
     }
 
     fn forge_token(&self, kind: ForgeKind) -> &str {
@@ -265,7 +262,7 @@ impl Settings {
     pub fn forge_hosts(&self) -> Vec<(ForgeKind, String)> {
         [ForgeKind::GitLab, ForgeKind::GitHub]
             .into_iter()
-            .map(|kind| (kind, self.forge_url(kind).to_string()))
+            .map(|kind| (kind, self.forge_url(kind)))
             .filter(|(_, url)| !url.is_empty())
             .collect()
     }
@@ -274,7 +271,7 @@ impl Settings {
         if !self.forge_configured(kind) {
             return None;
         }
-        match forge::Client::new(kind, self.forge_url(kind), self.forge_token(kind)) {
+        match forge::Client::new(kind, &self.forge_url(kind), self.forge_token(kind)) {
             Ok(client) => Some(client),
             Err(err) => {
                 log::warn!("{} client: {err}", kind.name());

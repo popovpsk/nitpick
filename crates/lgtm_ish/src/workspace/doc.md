@@ -58,8 +58,9 @@ window options and opening windows (`main.rs`).
   `Settings::forge_hosts`: the GitLab URL when set, the GitHub URL or github.com): a remote
   on a connected host (URL and token) wins, else any matching remote, so a github.com
   `origin` does not hide a connected GitLab remote; within that, the `origin` remote, else
-  the first. The project path comes from the remote URL. No match says GitLab is not
-  connected (no GitLab token) or that no remote points to a configured server; a match on a
+  the first. The project path comes from the remote URL. No match says that no remote
+  points to a configured server when any host is connected, else that GitLab is not
+  connected; a match on a
   host without a token says that host is not connected. The card title and the empty-list
   text follow the host ("merge requests" / "pull requests"). The input takes a GitLab or
   GitHub request URL (`forge::parse_request_url`, the host from the URL) or `!123` / `#123` /

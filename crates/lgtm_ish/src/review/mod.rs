@@ -1401,6 +1401,13 @@ impl ReviewView {
         }
         let side = range.end_side();
         let position = DiffLinePosition::new(range.path().clone(), side, range.end());
+        if !self.line_commentable(&position) {
+            window.push_notification(
+                Notification::error(tr().comment_line_unavailable.clone()),
+                cx,
+            );
+            return;
+        }
         self.open_composer(ComposerTarget::Line(position), window, cx);
     }
 
@@ -1470,7 +1477,15 @@ impl ReviewView {
                     DiffSide::Original => Side::Old,
                     _ => Side::New,
                 };
-                let Some(kind) = file.line_map.locate(side, position.line() as u32) else {
+                let Some(kind) =
+                    file.line_map
+                        .locate(side, position.line() as u32)
+                        .filter(|&kind| {
+                            ctx.kind()
+                                .comment_context()
+                                .is_none_or(|context| file.line_map.near_change(kind, context))
+                        })
+                else {
                     window.push_notification(
                         Notification::error(tr().comment_line_unavailable.clone()),
                         cx,
@@ -1643,6 +1658,30 @@ impl ReviewView {
         self.mr.is_some()
     }
 
+    fn line_commentable(&self, position: &DiffLinePosition) -> bool {
+        let Some(context) = self
+            .mr
+            .as_ref()
+            .and_then(|ctx| ctx.kind().comment_context())
+        else {
+            return true;
+        };
+        let Some(file) = self
+            .review
+            .as_ref()
+            .and_then(|review| review.files.get(review.file_index(position.path())?))
+        else {
+            return false;
+        };
+        let side = match position.side() {
+            DiffSide::Original => Side::Old,
+            _ => Side::New,
+        };
+        file.line_map
+            .locate(side, position.line() as u32)
+            .is_some_and(|kind| file.line_map.near_change(kind, context))
+    }
+
     pub fn comments_title(&self) -> SharedString {
         match self.mr.as_ref().map(MrContext::kind) {
             Some(ForgeKind::GitHub) => tr().pr_comments.clone(),
@@ -1727,10 +1766,12 @@ async fn load_review(
                 let project = project.clone();
                 net_runtime::spawn(async move { client.request(&project, number).await }).await?
             };
-            let diff_refs = request
-                .diff_refs
-                .clone()
-                .ok_or_else(|| anyhow!(tr().mr_not_ready.to_string()))?;
+            let diff_refs = request.diff_refs.clone().ok_or_else(|| {
+                anyhow!(match kind {
+                    ForgeKind::GitLab => tr().mr_not_ready.to_string(),
+                    ForgeKind::GitHub => tr().pr_not_ready.to_string(),
+                })
+            })?;
             let missing_remote = {
                 let repo = repo.clone();
                 let needed = diff_refs.needed_commits().map(str::to_string);

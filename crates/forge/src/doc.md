@@ -13,7 +13,8 @@ tokens (the app, `secret_store`).
 ## Files
 
 - `lib.rs` — module list and the public re-exports.
-- `models.rs` — `ForgeKind` (reference `!5` / `#5`, refspecs), `User`, `Request`,
+- `models.rs` — `ForgeKind` (reference `!5` / `#5`, refspecs, `comment_context`,
+  `web_url`), `User`, `Request`,
   `RequestState`, `DiffRefs`, `Discussion`, `Note`, `Position`, `NewPosition`,
   `GITHUB_DEFAULT_URL`.
 - `client.rs` — `Client`: `new(kind, base_url, token)`, `kind`, `base_url`, and the
@@ -40,11 +41,18 @@ tokens (the app, `secret_store`).
   carries every changed file's patch.
 - `Request::refspecs`: GitLab `refs/merge-requests/<n>/head` → `refs/lgtm-ish/mr/<n>`
   (unchanged from before GitHub); GitHub `refs/pull/<n>/head` → `refs/lgtm-ish/pr/<n>/head`
-  plus the target branch → `refs/lgtm-ish/pr/<n>/base` (the tip to take the merge base
-  from). Names under one prefix never nest, since a ref cannot be both a file and a folder.
+  plus the target tip `start_sha` itself → `refs/lgtm-ish/pr/<n>/base` (GitHub serves
+  reachable commits by id), so the merge base is computed from exactly the commit GitHub
+  reported, and a deleted or force-pushed target branch does not break the fetch. Names
+  under one prefix never nest, since a ref cannot be both a file and a folder.
+- `comment_context`: GitHub accepts a line comment only inside its diff hunks (3 lines of
+  context), so the app offers a line only within that distance of a change; GitLab takes
+  any line. `web_url` normalises a configured address: GitHub's empty, `www.` or `api.`
+  github.com is `https://github.com`, so remotes on github.com match.
 - `Discussion.id` is what `reply` takes: GitLab's discussion id; on GitHub the thread root's
   comment id, or `issue-<id>` for a conversation comment, which has `can_reply: false`
-  (`reply` refuses it with `CannotReply`). `resolve_id` is what `set_resolved` takes, `None`
+  (`reply` refuses it with `CannotReply`), as has a thread whose root comment is gone (its
+  first comment is a reply, and GitHub takes replies only to a root). `resolve_id` is what `set_resolved` takes, `None`
   when the viewer cannot toggle it: GitLab's discussion id for a resolvable discussion; on
   GitHub the review thread's GraphQL node id when GraphQL answered and allows the toggle in
   that direction. `resolved` is shown either way.
