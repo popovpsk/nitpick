@@ -24,6 +24,32 @@ const POLL_FAST: Duration = Duration::from_millis(100);
 const POLL_SLOW: Duration = Duration::from_secs(2);
 const FILE_VAR: &str = "LGTM_ISH_FILE";
 const LINE_VAR: &str = "LGTM_ISH_LINE";
+const ROOT_VAR: &str = "LGTM_ISH_ROOT";
+const JETBRAINS: [(&str, &str, &str); 5] = [
+    ("GoLand", "GoLand.app", "goland"),
+    ("IntelliJ IDEA", "IntelliJ IDEA.app", "idea"),
+    ("RustRover", "RustRover.app", "rustrover"),
+    ("PyCharm", "PyCharm.app", "pycharm"),
+    ("WebStorm", "WebStorm.app", "webstorm"),
+];
+
+pub fn editor_presets(os: HostOs) -> Vec<(&'static str, String)> {
+    let mut presets = vec![
+        ("VS Code", "code {root} -g {file}:{line}".to_string()),
+        ("Cursor", "cursor {root} -g {file}:{line}".to_string()),
+        ("Zed", "zed {root} {file}:{line}".to_string()),
+    ];
+    presets.extend(JETBRAINS.iter().map(|(name, app, script)| {
+        let template = match os {
+            HostOs::Mac => format!("open -na \"{app}\" --args {{root}} --line {{line}} {{file}}"),
+            HostOs::Linux | HostOs::Windows => {
+                format!("{script} {{root}} --line {{line}} {{file}}")
+            }
+        };
+        (*name, template)
+    }));
+    presets
+}
 const LOGIN_SHELLS: [&str; 8] = ["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "yash"];
 
 #[cfg(windows)]
@@ -175,6 +201,7 @@ impl Invocation {
 
 pub fn editor_invocation(
     template: &str,
+    root: &str,
     file: &str,
     line: u32,
     os: HostOs,
@@ -197,7 +224,7 @@ pub fn editor_invocation(
         HostOs::Windows => {
             let mut words = split_words(template)
                 .into_iter()
-                .map(|word| substitute(&word, file, &line_text));
+                .map(|word| substitute(&word, root, file, &line_text));
             let program = words.next().unwrap_or_default();
             let mut args: Vec<String> = words.collect();
             if !wants_file {
@@ -218,7 +245,11 @@ pub fn editor_invocation(
             Invocation {
                 program: login_shell(shell),
                 args: vec!["-lc".to_string(), script],
-                env: vec![(FILE_VAR, file.to_string()), (LINE_VAR, line_text)],
+                env: vec![
+                    (FILE_VAR, file.to_string()),
+                    (LINE_VAR, line_text),
+                    (ROOT_VAR, root.to_string()),
+                ],
                 check_exit: true,
             }
         }
@@ -229,6 +260,7 @@ fn placeholder(rest: &str) -> Option<(&'static str, &str)> {
     rest.strip_prefix("{file}")
         .map(|after| (FILE_VAR, after))
         .or_else(|| rest.strip_prefix("{line}").map(|after| (LINE_VAR, after)))
+        .or_else(|| rest.strip_prefix("{root}").map(|after| (ROOT_VAR, after)))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -299,7 +331,7 @@ fn split_words(template: &str) -> Vec<String> {
     words
 }
 
-fn substitute(template: &str, file: &str, line: &str) -> String {
+fn substitute(template: &str, root: &str, file: &str, line: &str) -> String {
     let mut out = String::with_capacity(template.len() + file.len());
     let mut rest = template;
     while let Some(start) = rest.find('{') {
@@ -307,7 +339,11 @@ fn substitute(template: &str, file: &str, line: &str) -> String {
         let tail = &rest[start..];
         match placeholder(tail) {
             Some((var, after)) => {
-                out.push_str(if var == FILE_VAR { file } else { line });
+                out.push_str(match var {
+                    FILE_VAR => file,
+                    ROOT_VAR => root,
+                    _ => line,
+                });
                 rest = after;
             }
             None => {
@@ -508,6 +544,7 @@ impl ReviewView {
             let shell = std::env::var("SHELL").ok();
             let invocation = editor_invocation(
                 &template,
+                &dir.to_string_lossy(),
                 &path.to_string_lossy(),
                 line,
                 HostOs::current(),

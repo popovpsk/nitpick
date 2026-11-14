@@ -264,6 +264,7 @@ pub struct Strings {
     pub cmd_open_in_editor: SharedString,
     pub editor_command: SharedString,
     pub editor_command_desc: SharedString,
+    pub editor_presets: SharedString,
     pub editor_failed: SharedString,
     pub file_not_on_disk_t: SharedString,
 }

@@ -160,6 +160,7 @@ fn shell(script: &str, shell: &str, file: &str, line: &str) -> Invocation {
         env: vec![
             ("LGTM_ISH_FILE", file.to_string()),
             ("LGTM_ISH_LINE", line.to_string()),
+            ("LGTM_ISH_ROOT", "/r".to_string()),
         ],
         check_exit: true,
     }
@@ -254,6 +255,23 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     shell("ed ''\"$LGTM_ISH_FILE\"''", "/bin/sh", "/r/a b.rs", "7")
 )]
 #[case::windows_no_file("notepad++", HostOs::Windows, None, plain("notepad++", &["/r/a b.rs"]))]
+#[case::zed_project(
+    "zed {root} {file}:{line}",
+    HostOs::Mac,
+    Some("/bin/zsh"),
+    shell(
+        "zed \"$LGTM_ISH_ROOT\" \"$LGTM_ISH_FILE\":\"$LGTM_ISH_LINE\"",
+        "/bin/zsh",
+        "/r/a b.rs",
+        "7"
+    )
+)]
+#[case::windows_project(
+    "goland {root} --line {line} {file}",
+    HostOs::Windows,
+    None,
+    plain("goland", &["/r", "--line", "7", "/r/a b.rs"])
+)]
 fn editor_invocations(
     #[case] template: &str,
     #[case] os: HostOs,
@@ -261,7 +279,7 @@ fn editor_invocations(
     #[case] expected: Invocation,
 ) {
     assert_eq!(
-        editor_invocation(template, "/r/a b.rs", 7, os, login),
+        editor_invocation(template, "/r", "/r/a b.rs", 7, os, login),
         expected
     );
 }
@@ -269,6 +287,11 @@ fn editor_invocations(
 #[rstest]
 #[case::shell("code -g {file}:{line}", HostOs::Mac, "code -g /r/a b.rs:7")]
 #[case::default("", HostOs::Linux, "xdg-open /r/a b.rs")]
+#[case::project(
+    "open -na \"GoLand.app\" --args {root} --line {line} {file}",
+    HostOs::Mac,
+    "open -na \"GoLand.app\" --args /r --line 7 /r/a b.rs"
+)]
 #[case::windows(
     "idea --line {line} {file}",
     HostOs::Windows,
@@ -279,7 +302,7 @@ fn invocations_display_with_the_values(
     #[case] os: HostOs,
     #[case] expected: &str,
 ) {
-    let invocation = editor_invocation(template, "/r/a b.rs", 7, os, Some("/bin/zsh"));
+    let invocation = editor_invocation(template, "/r", "/r/a b.rs", 7, os, Some("/bin/zsh"));
     assert_eq!(invocation.display(), expected);
 }
 
@@ -287,6 +310,7 @@ fn invocations_display_with_the_values(
 fn a_file_name_with_placeholders_is_not_substituted_again() {
     let invocation = editor_invocation(
         "ed {file} {line}",
+        "C:\\",
         "C:\\{line}.rs",
         3,
         HostOs::Windows,
@@ -304,13 +328,20 @@ fn a_file_name_with_placeholders_is_not_substituted_again() {
 #[case::double_quoted("printf '%s|' \"{file}:{line}\" \"x {line}\"", "{f}:42|x 42|")]
 #[case::single_quoted("printf '%s|' '{file}' 'at {line}'", "{f}|at 42|")]
 #[case::escaped_quote("printf '%s|' \\\" {file}", "\"|{f}|")]
+#[case::project("printf '%s|' {root} {file}:{line}", "/r|{f}:42|")]
 fn the_shell_receives_the_file_and_line_unmangled(#[case] template: &str, #[case] expected: &str) {
     let dir = tempfile::TempDir::new().unwrap();
     let out = dir.path().join("out.txt");
     let file = dir.path().join("it's a \"file\" $HOME *.rs");
     let template = format!("{template} > '{}'", out.display());
-    let mut invocation =
-        editor_invocation(&template, &file.to_string_lossy(), 42, HostOs::Linux, None);
+    let mut invocation = editor_invocation(
+        &template,
+        "/r",
+        &file.to_string_lossy(),
+        42,
+        HostOs::Linux,
+        None,
+    );
     invocation
         .env
         .push(("HOME", dir.path().to_string_lossy().into_owned()));
@@ -338,4 +369,31 @@ fn programs_are_found_with_their_extension_on_the_path() {
     assert_eq!(super::find_program("code.cmd", &path, exts), None);
     assert_eq!(super::find_program("bin/code", &path, exts), None);
     assert_eq!(super::find_program("missing", &path, exts), None);
+}
+
+#[rstest]
+#[case::mac(
+    HostOs::Mac,
+    "open -na \"GoLand.app\" --args {root} --line {line} {file}"
+)]
+#[case::linux(HostOs::Linux, "goland {root} --line {line} {file}")]
+#[case::windows(HostOs::Windows, "goland {root} --line {line} {file}")]
+fn presets_open_the_repository_as_a_project(#[case] os: HostOs, #[case] goland: &str) {
+    let presets = super::editor_presets(os);
+    assert!(
+        presets
+            .iter()
+            .all(|(_, template)| template.contains("{root}")
+                && template.contains("{file}")
+                && template.contains("{line}"))
+    );
+    let find = |name: &str| {
+        presets
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, t)| t.as_str())
+    };
+    assert_eq!(find("GoLand"), Some(goland));
+    assert_eq!(find("VS Code"), Some("code {root} -g {file}:{line}"));
+    assert_eq!(find("Zed"), Some("zed {root} {file}:{line}"));
 }

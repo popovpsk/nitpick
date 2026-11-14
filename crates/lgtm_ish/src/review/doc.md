@@ -336,8 +336,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   `explorer.exe`, whose exit code is ignored since it is 1 on success), which cannot jump to
   a line. Otherwise on macOS/Linux the template runs as `$SHELL -lc` (a login shell, so the
   PATH from the profile files, not the interactive rc files, reaches a GUI app; `/bin/sh`
-  when `$SHELL` is not an sh-family shell or fish). `{file}`/`{line}` become references to
-  `LGTM_ISH_FILE`/`LGTM_ISH_LINE`, passed in the environment, so the path never goes
+  when `$SHELL` is not an sh-family shell or fish). `{root}` (the repository's work tree),
+  `{file}` and `{line}` become references to `LGTM_ISH_ROOT`/`LGTM_ISH_FILE`/`LGTM_ISH_LINE`,
+  passed in the environment, so the path never goes
   through quoting; the reference depends on the quoting around the placeholder
   (`substitute_shell`): `"$VAR"` outside quotes, `$VAR` inside `"…"`, `'"$VAR"'` inside
   `'…'`, so `{file}`, `"{file}:{line}"` and `'{file}'` all pass the path as one word. A
@@ -350,6 +351,12 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   for `FAILURE_WINDOW` (5 s), reports a spawn error or a non-zero exit in that time as an
   error notification naming the command, then only reaps it. stderr is not captured, since
   a pipe dropped while the editor lives on would break its writes.
+- Editor presets (`editor_presets`, the settings field's Presets menu fills the template):
+  VS Code / Cursor `code {root} -g {file}:{line}`, Zed `zed {root} {file}:{line}`, JetBrains
+  IDEs `<script> {root} --line {line} {file}`, on macOS `open -na "<App>.app" --args …`
+  instead, which needs no command-line launcher. Each passes the repository first, so the
+  editor opens (or reuses) it as a project and the file inside it, with its language
+  servers, rather than as a lone file (JetBrains' LightEdit).
 - Open in browser: the file at the review's head commit, `{project}/-/blob/{sha}/{path}#L{line}`
   (GitLab, and any host other than github.com) or `{project}/blob/{sha}/{path}#L{line}`
   (github.com), the path percent-encoded,

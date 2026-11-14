@@ -256,7 +256,8 @@ pub static EN: Strings = lang! {
     cmd_copy_path: "Copy the file's path",
     cmd_open_in_editor: "Open the file in the editor",
     editor_command: "Editor command",
-    editor_command_desc: "Opens a file at the line of the change. {file} and {line} are filled in, for example: code -g {file}:{line}, zed {file}:{line}, idea --line {line} {file}. Empty: the system's default app, without the line.",
+    editor_command_desc: "Opens a file at the line of the change. {root} is the repository, {file} and {line} the file and its line. With {root} the editor opens the repository as a project, so its language servers work. Pick a preset or write a command. Empty: the system's default app, without the line.",
+    editor_presets: "Presets",
     editor_failed: "Could not open the editor",
     file_not_on_disk_t: "{} is not in the working tree",
 };

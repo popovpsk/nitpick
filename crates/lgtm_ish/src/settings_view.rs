@@ -27,6 +27,7 @@ use ui_resources::themes::ZedThemeFile;
 
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
+use crate::review::{HostOs, editor_presets};
 use crate::settings_store::{
     DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines,
     apply_saved_theme, apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
@@ -564,6 +565,28 @@ fn theme_label(choice: &ThemeChoice) -> SharedString {
     }
 }
 
+fn editor_presets_button() -> AnyElement {
+    Button::new("editor-presets")
+        .small()
+        .label(tr().editor_presets.clone())
+        .dropdown_caret(true)
+        .dropdown_menu_with_anchor(Anchor::TopRight, |menu, _, cx| {
+            let current = settings(cx).editor_command.clone();
+            editor_presets(HostOs::current())
+                .into_iter()
+                .fold(menu, |menu, (name, template)| {
+                    let checked = template == current;
+                    menu.item(PopupMenuItem::new(name).checked(checked).on_click(
+                        move |_, _, cx| {
+                            let template = template.clone();
+                            update_settings(cx, move |s| s.editor_command = template);
+                        },
+                    ))
+                })
+        })
+        .into_any_element()
+}
+
 fn theme_dropdown(cx: &App) -> AnyElement {
     Button::new("settings-theme")
         .small()
@@ -885,105 +908,109 @@ impl Render for SettingsView {
                 )
                 .description(s.code_text_size_desc.clone()),
             );
-        let review = SettingGroup::new()
-            .title(s.review.clone())
-            .item(SettingItem::new(
-                s.tree_side.clone(),
-                SettingField::render(|_, _, cx| {
-                    let s = tr();
-                    choice_buttons(
-                        "tree-side",
-                        vec![
-                            (s.left.clone(), TreeSide::Left),
-                            (s.right.clone(), TreeSide::Right),
-                        ],
-                        settings(cx).tree_side,
-                        |st, v| st.tree_side = v,
-                    )
-                }),
-            ))
-            .item(SettingItem::new(
-                s.diff_layout.clone(),
-                SettingField::render(|_, _, cx| {
-                    let s = tr();
-                    choice_buttons(
-                        "diff-layout-setting",
-                        vec![
-                            (s.split_view.clone(), DiffLayout::Split),
-                            (s.unified_view.clone(), DiffLayout::Unified),
-                        ],
-                        settings(cx).diff_layout,
-                        |st, v| st.diff_layout = v,
-                    )
-                }),
-            ))
-            .item(
-                SettingItem::new(
-                    s.show_whole_file.clone(),
-                    SettingField::switch(
-                        |cx| settings(cx).show_whole_file,
-                        |value, cx| update_settings(cx, |s| s.show_whole_file = value),
-                    ),
-                )
-                .description(s.show_whole_file_desc.clone()),
-            )
-            .item(SettingItem::new(
-                s.wrap_lines.clone(),
-                SettingField::render(|_, _, cx| {
-                    let s = tr();
-                    choice_buttons(
-                        "wrap-lines",
-                        vec![
-                            (s.wrap_split_only.clone(), WrapLines::SplitOnly),
-                            (s.wrap_always.clone(), WrapLines::Always),
-                            (s.wrap_never.clone(), WrapLines::Never),
-                        ],
-                        settings(cx).wrap_lines,
-                        |st, v| st.wrap_lines = v,
-                    )
-                }),
-            ))
-            .item(
-                SettingItem::new(
-                    s.ignore_whitespace.clone(),
-                    SettingField::switch(
-                        |cx| settings(cx).ignore_whitespace,
-                        |value, cx| update_settings(cx, |s| s.ignore_whitespace = value),
-                    ),
-                )
-                .description(s.ignore_whitespace_desc.clone()),
-            )
-            .item(
-                SettingItem::new(
-                    s.advance_on_viewed.clone(),
-                    SettingField::switch(
-                        |cx| settings(cx).advance_on_viewed,
-                        |value, cx| update_settings(cx, |s| s.advance_on_viewed = value),
-                    ),
-                )
-                .description(s.advance_on_viewed_desc.clone()),
-            )
-            .item(
-                SettingItem::new(
-                    s.auto_mark_viewed.clone(),
-                    SettingField::switch(
-                        |cx| settings(cx).auto_mark_viewed,
-                        |value, cx| update_settings(cx, |s| s.auto_mark_viewed = value),
-                    ),
-                )
-                .description(s.auto_mark_viewed_desc.clone()),
-            )
-            .item(
-                SettingItem::new(
-                    s.editor_command.clone(),
-                    SettingField::render(move |_, _, cx| {
-                        div()
-                            .w(px(320.))
-                            .child(Input::new(&editor_view.read(cx).editor_command).small())
+        let review =
+            SettingGroup::new()
+                .title(s.review.clone())
+                .item(SettingItem::new(
+                    s.tree_side.clone(),
+                    SettingField::render(|_, _, cx| {
+                        let s = tr();
+                        choice_buttons(
+                            "tree-side",
+                            vec![
+                                (s.left.clone(), TreeSide::Left),
+                                (s.right.clone(), TreeSide::Right),
+                            ],
+                            settings(cx).tree_side,
+                            |st, v| st.tree_side = v,
+                        )
                     }),
+                ))
+                .item(SettingItem::new(
+                    s.diff_layout.clone(),
+                    SettingField::render(|_, _, cx| {
+                        let s = tr();
+                        choice_buttons(
+                            "diff-layout-setting",
+                            vec![
+                                (s.split_view.clone(), DiffLayout::Split),
+                                (s.unified_view.clone(), DiffLayout::Unified),
+                            ],
+                            settings(cx).diff_layout,
+                            |st, v| st.diff_layout = v,
+                        )
+                    }),
+                ))
+                .item(
+                    SettingItem::new(
+                        s.show_whole_file.clone(),
+                        SettingField::switch(
+                            |cx| settings(cx).show_whole_file,
+                            |value, cx| update_settings(cx, |s| s.show_whole_file = value),
+                        ),
+                    )
+                    .description(s.show_whole_file_desc.clone()),
                 )
-                .description(s.editor_command_desc.clone()),
-            );
+                .item(SettingItem::new(
+                    s.wrap_lines.clone(),
+                    SettingField::render(|_, _, cx| {
+                        let s = tr();
+                        choice_buttons(
+                            "wrap-lines",
+                            vec![
+                                (s.wrap_split_only.clone(), WrapLines::SplitOnly),
+                                (s.wrap_always.clone(), WrapLines::Always),
+                                (s.wrap_never.clone(), WrapLines::Never),
+                            ],
+                            settings(cx).wrap_lines,
+                            |st, v| st.wrap_lines = v,
+                        )
+                    }),
+                ))
+                .item(
+                    SettingItem::new(
+                        s.ignore_whitespace.clone(),
+                        SettingField::switch(
+                            |cx| settings(cx).ignore_whitespace,
+                            |value, cx| update_settings(cx, |s| s.ignore_whitespace = value),
+                        ),
+                    )
+                    .description(s.ignore_whitespace_desc.clone()),
+                )
+                .item(
+                    SettingItem::new(
+                        s.advance_on_viewed.clone(),
+                        SettingField::switch(
+                            |cx| settings(cx).advance_on_viewed,
+                            |value, cx| update_settings(cx, |s| s.advance_on_viewed = value),
+                        ),
+                    )
+                    .description(s.advance_on_viewed_desc.clone()),
+                )
+                .item(
+                    SettingItem::new(
+                        s.auto_mark_viewed.clone(),
+                        SettingField::switch(
+                            |cx| settings(cx).auto_mark_viewed,
+                            |value, cx| update_settings(cx, |s| s.auto_mark_viewed = value),
+                        ),
+                    )
+                    .description(s.auto_mark_viewed_desc.clone()),
+                )
+                .item(
+                    SettingItem::new(
+                        s.editor_command.clone(),
+                        SettingField::render(move |_, _, cx| {
+                            h_flex()
+                                .gap_1()
+                                .child(div().w(px(320.)).child(
+                                    Input::new(&editor_view.read(cx).editor_command).small(),
+                                ))
+                                .child(editor_presets_button())
+                        }),
+                    )
+                    .description(s.editor_command_desc.clone()),
+                );
         let url_view = view.clone();
         let token_view = view.clone();
         let status_view = view.clone();
