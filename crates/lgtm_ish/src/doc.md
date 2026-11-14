@@ -19,9 +19,11 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
-  tree's path), `HideScope`, `add_hide_pattern`.
+  tree's path), `HideScope`, `add_hide_pattern`; the diff's `split_ratio` and
+  `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
+  narrower).
 - `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
-  palettes per appearance.
+  palettes per appearance; fitting the split ratio to a width.
 - `settings_view.rs` — the settings screen, two pages: Settings and Shortcuts (the
   shortcut groups stay out of the general page). Back and Escape emit
   `SettingsEvent::Close` to the window rather than dispatching an action, so they work

@@ -141,6 +141,9 @@ pub struct Strings {
     pub press_again_previous_file: SharedString,
     pub no_next_change: SharedString,
     pub no_previous_change: SharedString,
+    pub file_added_tag: SharedString,
+    pub file_deleted_tag: SharedString,
+    pub file_renamed_tag: SharedString,
     pub auto_mark_viewed_desc: SharedString,
     pub auto_mark_on: SharedString,
     pub auto_mark_off: SharedString,
@@ -194,6 +197,7 @@ pub struct Strings {
     pub hide_everywhere_t: SharedString,
     pub hidden_files_repo_t: SharedString,
     pub hidden_files_invalid_t: SharedString,
+    pub renamed_from_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -287,6 +291,10 @@ impl Strings {
 
     pub fn zed_import_failed(&self, err: &str) -> String {
         fill(&self.zed_import_failed_t, &[err])
+    }
+
+    pub fn renamed_from(&self, path: &str) -> String {
+        fill(&self.renamed_from_t, &[path])
     }
 }
 
@@ -427,6 +435,7 @@ mod tests {
                 &s.hide_everywhere_t,
                 &s.hidden_files_repo_t,
                 &s.hidden_files_invalid_t,
+                &s.renamed_from_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

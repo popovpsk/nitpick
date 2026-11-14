@@ -137,6 +137,9 @@ pub static RU: Strings = lang! {
     press_again_previous_file: "Первое изменение · нажмите ещё раз для предыдущего файла",
     no_next_change: "Последнее изменение последнего файла",
     no_previous_change: "Первое изменение первого файла",
+    file_added_tag: "новый файл",
+    file_deleted_tag: "удалён",
+    file_renamed_tag: "переименован",
     auto_mark_viewed_desc: "Переход к другому файлу отмечает покинутый как просмотренный, если вы не сняли отметку вручную",
     auto_mark_on: "Вкл: при переходе к другому файлу покинутый отмечается просмотренным",
     auto_mark_off: "Выкл: нажмите, чтобы отмечать файлы просмотренными при переходе к следующему",
@@ -187,4 +190,5 @@ pub static RU: Strings = lang! {
     hide_everywhere_t: "Скрыть {} во всех репозиториях",
     hidden_files_repo_t: "Только {}",
     hidden_files_invalid_t: "Не шаблон, пропущено: {}",
+    renamed_from_t: "Переименован из {}",
 };
