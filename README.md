@@ -1,94 +1,66 @@
+<div align="center">
+
+<img src="crates/ui_resources/assets/app-icon/128x128.png" width="96" alt="lgtm-ish icon" />
+
 # lgtm-ish
 
-Looks good to me… ish. For huge merge requests you shouldn't approve blind.
+**A fast, native diff reviewer for huge merge requests, built in Rust and GPUI**: see only what a branch brings, keep track of every file you have read, and stay on the keyboard.
 
-A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "viewed" progress.
+macOS · Windows · Linux
 
-- Shows only what a merge request brings, like GitLab: the diff from the merge base (also
-  against the target's upstream), so commits the target branch gained since never leak in.
-- File tree on the left or right with compressed folders, collapse/expand all, and "viewed"
-  marks that roll up to folders and reset when a file changes again; optionally a file is
-  marked viewed as soon as you move on from it.
-- Review your own uncommitted changes (staged, unstaged and untracked) before you commit.
-- Hide noise by gitignore-style patterns, for all repositories or one (`*_mock.go`,
-  `vendor/`, `/gen/`): hidden files leave the tree and the progress, the header says how
-  many; right-click a file or folder to hide its kind.
-- Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, Java, Kotlin,
-  Scala, Swift, C, C++, C#, Ruby, PHP, Lua, Elixir, Zig, SQL, GraphQL, JSON, YAML, TOML,
-  Markdown, Bash, Protobuf, CSS, HTML, Make, CMake, diff), split or unified layout, expandable
-  context.
-- Bundled themes, syntax colors from any of them chosen separately, and Zed theme import.
-- One fast-forward-only "pull" button per branch to bring in fresh changes.
-- Optional GitLab connection: open merge requests by list, URL or `!iid`, read every
-  discussion on the lines it belongs to, comment, reply, resolve.
-- One repository per window; switch from the title bar, or open more as macOS native tabs.
-- Read-only: it never edits your files.
+[Keys](#keys) · [Build from source](#building-from-source)
 
-Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https://www.gpui.rs/) (`gpui-pre` + `gpui-component`).
+</div>
+
+<table>
+  <tr>
+    <td width="50%"><img alt="Review" src=".docs/screenshots/review.jpg"></td>
+    <td width="50%"><img alt="Files and hidden files" src=".docs/screenshots/files.jpg"></td>
+  </tr>
+</table>
+
+## Highlights
+
+- **Only what the branch brings** — the diff from the merge base, also against the target's upstream, like GitLab: commits the target gained since never leak in.
+- **Viewed progress** — mark files viewed, or let them be marked as you move on; marks roll up to folders and reset when a file changes again.
+- **Review like in IntelliJ** — step through changes with `⌥↓`/`F7` straight into the next file, a movable split, a compact blame.
+- **Hide the noise** — gitignore-style patterns (`*_mock.go`, `vendor/`) for one repository or all of them, added from the file tree.
+- **GitLab merge requests** — open by list, URL or `!iid`, read discussions on their lines, comment, reply, resolve.
+- **Your own changes** — review staged, unstaged and untracked files before you commit.
+
+## Everything you'd expect
+
+- Syntax highlighting for Go, Rust, TypeScript and 25+ more languages; bundled themes, separate syntax colors, Zed theme import.
+- File tree or flat list, fuzzy repository and branch pickers, a whole folder of repositories added at once.
+- Every shortcut rebindable, interface and code zoom, English and Russian.
+- A fast-forward-only pull button for each branch. Read-only otherwise: it never edits your files.
 
 ## Keys
 
-| Where | Key | Action |
-| --- | --- | --- |
-| File tree | `↑`/`↓`, `j`/`k` | Move and open the file |
-| File tree | `←`/`→`, `h`/`l` | Collapse / expand the folder |
-| File tree | `space`, `v` | Toggle viewed (a folder toggles every file in it) |
-| File tree | `n` / `p` | Next / previous file |
-| Review | `space` | Toggle viewed for the current file |
-| Review | `⌥↓` / `⌥↑`, `F7` / `⇧F7` | Next / previous change; past the last one, press again for the next file |
-| Review | `⌥→` / `⌥←` | Next / previous file |
-| Review | `⌘B` | Show / hide the file tree |
-| Review | `⌘1` / `⌘2` | Focus the tree / the diff |
-| Review | `⌘R` | Refresh (refetch the merge request and its comments) |
-| Comment box | `⌘⏎` | Send |
-| Window | `⌘O`, `⌘N`, `⌘,` | Open repository, new review, settings |
+| Key | Action |
+| --- | --- |
+| `⌥↓` / `⌥↑`, `F7` / `⇧F7` | Next / previous change; past the last one, press again for the next file |
+| `⌥→` / `⌥←` | Next / previous file |
+| `Space` | Toggle viewed |
+| `⌘B` | Show / hide the file tree |
+| `⌘R` | Refresh |
+| `⌘+` / `⌘−` / `⌘0` | Code text size |
 
-On Windows and Linux use `Ctrl` for `⌘`. Every shortcut can be changed in Settings → Shortcuts: click a key, press the new one. (The Ctrl variants of the ⌘ shortcuts are no longer bound on macOS.)
+All of them can be changed in Settings → Shortcuts. On Windows and Linux use `Ctrl` for `⌘`.
 
-## Build
+## Building from source
 
-```bash
-cargo run --release            # default member is crates/lgtm_ish
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+```sh
+cargo run --release
 ```
 
-Linux build dependencies (Debian/Ubuntu):
+macOS needs the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`). Debian/Ubuntu:
 
-```bash
+```sh
 sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build-essential cmake clang
 ```
 
-## Layout
-
-| Crate | What |
-| --- | --- |
-| `crates/lgtm_ish` | The app binary: windows, title bar, review screen, settings, packaging metadata |
-| `crates/git_repo` | Everything that talks to `git` (CLI): merge-base comparisons, patches, pull, fetch |
-| `crates/gitlab` | Async GitLab REST client: merge requests, discussions, comments |
-| `crates/review_core` | File tree, viewed-progress store, diff line → GitLab position mapping |
-| `crates/http_client` | Shared `reqwest` + rustls setup (OS certificate store) |
-| `crates/secret_store` | Seals the GitLab token inside `settings.json` |
-| `crates/updater` | Auto-update from GitHub Releases (dmg / NSIS / AppImage) |
-| `crates/ui_resources` | Embedded icons, bundled themes, app icon sources, localized strings (en, ru) |
-| `crates/diagnostics` | Rolling log file and panic capture behind the `log` facade |
-| `crates/net_runtime` | The one tokio runtime: all network I/O runs on it |
-
-## Releases
-
-`.github/workflows/release.yml` (manual dispatch with a version) builds and publishes a draft release:
-
-- macOS arm64 `.dmg`
-- Windows x64 / arm64 NSIS installers and portable zips (portable builds have the updater compiled out)
-- Linux x86_64 / arm64 AppImage, `.deb` and pacman archive
-
-Publishing the release triggers `aur.yml` (`lgtm-ish-bin`).
-
-Repository secrets: `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` (optional macOS self-signed identity, see `scripts/macos/create-signing-cert.sh`), `AUR_SSH_PRIVATE_KEY` (optional).
-
-Maintenance scripts:
-
-- `scripts/gen-icons.sh` — regenerate all app icons from `crates/ui_resources/assets/lgtm-ish.svg`
+Tests and lints: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`. Releases (macOS dmg, Windows installer and portable, Linux AppImage, `.deb`, AUR) are built by `.github/workflows/release.yml`.
 
 ## License
 
