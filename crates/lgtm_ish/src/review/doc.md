@@ -13,10 +13,11 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `mod.rs` — `ReviewView`: loading (`load_review`), installing results, viewed marks and their
   save, tree selection and collapse state, file navigation, pull, discussions and the comment
   composer; actions and key bindings.
-- `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile`, `build` (the range's commits,
+- `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile` (with both blob ids), `build` (the range's commits,
   optionally narrowed to one of them; changed files + full context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
   maps (plus the shown patch's map with "ignore whitespace"), fingerprints, tree),
-  `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`.
+  `gitlab_remote`, `mr_refspecs`, `comparison_for_mr`; `interdiff` (one file's diff from the
+  version viewed before to the current blob, `Interdiff`).
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
   gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
   the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`).
@@ -40,11 +41,59 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
+- `file_search.rs` — `FileSearch`: the Files header's sliding filter field, its ranked rows
+  and their rendering in place of the tree.
+- `find_bar.rs` — `FindBar`: find in the shown file (the text of both sides read off the UI
+  thread, line hits as `Diff` decorations, the overlay bar).
+- `since_viewed.rs` — the "since last view" mode: which files were viewed at an earlier
+  version (`seen_before`), loading and installing the `Interdiff`, the toolbar toggle and
+  the tree badge.
 - `image_preview.rs` — `ImagePreview`: the before/after panes shown in place of the `Diff`
   for a binary image, their off-thread loading and decoding, and their rendering.
 
 ## Spec
 
+- Diff content: `install_content` is the one place a file's diff goes into the `DiffState`:
+  the review's own `DiffFile`, or the `Interdiff` when "since last view" applies to the
+  file. While an interdiff loads the state is empty (`content_pending`), and change steps
+  wait; a cross-file step remembers its direction (`pending_jump`) and lands once it is in.
+- "Since last view" (`since_mode`, view state, off by default): a file whose current
+  fingerprint is not marked viewed in the store but an older version of it is
+  (`ViewedStore::last_viewed_except`, newest first) is "seen before": it gets a clock badge
+  in the tree while unviewed, and the toolbar shows the toggle while it is shown (viewed or
+  not). With the toggle on such a file shows `git diff <viewed new blob> <current new blob>`
+  (full context, the review's whitespace setting, named after the file), or a "nothing
+  changed" state when the blobs match; comments, line discussions and blame are off for it,
+  and find and change navigation follow it. Not for the work-tree review (its blobs are
+  hashed without being written) or binary files; a failed comparison (a blob gone after a
+  force push and gc) notifies once and drops that version from the candidates.
+- Files filter: the search button in the Files header (`FindFile`, ⌘/Ctrl-P) slides out a
+  field under the title; with text it replaces the tree with files visible in the tree,
+  ranked by `review_core::rank` over (name, path) and drawn with the matched characters
+  highlighted in the name and the folder. Up/Down move and show the file, Enter shows it
+  and focuses the diff, Escape closes the field; with an empty field Up/Down move in the
+  tree. Rows are ranked when the text or the tree changes, never in render. The field sits
+  outside the `ReviewTree` key context, so letters typed there never reach the tree's
+  single-letter bindings; the tree's focus, context and mouse-down focus live on the list
+  below it.
+- Find in file (`FindInFile`, ⌘/Ctrl-F): an overlay bar at the top right of the diff.
+  The text of both sides of the shown content (blobs, or the file on disk for the work
+  tree's new side; up to 16 MB) is read off the UI thread when the bar opens and when the
+  shown content changes; matching is case-insensitive and line-based over
+  `LineMap::rows()` (a context line counts once), every hit line is tinted with a
+  `DiffDecoration` (both sides of a context line, ranges merged) and the current one more
+  strongly, since the `Diff` has no inline search highlight. Typing jumps to the first hit;
+  Enter / Shift-Enter step with wrap-around; a jump scrolls to the hit with up to three
+  shown rows above it (`LineMap::shown_lines`) so a folded line is never unfolded just for
+  the lead. Escape or the close button closes it and focuses the diff. The bar stays open
+  across file switches and recounts.
+- Whole files (`show_whole_file`): the `DiffState` gets `context_lines(None)` instead of
+  3, so nothing is folded; blame chips are recomputed for it. Wrapping (`wrap_lines`): split
+  view only (the default, as before), always, or never; with no wrapping in split view each
+  column clips and both scroll together.
+- Progress reset: the header's progress opens a menu with "Reset viewed progress…"; after a
+  confirmation every viewed file of the review is unmarked and forgotten as "kept unviewed",
+  so auto-mark works on them again.
 - What a branch review shows is `git_repo::Repo::compare`: the merge base of the source with
   the target and the target's upstream, so commits the target gained since never show up.
   A merge request shows GitLab's own `diff_refs` (`base_sha`..`head_sha`); when either commit
@@ -117,7 +166,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   `n/p` for the next/previous file); anywhere in the review (context `Review`) they are
   `space` (viewed) and modifier or function keys (`alt-up/down` and `f7`/`shift-f7` for the
   next/previous change, `alt-left/right` for the previous/next file, `cmd-b`, `cmd-r`,
-  `cmd-1/2`). `space` and the `alt-` arrows pass through (`cx.propagate`) while an input has
+  `cmd-1/2`, `cmd-f` find in file, `cmd-p` filter files). `space` and the `alt-` arrows pass through (`cx.propagate`) while an input has
   focus, so typing a comment never marks, switches files or eats a word jump. No
   `alt-<letter>` binding: on macOS bindings match before text input, so it would eat the
   character the layout types. Toolbar tooltips name their key through `tooltip_with_action`,
@@ -261,6 +310,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   merge base, since in commit mode a grown range keeps the same pair and files.
 - The review header shows viewed progress before the refresh button (`viewed/total` and a
   thin bar, the count in the tooltip), read from `progress()`; the title bar does not.
+  The tree's view options popover opens toward the diff (from the button's left edge when
+  the tree is on the left), so the files stay visible while the options change.
 - Highlight queries are registered once, by the first `parse`, through gpui-component's
   `LanguageRegistry::register` (same grammar, new query); every highlighter is built after
   that, since files reach the `DiffState` only from a parsed review. The proto and GraphQL
@@ -282,6 +333,10 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - "Viewed" has one control, the toolbar button.
 - One commit is a view of the same review (the header's commits button), not a separate
   review kind; it is never persisted and disables line comments.
+- Find in file tints whole lines, not the matched text, since the `Diff` exposes line
+  decorations only; nothing in gpui-component is patched.
+- "Since last view" is a toggle the reviewer turns on, not the default view of a changed
+  file, and it never marks anything.
 - Blame is compact: one initials chip per run of a commit in the marker lane, details in the
   tooltip; not Zed's per-line author and date column.
 - Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.

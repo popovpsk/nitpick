@@ -17,14 +17,17 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
   list sorted by path or a tree without folder compression; `progress_tracked` counts only
   the files a filter tracks), `rows` (the visible rows for a set of
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`.
-- `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `snapshot` / `save`),
-  `fingerprint`, `write_atomic`.
+- `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `last_viewed_except` (the
+  newest other version of a path marked viewed), `snapshot` / `save`), `fingerprint`,
+  `fingerprint_blobs`, `write_atomic`.
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
   `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
   up to two context lines above it within the hunk, else the first line);
-  `LineMap::shown_block_starts(side, context, min_folded)` → the first line of each block of
-  lines the diff shows on that side with unchanged lines folded.
+  `LineMap::rows()` → the patch's rows in display order (removed lines before the added
+  lines of a change); `LineMap::shown_lines(side, context, min_folded)` → which lines of a
+  side the diff shows with unchanged lines folded, and `shown_block_starts` → the first
+  line of each such block.
 - `blame.rs` — `marker_lines` (the lines a blame chip goes on), `initials` of an author
   name, `tint_index` (a stable palette slot for a commit id).
 - `blame_tests.rs` — marker placement, initials, tint stability.
