@@ -67,6 +67,15 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   whichever window happens to be active, and never inside that window's own update.
 - The review observes the settings: a new diff layout applies at once, a change of "ignore
   whitespace" reloads.
+- `render_diff` decides the `DiffState` mode for the file it shows: an added or deleted file
+  is always unified (one column, whatever the layout setting), anything else follows the
+  setting. It is a per-file decision because exactly one file is in the state; the toolbar
+  keeps showing the saved layout. `apply_settings` / `set_layout` set the saved mode, and
+  `render_diff` corrects it before the `Diff` draws, so no frame shows the wrong one.
+- With the Split setting the `Diff` soft-wraps: the component splits its content width in
+  half and wrapping pins that width to the viewport, so both sides are always exactly half.
+  With Unified, long lines scroll horizontally. The file header's "Added file" / "Deleted
+  file" label is gpui-component's own.
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
   so comment positions follow GitLab's real diff rather than the whitespace-blind one.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
@@ -81,3 +90,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - One file at a time rather than all files in one scrolling list.
 - Viewed progress is local; GitLab has no API for its "viewed" checkboxes.
 - Pull is fast-forward only and only from the branch chips of a branch review.
+- Added and deleted files show as one whole file, never as a split with an empty side.
+- The split divider is fixed in the middle: gpui-component's `Diff` has no API for a column
+  ratio, and a draggable divider would mean forking it.
+- "Viewed" has one control, the toolbar button; the file header has none.

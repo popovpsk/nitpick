@@ -6,12 +6,12 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
-    checkbox::Checkbox,
-    diff::{Diff, DiffHoverHighlight},
+    diff::{Diff, DiffHoverHighlight, DiffMode},
     h_flex, h_resizable, resizable_panel,
     spinner::Spinner,
     v_flex,
 };
+use review_core::FileStatus;
 use ui_resources::Icons;
 
 use super::{
@@ -264,16 +264,28 @@ impl ReviewView {
     }
 
     fn render_diff(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
         let Some(review) = self.review.clone() else {
             return div().into_any_element();
         };
         if review.files.is_empty() {
             return empty_state(tr().no_changes.clone(), cx);
         }
+        let whole_file = self
+            .current_file
+            .and_then(|f| review.files.get(f))
+            .is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
+        let split = settings(cx).diff_layout == DiffLayout::Split;
+        let mode = if split && !whole_file {
+            DiffMode::Split
+        } else {
+            DiffMode::Unified
+        };
+        if self.diff.read(cx).mode() != mode {
+            self.diff.update(cx, |state, cx| state.set_mode(mode, cx));
+        }
+        let theme = cx.theme();
         let view = cx.entity();
         let annotations = self.annotations.clone();
-        let header_view = view.clone();
         let annotation_view = view.clone();
         let add_view = view.clone();
         let can_comment = self.mr.is_some() && review.comments_aligned;
@@ -289,24 +301,7 @@ impl ReviewView {
             .child(
                 Diff::new(&self.diff)
                     .hover_highlight(DiffHoverHighlight::LineNumber)
-                    .render_header_suffix(move |_, _, cx| {
-                        let this = header_view.read(cx);
-                        let viewed = this
-                            .current_file
-                            .and_then(|f| this.viewed.get(f).copied())
-                            .unwrap_or(false);
-                        let view = header_view.clone();
-                        Checkbox::new("header-viewed")
-                            .label(tr().viewed.clone())
-                            .checked(viewed)
-                            .on_click(move |_, _, cx| {
-                                view.update(cx, |this, cx| {
-                                    if let Some(file) = this.current_file {
-                                        this.toggle_file_viewed(file, cx);
-                                    }
-                                })
-                            })
-                    })
+                    .soft_wrap(split)
                     .annotations(annotations.iter().cloned())
                     .render_annotation(move |annotation, window, cx| {
                         comments::render_annotation(&annotation_view, annotation, window, cx)
