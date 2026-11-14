@@ -38,9 +38,10 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`slopcop/sr
   `$XDG_DATA_HOME/zed`, `%LOCALAPPDATA%\Zed`) under `extensions/installed/*/themes/`, user
   themes in `~/.config/zed/themes` (macOS), `$XDG_CONFIG_HOME/zed/themes` (Linux),
   `%APPDATA%\Zed\themes` (Windows). Both are blocking reads: call them off the UI thread.
-- On import, a name the registry already has counts as taken (the registry keeps the first
-  of a name), except names the replaced `zed-*.json` itself defined, so re-importing a
-  family keeps its names.
+- On import the file is `zed-<slug>.json`, or `-2`, `-3`, … when that file belongs to a
+  different family: importing the same family again replaces its own file, never another's.
+  A name the registry already has counts as taken (the registry keeps the first of a name),
+  except names the replaced file itself defined, so re-importing a family keeps its names.
 - Icons are looked up by gpui-component as `icons/<name>.svg` (its `IconName` paths); a
   missing file is an error at render time, not at build time. An `Icons::X` used by the app
   must be listed in `ExtraIcons` unless it is one of `gpui-kit-assets`' defaults. Keep the ones gpui-component's

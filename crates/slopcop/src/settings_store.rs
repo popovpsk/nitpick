@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{App, Global};
-use gpui_component::{Theme, ThemeRegistry, WindowExt as _, notification::Notification};
+use gpui_component::{
+    Theme, ThemeRegistry, WindowExt as _, highlighter::HighlightTheme, notification::Notification,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::localization::tr;
@@ -288,14 +290,20 @@ pub fn apply_syntax_colors(cx: &mut App) {
     } else {
         &theme.light_theme
     };
-    let Some(style) = palette.or(own.highlight.as_ref()) else {
-        return;
+    let fallback = if dark {
+        HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
     };
-    if theme.highlight_theme.style.syntax == style.syntax {
+    let syntax = &palette
+        .or(own.highlight.as_ref())
+        .unwrap_or(&fallback.style)
+        .syntax;
+    if &theme.highlight_theme.style.syntax == syntax {
         return;
     }
     let mut highlight = (*theme.highlight_theme).clone();
-    highlight.style.syntax = style.syntax.clone();
+    highlight.style.syntax = syntax.clone();
     let highlight = Arc::new(highlight);
     Theme::update(cx, |theme| theme.highlight_theme = highlight);
 }

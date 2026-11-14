@@ -218,8 +218,8 @@ fn unique_name(base: &str, is_taken: impl Fn(&str) -> bool) -> String {
 fn slug(name: &str) -> String {
     let mut out = String::new();
     for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
         } else if !out.is_empty() && !out.ends_with('-') {
             out.push('-');
         }

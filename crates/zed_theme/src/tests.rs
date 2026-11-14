@@ -134,6 +134,17 @@ fn unnamed_themes_take_the_family_name() {
     assert!(set.get("author").is_none());
 }
 
+#[rstest]
+#[case::ascii("One Dark Pro", "zed-one-dark-pro")]
+#[case::punctuation("  Snazzy -- Theme!! ", "zed-snazzy-theme")]
+#[case::cyrillic("Тёмная тема", "zed-тёмная-тема")]
+#[case::only_symbols("***", "zed-theme")]
+fn file_stems_keep_letters_of_any_script(#[case] family: &str, #[case] stem: &str) {
+    let value = json!({ "name": family, "themes": [{ "name": "x", "style": {} }] });
+    let (converted, _) = convert_value(&value, &[]);
+    assert_eq!(converted.file_stem, stem);
+}
+
 #[test]
 fn comments_and_trailing_commas_are_accepted() {
     let source = r##"{

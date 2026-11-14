@@ -136,9 +136,8 @@ pub fn import_zed_theme(
 ) -> anyhow::Result<zed_theme::Converted> {
     let text =
         std::fs::read_to_string(source).with_context(|| format!("reading {}", source.display()))?;
-    let file_stem = zed_theme::convert(&text, |_| false)?.file_stem;
-    let target = themes_dir.join(format!("{file_stem}.json"));
-    let replaced = theme_names(&target);
+    let probe = zed_theme::convert(&text, |_| false)?;
+    let (target, replaced) = target_file(themes_dir, &probe.file_stem, &probe.family);
     let converted = zed_theme::convert(&text, |name| {
         registered.contains(name) && !replaced.contains(name)
     })?;
@@ -151,19 +150,35 @@ pub fn import_zed_theme(
     Ok(converted)
 }
 
-fn theme_names(path: &Path) -> HashSet<String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return HashSet::new();
-    };
-    let Ok(set) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return HashSet::new();
-    };
-    set.get("themes")
+fn target_file(themes_dir: &Path, file_stem: &str, family: &str) -> (PathBuf, HashSet<String>) {
+    let mut n = 1;
+    loop {
+        let stem = if n == 1 {
+            file_stem.to_string()
+        } else {
+            format!("{file_stem}-{n}")
+        };
+        let path = themes_dir.join(format!("{stem}.json"));
+        match theme_set(&path) {
+            None => return (path, HashSet::new()),
+            Some((existing, names)) if existing == family => return (path, names),
+            Some(_) => n += 1,
+        }
+    }
+}
+
+fn theme_set(path: &Path) -> Option<(String, HashSet<String>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let set = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let family = set.get("name")?.as_str()?.to_string();
+    let names = set
+        .get("themes")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|theme| theme.get("name")?.as_str().map(str::to_string))
-        .collect()
+        .collect();
+    Some((family, names))
 }
 
 #[cfg(test)]

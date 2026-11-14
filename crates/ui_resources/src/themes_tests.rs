@@ -93,6 +93,29 @@ fn reimporting_keeps_the_names_the_file_already_has() {
 }
 
 #[test]
+fn a_different_family_with_the_same_file_name_gets_its_own_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("snazzy.json");
+    std::fs::write(&first, ZED_FAMILY).unwrap();
+    let second = dir.path().join("other.json");
+    std::fs::write(
+        &second,
+        r#"{ "name": "snazzy!", "themes": [{ "name": "Other", "appearance": "dark", "style": {} }] }"#,
+    )
+    .unwrap();
+    let themes_dir = dir.path().join("themes");
+    import_zed_theme(&first, &themes_dir, &HashSet::new()).unwrap();
+    import_zed_theme(&second, &themes_dir, &HashSet::new()).unwrap();
+    import_zed_theme(&first, &themes_dir, &HashSet::new()).unwrap();
+    let mut files: Vec<String> = std::fs::read_dir(&themes_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(files, vec!["zed-snazzy-2.json", "zed-snazzy.json"]);
+}
+
+#[test]
 fn a_file_that_is_not_a_zed_theme_is_an_error_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("package.json");

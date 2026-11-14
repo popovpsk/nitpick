@@ -17,7 +17,8 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`).
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed).
 - `language.rs` — `language_override(path)`: the highlighter language for a path by file
-  name, `Makefile.*` / `GNUmakefile.*` prefix, or extension.
+  name, extension, or a `Makefile.*` / `GNUmakefile.*` prefix (unless the extension names
+  another language, as in cargo-make's `Makefile.toml`).
 - `tests.rs` — tree shape and order, collapse, roll-up, store round trip and expiry,
   line-map cases including a removed line that looks like a `---` header, language cases.
 

@@ -52,7 +52,6 @@ pub static RU: Strings = lang! {
     collapse_all: "Свернуть всё",
     mark_viewed: "Отметить просмотренным",
     mark_unviewed: "Снять отметку",
-    viewed: "Просмотрено",
     previous_file: "Предыдущий файл (⌥↑)",
     next_file: "Следующий файл (⌥↓)",
     split_view: "Рядом",

@@ -56,7 +56,6 @@ pub struct Strings {
     pub collapse_all: SharedString,
     pub mark_viewed: SharedString,
     pub mark_unviewed: SharedString,
-    pub viewed: SharedString,
     pub previous_file: SharedString,
     pub next_file: SharedString,
     pub split_view: SharedString,

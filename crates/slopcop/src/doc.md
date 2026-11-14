@@ -38,7 +38,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   only when the syntax differs, which also ends the loop its own write starts. A palette is
   used only while its appearance matches the app's (light and dark are chosen separately);
   a name the registry does not have yet (themes load asynchronously at startup) or no longer
-  has falls back to the theme's own palette.
+  has falls back to the theme's own palette, and a theme without one to gpui-component's
+  default palette for the appearance (the component itself would keep the previous one).
 - Zed import runs the picker and the conversion off the UI thread and reports success or
   the error as a notification in the settings window. Zed's theme files are listed in the
   import menu, found once when the settings screen opens.

@@ -72,9 +72,11 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   setting. It is a per-file decision because exactly one file is in the state; the toolbar
   keeps showing the saved layout. `apply_settings` / `set_layout` set the saved mode, and
   `render_diff` corrects it before the `Diff` draws, so no frame shows the wrong one.
-- With the Split setting the `Diff` soft-wraps: the component splits its content width in
-  half and wrapping pins that width to the viewport, so both sides are always exactly half.
-  With Unified, long lines scroll horizontally. The file header's "Added file" / "Deleted
+- With the Split setting the `Diff` soft-wraps, whole-file views included: the component
+  splits its content width in half and wrapping pins that width to the viewport, so both
+  sides are always exactly half. With Unified, long lines scroll horizontally, whole files
+  too. Wrapping follows the setting rather than the mode shown, so a file looks the same as
+  its neighbours under one setting, and the header's right-hand label stays in view. The file header's "Added file" / "Deleted
   file" label is gpui-component's own.
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
   so comment positions follow GitLab's real diff rather than the whitespace-blind one.

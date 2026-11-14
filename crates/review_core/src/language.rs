@@ -4,12 +4,18 @@ pub fn language_override(path: &str) -> Option<&'static str> {
     if let Some(language) = by_file_name(&name) {
         return Some(language);
     }
-    if name.starts_with("makefile.") || name.starts_with("gnumakefile.") {
-        return Some("make");
-    }
     let (_, extension) = name.rsplit_once('.')?;
-    by_extension(extension)
+    if let Some(language) = by_extension(extension) {
+        return Some(language);
+    }
+    let make_prefix = name.starts_with("makefile.") || name.starts_with("gnumakefile.");
+    (make_prefix && !NOT_MAKE_EXTENSIONS.contains(&extension)).then_some("make")
 }
+
+const NOT_MAKE_EXTENSIONS: &[&str] = &[
+    "toml", "json", "jsonc", "yaml", "yml", "md", "py", "sh", "bash", "js", "ts", "rs", "go", "rb",
+    "lua", "cmake", "txt",
+];
 
 fn by_file_name(name: &str) -> Option<&'static str> {
     let language = match name {
@@ -20,8 +26,8 @@ fn by_file_name(name: &str) -> Option<&'static str> {
         "rakefile" | "gemfile" | "podfile" | "fastfile" | "appfile" | "vagrantfile"
         | "brewfile" | "guardfile" | "capfile" | "dangerfile" | "berksfile" | "thorfile" => "ruby",
         "cargo.lock" | "poetry.lock" | "uv.lock" | "pdm.lock" | "pipfile" => "toml",
-        "sconstruct" | "sconscript" | "build.bazel" | "workspace" | "workspace.bazel"
-        | "module.bazel" | "tiltfile" | "snakefile" => "python",
+        "sconstruct" | "sconscript" | "build.bazel" | "workspace.bazel" | "module.bazel"
+        | "tiltfile" | "snakefile" => "python",
         ".babelrc" | ".swcrc" | ".jshintrc" | "flake.lock" | "composer.lock" => "json",
         ".clang-format" | ".clang-tidy" | ".clangd" | ".yamllint" => "yaml",
         ".luacheckrc" => "lua",

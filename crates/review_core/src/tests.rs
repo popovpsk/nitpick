@@ -201,6 +201,8 @@ fn line_map_locates_lines(
 #[case::upper_case_extension("docs/GUIDE.MARKDOWN", Some("markdown"))]
 #[case::patch("fixes/0001-fix.patch", Some("diff"))]
 #[case::bazel("tools/defs.bzl", Some("python"))]
+#[case::cargo_make_toml("Makefile.toml", None)]
+#[case::makefile_yaml("ci/Makefile.yml", None)]
 #[case::detected_upstream_makefile("Makefile", None)]
 #[case::detected_upstream_proto("api/v1/service.proto", None)]
 #[case::detected_upstream_csharp("src/App.cs", None)]

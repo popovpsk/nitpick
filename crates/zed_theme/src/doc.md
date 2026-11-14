@@ -32,8 +32,8 @@ Not here: finding Zed's folders and writing the result into the themes folder
 - Theme names must be unique across the registry, which keeps the first theme of a name it
   reads: a name `is_taken` reports gets " (Zed)", then " (Zed 2)", … Names repeated inside
   the file are de-duplicated the same way.
-- `file_stem` is `zed-` plus a slug of the family name, so an import never overwrites a
-  bundled theme file and importing the same family again replaces its earlier file.
+- `file_stem` is `zed-` plus a slug of the family name (lowercased letters and digits of
+  any script, other runs become `-`), so an import never overwrites a bundled theme file.
 - Strict JSON is tried first; the comment-stripping parse is the fallback, and its error is
   not reported (the strict parser's is clearer).
 

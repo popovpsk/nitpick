@@ -52,7 +52,6 @@ pub static EN: Strings = lang! {
     collapse_all: "Collapse all",
     mark_viewed: "Mark as viewed",
     mark_unviewed: "Mark as not viewed",
-    viewed: "Viewed",
     previous_file: "Previous file (⌥↑)",
     next_file: "Next file (⌥↓)",
     split_view: "Side by side",
