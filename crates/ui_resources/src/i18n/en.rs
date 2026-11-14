@@ -77,6 +77,8 @@ pub static EN: Strings = lang! {
     no_comments: "No comments yet",
     back: "Back",
     appearance: "Appearance",
+    general: "General",
+    version: "Version",
     theme: "Theme",
     theme_desc: "Hover a theme to preview it",
     system: "System",

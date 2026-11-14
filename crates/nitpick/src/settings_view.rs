@@ -731,6 +731,27 @@ fn editor_presets_button() -> AnyElement {
         .into_any_element()
 }
 
+fn version_field(cx: &App) -> AnyElement {
+    h_flex()
+        .gap_2()
+        .items_center()
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(env!("CARGO_PKG_VERSION")),
+        )
+        .when(updater::is_supported(), |el| {
+            el.child(
+                Button::new("check-for-updates")
+                    .small()
+                    .label(tr().check_for_updates.clone())
+                    .on_click(|_, _, cx| updater::check_now(cx)),
+            )
+        })
+        .into_any_element()
+}
+
 fn theme_dropdown(cx: &App) -> AnyElement {
     Button::new("settings-theme")
         .small()
@@ -1002,6 +1023,16 @@ impl Render for SettingsView {
         };
         let import_view = view.clone();
         let editor_view = view.clone();
+        let general = SettingGroup::new()
+            .title(s.general.clone())
+            .item(SettingItem::new(
+                s.language.clone(),
+                SettingField::render(|_, _, cx| language_dropdown(cx)),
+            ))
+            .item(SettingItem::new(
+                s.version.clone(),
+                SettingField::render(|_, _, cx| version_field(cx)),
+            ));
         let appearance = SettingGroup::new()
             .title(s.appearance.clone())
             .item(
@@ -1027,10 +1058,6 @@ impl Render for SettingsView {
                 )
                 .description(s.import_zed_theme_desc.clone()),
             )
-            .item(SettingItem::new(
-                s.language.clone(),
-                SettingField::render(|_, _, cx| language_dropdown(cx)),
-            ))
             .item(SettingItem::new(
                 s.interface_size.clone(),
                 SettingField::render(|_, _, cx| {
@@ -1218,6 +1245,7 @@ impl Render for SettingsView {
                     })
                     .pages([
                         SettingPage::new(s.settings.clone())
+                            .group(general)
                             .group(appearance)
                             .group(review)
                             .group(gitlab)

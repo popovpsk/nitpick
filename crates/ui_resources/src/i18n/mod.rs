@@ -81,6 +81,8 @@ pub struct Strings {
     pub no_comments: SharedString,
     pub back: SharedString,
     pub appearance: SharedString,
+    pub general: SharedString,
+    pub version: SharedString,
     pub theme: SharedString,
     pub theme_desc: SharedString,
     pub system: SharedString,

@@ -77,6 +77,8 @@ pub static RU: Strings = lang! {
     no_comments: "Комментариев пока нет",
     back: "Назад",
     appearance: "Внешний вид",
+    general: "Общие",
+    version: "Версия",
     theme: "Тема",
     theme_desc: "Наведите на тему для предпросмотра",
     system: "Системная",
