@@ -8,12 +8,14 @@ use gpui_component::*;
 use crate::workspace::Workspace;
 
 pub mod app_menu;
+pub mod keymap;
 pub mod localization;
 pub mod picker;
 pub mod recent;
 pub mod review;
 pub mod settings_store;
 pub mod settings_view;
+pub mod shortcut_dialog;
 pub mod window_registry;
 pub mod workspace;
 
@@ -97,10 +99,9 @@ fn main() {
         settings_store::apply_saved_theme(cx);
         ui_resources::themes::register_bundled_themes(cx, settings_store::apply_saved_theme);
 
-        review::init(cx);
-        workspace::init(cx);
         settings_view::init(cx);
         updater::init(cx, env!("CARGO_PKG_VERSION"), true);
+        keymap::init(cx);
 
         cx.on_window_closed(|cx, id| {
             window_registry::remove(id, cx);

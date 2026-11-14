@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use git_repo::{PullOutcome, Repo};
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Task,
+    EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Task,
     UniformListScrollHandle, Window, actions,
 };
 use gpui_component::{
@@ -64,39 +64,6 @@ const AUTO_MARK_DWELL: Duration = Duration::from_millis(1000);
 const CROSS_HINT_TIMEOUT: Duration = Duration::from_millis(3000);
 
 static TREE_WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("down", SelectNext, Some("ReviewTree")),
-        KeyBinding::new("j", SelectNext, Some("ReviewTree")),
-        KeyBinding::new("up", SelectPrevious, Some("ReviewTree")),
-        KeyBinding::new("k", SelectPrevious, Some("ReviewTree")),
-        KeyBinding::new("left", CollapseSelected, Some("ReviewTree")),
-        KeyBinding::new("h", CollapseSelected, Some("ReviewTree")),
-        KeyBinding::new("right", ExpandSelected, Some("ReviewTree")),
-        KeyBinding::new("l", ExpandSelected, Some("ReviewTree")),
-        KeyBinding::new("enter", OpenSelected, Some("ReviewTree")),
-        KeyBinding::new("space", ToggleViewed, Some("ReviewTree")),
-        KeyBinding::new("v", ToggleViewed, Some("ReviewTree")),
-        KeyBinding::new("n", NextFile, Some("ReviewTree")),
-        KeyBinding::new("p", PreviousFile, Some("ReviewTree")),
-        KeyBinding::new("space", ToggleViewed, Some("Review")),
-        KeyBinding::new("alt-down", NextChange, Some("Review")),
-        KeyBinding::new("alt-up", PreviousChange, Some("Review")),
-        KeyBinding::new("f7", NextChange, Some("Review")),
-        KeyBinding::new("shift-f7", PreviousChange, Some("Review")),
-        KeyBinding::new("alt-right", NextFile, Some("Review")),
-        KeyBinding::new("alt-left", PreviousFile, Some("Review")),
-        KeyBinding::new("cmd-1", FocusTree, Some("Review")),
-        KeyBinding::new("ctrl-1", FocusTree, Some("Review")),
-        KeyBinding::new("cmd-2", FocusDiff, Some("Review")),
-        KeyBinding::new("ctrl-2", FocusDiff, Some("Review")),
-        KeyBinding::new("cmd-b", ToggleTree, Some("Review")),
-        KeyBinding::new("ctrl-b", ToggleTree, Some("Review")),
-        KeyBinding::new("cmd-r", Refresh, Some("Review")),
-        KeyBinding::new("ctrl-r", Refresh, Some("Review")),
-    ]);
-}
 
 #[derive(Clone)]
 pub struct TreeRow {

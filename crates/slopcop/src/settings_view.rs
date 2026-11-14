@@ -5,13 +5,13 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, Entity, Focusable as _,
+    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, Focusable as _,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PathPromptOptions,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
-    actions, div, px,
+    actions, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -21,15 +21,18 @@ use gpui_component::{
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex,
 };
-use ui_resources::i18n::Lang;
+use ui_resources::Icons;
+use ui_resources::i18n::{Lang, Strings};
 use ui_resources::themes::ZedThemeFile;
 
+use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
     DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
     end_syntax_preview, preview_syntax_colors, repo_key, settings, syntax_palette_names,
     update_settings,
 };
+use crate::shortcut_dialog::{self, keystroke_element, where_label};
 
 actions!(settings_view, [CloseSettings]);
 
@@ -41,6 +44,81 @@ fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
         let list: Vec<&str> = errors.iter().map(|e| e.pattern.as_str()).collect();
         tr().hidden_files_invalid(&list.join(", ")).into()
     })
+}
+
+fn shortcut_group(title: SharedString, group: Group, s: &Strings) -> SettingGroup {
+    let description: SharedString = match group {
+        Group::Review => format!("{} · {}", where_label(group, s), s.shortcuts_desc).into(),
+        _ => where_label(group, s),
+    };
+    let mut items = SettingGroup::new().title(title).description(description);
+    for command in COMMANDS.iter().filter(|c| c.group == group) {
+        items = items.item(SettingItem::new(
+            (command.title)(s),
+            SettingField::render(move |_, _, cx| shortcut_keys(command, cx)),
+        ));
+    }
+    if group == Group::Window {
+        items = items.item(SettingItem::render(|_, _, _| {
+            h_flex().w_full().justify_end().child(
+                Button::new("reset-all-shortcuts")
+                    .ghost()
+                    .small()
+                    .icon(Icon::new(Icons::Undo2))
+                    .label(tr().reset_all_shortcuts.clone())
+                    .on_click(|_, _, cx| keymap::reset(None, cx)),
+            )
+        }));
+    }
+    items
+}
+
+fn shortcut_keys(command: &'static Command, cx: &App) -> AnyElement {
+    let s = tr();
+    let theme = cx.theme();
+    let hover = theme.list_hover;
+    let customized = keymap::is_customized(command, cx);
+    h_flex()
+        .gap_1()
+        .items_center()
+        .justify_end()
+        .children(
+            keymap::keys(command, cx)
+                .into_iter()
+                .enumerate()
+                .map(|(ix, key)| {
+                    div()
+                        .id(ElementId::NamedInteger(command.id.into(), ix as u64))
+                        .px_0p5()
+                        .py_0p5()
+                        .rounded(theme.radius)
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(hover))
+                        .child(keystroke_element(&key, cx))
+                        .on_click(move |_, window, cx| {
+                            shortcut_dialog::open(command, Some(key.clone()), window, cx)
+                        })
+                }),
+        )
+        .child(
+            Button::new(ElementId::Name(format!("{}-add", command.id).into()))
+                .ghost()
+                .xsmall()
+                .icon(IconName::Plus)
+                .tooltip(s.add_shortcut.clone())
+                .on_click(move |_, window, cx| shortcut_dialog::open(command, None, window, cx)),
+        )
+        .when(customized, |el| {
+            el.child(
+                Button::new(ElementId::Name(format!("{}-reset", command.id).into()))
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(Icons::Undo2))
+                    .tooltip(s.reset_shortcut.clone())
+                    .on_click(move |_, _, cx| keymap::reset(Some(command), cx)),
+            )
+        })
+        .into_any_element()
 }
 
 fn hidden_rules_item(
@@ -824,6 +902,9 @@ impl Render for SettingsView {
                         .group(appearance)
                         .group(review)
                         .group(hidden)
+                        .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
+                        .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
+                        .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s))
                         .group(gitlab)]),
                 ),
             )

@@ -89,6 +89,37 @@ pub struct Strings {
     pub advance_on_viewed: SharedString,
     pub advance_on_viewed_desc: SharedString,
     pub auto_mark_viewed: SharedString,
+    pub cmd_next_file: SharedString,
+    pub cmd_previous_file: SharedString,
+    pub cmd_toggle_viewed: SharedString,
+    pub cmd_focus_tree: SharedString,
+    pub cmd_focus_diff: SharedString,
+    pub cmd_select_next: SharedString,
+    pub cmd_select_previous: SharedString,
+    pub cmd_collapse: SharedString,
+    pub cmd_expand: SharedString,
+    pub cmd_open_selected: SharedString,
+    pub cmd_tree_toggle_viewed: SharedString,
+    pub cmd_add_repositories: SharedString,
+    pub cmd_next_tab: SharedString,
+    pub cmd_previous_tab: SharedString,
+    pub shortcuts_review: SharedString,
+    pub shortcuts_tree: SharedString,
+    pub shortcuts_window: SharedString,
+    pub shortcuts_desc: SharedString,
+    pub where_review: SharedString,
+    pub where_tree: SharedString,
+    pub where_window: SharedString,
+    pub shortcut_label: SharedString,
+    pub shortcut_recording: SharedString,
+    pub shortcut_none: SharedString,
+    pub shortcut_record: SharedString,
+    pub shortcut_hint: SharedString,
+    pub add_shortcut: SharedString,
+    pub reset_shortcut: SharedString,
+    pub reset_all_shortcuts: SharedString,
+    pub remove: SharedString,
+    pub save: SharedString,
     pub auto_mark_label: SharedString,
     pub hidden_files_title: SharedString,
     pub hidden_files_tooltip: SharedString,
@@ -154,6 +185,7 @@ pub struct Strings {
     pub viewed_progress_t: SharedString,
     pub zed_imported_t: SharedString,
     pub zed_import_failed_t: SharedString,
+    pub shortcut_conflict_t: SharedString,
     pub hidden_count_t: SharedString,
     pub hide_here_t: SharedString,
     pub hide_everywhere_t: SharedString,
@@ -244,6 +276,10 @@ impl Strings {
 
     pub fn hidden_files_invalid(&self, patterns: &str) -> String {
         fill(&self.hidden_files_invalid_t, &[patterns])
+    }
+
+    pub fn shortcut_conflict(&self, command: &str) -> String {
+        fill(&self.shortcut_conflict_t, &[command])
     }
 
     pub fn zed_import_failed(&self, err: &str) -> String {
@@ -382,6 +418,7 @@ mod tests {
                 &s.repositories_added_t,
                 &s.zed_imported_t,
                 &s.zed_import_failed_t,
+                &s.shortcut_conflict_t,
                 &s.hidden_count_t,
                 &s.hide_here_t,
                 &s.hide_everywhere_t,

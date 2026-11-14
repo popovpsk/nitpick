@@ -77,7 +77,8 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   for an added or removed line.
 - Tree rows are rebuilt when data changes (load, viewed, collapse, discussions), never in
   `render`; the list closure only reads them.
-- Key bindings in the tree (context `ReviewTree`) are single letters (`j/k/h/l`, `space`/`v`,
+- Default keys live in `keymap.rs` and can be changed in Settings; the contexts below are
+  what the registry binds. Key bindings in the tree (context `ReviewTree`) are single letters (`j/k/h/l`, `space`/`v`,
   `n/p` for the next/previous file); anywhere in the review (context `Review`) they are
   `space` (viewed) and modifier or function keys (`alt-up/down` and `f7`/`shift-f7` for the
   next/previous change, `alt-left/right` for the previous/next file, `cmd-b`, `cmd-r`,

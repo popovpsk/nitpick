@@ -91,6 +91,8 @@ pub struct Settings {
     #[serde(default)]
     pub repo_hidden_files: BTreeMap<String, Vec<String>>,
     #[serde(default)]
+    pub keybindings: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     pub gitlab_url: String,
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
@@ -121,6 +123,7 @@ impl Default for Settings {
             tree_width: default_tree_width(),
             hidden_files: Vec::new(),
             repo_hidden_files: BTreeMap::new(),
+            keybindings: BTreeMap::new(),
             gitlab_url: String::new(),
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),

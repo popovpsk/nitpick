@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use git_repo::Repo;
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyBinding, ParentElement as _, PathPromptOptions, Render, SharedString,
-    Styled as _, Subscription, Window, actions, div, prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, PathPromptOptions, Render, SharedString, Styled as _,
+    Subscription, Window, actions, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, StyledExt as _, WindowExt as _,
@@ -39,23 +39,6 @@ actions!(
         ShowPreviousWindowTab
     ]
 );
-
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-o", OpenRepository, None),
-        KeyBinding::new("ctrl-o", OpenRepository, None),
-        KeyBinding::new("cmd-n", NewReview, None),
-        KeyBinding::new("ctrl-n", NewReview, None),
-        KeyBinding::new("cmd-,", ShowSettings, None),
-        KeyBinding::new("ctrl-,", ShowSettings, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("ctrl-w", CloseWindow, None),
-        KeyBinding::new("cmd-shift-n", NewWindow, None),
-        KeyBinding::new("ctrl-shift-n", NewWindow, None),
-        KeyBinding::new("cmd-}", ShowNextWindowTab, None),
-        KeyBinding::new("cmd-{", ShowPreviousWindowTab, None),
-    ]);
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {

@@ -31,6 +31,12 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
   settings change, and `set_repository` reloads both each time the screen opens.
 - `localization.rs` — resolves the saved language and exposes `tr()`.
+- `keymap.rs` — `COMMANDS`, the registry of every user-facing shortcut (id, group, key
+  context, default keys with `secondary-` for ⌘/Ctrl, action, title); `init` and `apply`
+  build the live keymap; `keys`, `conflict`, `assign`, `reset` for the settings screen.
+- `keymap_tests.rs` — defaults parse on every OS and never repeat a key in one context.
+- `shortcut_dialog.rs` — the dialog that records a new shortcut (`ShortcutRecorder`), and
+  the keystroke chip helper the settings list shares with it.
 - `recent.rs` — `RecentRepos` global (`recent.json` in the data dir): every known
   repository (opened or added from a folder) with the last review of each, and the
   repositories of the windows open at quit.
@@ -43,6 +49,20 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `workspace/`, `review/` — see their `doc.md`.
 
 ## Rules
+
+- Shortcuts: modules no longer bind their own keys; `keymap::init` runs after every other
+  `init`, snapshots what gpui-component and the fixed bindings registered (`BaseKeymap`),
+  then `apply` clears the keymap and binds the snapshot plus `COMMANDS` with the user's
+  overrides. It re-applies whenever `settings.keybindings` changes and resets the app menus,
+  so tooltips (`tooltip_with_action`) and menu key equivalents follow at once. An override
+  is the whole key list of one command (an empty list unbinds it); a list equal to the
+  defaults is dropped, so stored files only carry real changes. Keys are stored in the
+  host's spelling (`cmd-b` on macOS, `ctrl-b` elsewhere).
+- Recording a shortcut uses `intercept_keystrokes`, which runs before key bindings, so
+  ⌘W or Space are recorded instead of acting; it listens only in the dialog's window and
+  only while recording, stops on Escape (never recorded) or after one keystroke, and ignores
+  bare modifiers. A key already used by another command in the same context, or where either
+  is global, is named in the dialog and moved on save.
 
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
   highlight fields. `Theme::change` (theme switch, theme files reloaded, startup) restores

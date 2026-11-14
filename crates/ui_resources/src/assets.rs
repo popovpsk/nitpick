@@ -38,6 +38,7 @@ gpui_kit_assets::icon_assets!(
         CheckCheck,
         FilePen,
         EyeOff,
+        CircleX,
     ]
 );
 
