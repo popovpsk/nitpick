@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context,
+    Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context,
     CursorStyle, DragMoveEvent, ElementId, Empty, Entity, HighlightStyle, Hsla,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -11,9 +11,10 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _, WindowExt as _,
-    button::{Button, ButtonGroup, ButtonVariants as _},
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _},
     diff::{Diff, DiffChangeIndicator, DiffHoverHighlight, DiffMode},
     h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
     progress::Progress as ProgressBar,
     spinner::Spinner,
     tooltip::Tooltip,
@@ -23,14 +24,14 @@ use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    Busy, CrossHint, FocusDiff, FocusTree, LoadState, LoadedReview, NextChange, NextFile,
-    PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
-    ToggleBlame, ToggleTree, ToggleViewed, comments,
+    Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview,
+    NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
+    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
 use crate::settings_store::{
-    DiffLayout, SPLIT_MIN_COLUMN, SPLIT_RATIO_RANGE, TreeSide, fit_split_ratio, settings,
+    DiffLayout, SPLIT_MIN_COLUMN, SPLIT_RATIO_RANGE, TreeSide, WrapLines, fit_split_ratio, settings,
 };
 
 impl ReviewView {
@@ -62,30 +63,42 @@ impl ReviewView {
         let (viewed, total) = self.progress();
         let progress = (total > 0).then(|| {
             let complete = viewed == total;
-            h_flex()
-                .id("viewed-progress")
-                .flex_none()
-                .gap_1p5()
-                .items_center()
+            let view = cx.entity();
+            Button::new("viewed-progress")
+                .ghost()
+                .small()
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(if complete {
-                            theme.success
-                        } else {
-                            theme.muted_foreground
-                        })
-                        .child(format!("{viewed}/{total}")),
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if complete {
+                                    theme.success
+                                } else {
+                                    theme.muted_foreground
+                                })
+                                .child(format!("{viewed}/{total}")),
+                        )
+                        .child(
+                            ProgressBar::new("viewed-progress-bar")
+                                .xsmall()
+                                .w(px(56.))
+                                .value(viewed as f32 * 100. / total as f32)
+                                .when(complete, |bar| bar.color(theme.success)),
+                        ),
                 )
-                .child(
-                    ProgressBar::new("viewed-progress-bar")
-                        .xsmall()
-                        .w(px(56.))
-                        .value(viewed as f32 * 100. / total as f32)
-                        .when(complete, |bar| bar.color(theme.success)),
-                )
-                .tooltip(move |window, cx| {
-                    Tooltip::new(tr().viewed_progress(viewed, total)).build(window, cx)
+                .tooltip(s.viewed_progress(viewed, total))
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let view = view.clone();
+                    menu.item(
+                        PopupMenuItem::new(tr().reset_progress_ellipsis.clone())
+                            .icon(Icon::new(Icons::RotateCcw))
+                            .on_click(move |_, window, cx| {
+                                confirm_reset_progress(&view, window, cx)
+                            }),
+                    )
                 })
         });
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
@@ -533,7 +546,11 @@ impl ReviewView {
         if self.nav_order.is_empty() && self.current_file.is_none() {
             return empty_state(tr().all_files_hidden.clone(), cx);
         }
-        let split = settings(cx).diff_layout == DiffLayout::Split;
+        let wrap = match settings(cx).wrap_lines {
+            WrapLines::SplitOnly => settings(cx).diff_layout == DiffLayout::Split,
+            WrapLines::Always => true,
+            WrapLines::Never => false,
+        };
         let theme = cx.theme();
         let view = cx.entity();
         let annotations = self.annotations.clone();
@@ -564,6 +581,8 @@ impl ReviewView {
         let grip = theme.drag_border;
         let dragging = self.split_drag.is_some() && cx.has_active_drag();
         let blame = self.blame_marks();
+        let find_decorations = self.find.as_ref().map(|find| find.decorations());
+        let find_bar = self.render_find_bar(cx);
         div()
             .id("diff-area")
             .relative()
@@ -613,7 +632,7 @@ impl ReviewView {
                 Diff::new(&self.diff)
                     .header_visible(false)
                     .hover_highlight(DiffHoverHighlight::LineNumber)
-                    .soft_wrap(split)
+                    .soft_wrap(wrap)
                     .when(split_mode, |diff| diff.split_ratio(ratio))
                     .change_background(!whole_file)
                     .when(whole_file, |diff| {
@@ -628,6 +647,9 @@ impl ReviewView {
                             add_view
                                 .update(cx, |this, cx| this.open_line_composer(range, window, cx));
                         })
+                    })
+                    .when_some(find_decorations, |diff, decorations| {
+                        diff.decorations(decorations.iter().cloned())
                     })
                     .when_some(blame, |diff, marks| {
                         diff.gutter_markers(marks.markers.iter().cloned())
@@ -652,6 +674,7 @@ impl ReviewView {
                 .absolute()
                 .size_full(),
             )
+            .children(find_bar)
             .when(resizable, |el| {
                 el.child(
                     div()
@@ -721,7 +744,7 @@ pub(super) struct FileLabel {
     has_next: bool,
 }
 
-fn status_icon(status: FileStatus, cx: &App) -> (Icons, Hsla) {
+pub(super) fn status_icon(status: FileStatus, cx: &App) -> (Icons, Hsla) {
     let theme = cx.theme();
     match status {
         FileStatus::Added => (Icons::FilePlus, theme.green),
@@ -778,6 +801,28 @@ fn branch_chip(
         .child(name)
         .child(pull)
         .into_any_element()
+}
+
+fn confirm_reset_progress(view: &Entity<ReviewView>, window: &mut Window, cx: &mut App) {
+    let viewed = view.read(cx).viewed_count();
+    if viewed == 0 {
+        return;
+    }
+    let view = view.clone();
+    window.open_alert_dialog(cx, move |alert, _, _| {
+        let s = tr();
+        let view = view.clone();
+        alert
+            .title(s.reset_progress_title.clone())
+            .description(s.reset_progress_desc(viewed))
+            .ok_text(s.reset_progress.clone())
+            .ok_variant(ButtonVariant::Danger)
+            .show_cancel(true)
+            .on_ok(move |_, _, cx| {
+                view.update(cx, |this, cx| this.reset_progress(cx));
+                true
+            })
+    });
 }
 
 fn short_sha(sha: &str) -> &str {
@@ -938,6 +983,12 @@ impl Render for ReviewView {
                 } else {
                     this.toggle_tree(window, cx);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &FindFile, window, cx| {
+                this.open_file_search(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FindInFile, window, cx| {
+                this.open_find(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleBlame, window, cx| {
                 if window.has_focused_input(cx) {

@@ -50,6 +50,15 @@ pub enum DiffLayout {
     Unified,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapLines {
+    #[default]
+    SplitOnly,
+    Always,
+    Never,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntaxPalettes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,6 +129,12 @@ pub struct Settings {
     pub syntax_colors: SyntaxPalettes,
     #[serde(default)]
     pub show_blame: bool,
+    #[serde(default)]
+    pub show_whole_file: bool,
+    #[serde(default)]
+    pub wrap_lines: WrapLines,
+    #[serde(default)]
+    pub editor_command: String,
 }
 
 pub const UI_SCALE_RANGE: (u16, u16) = (80, 150);
@@ -183,6 +198,9 @@ impl Default for Settings {
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
             show_blame: false,
+            show_whole_file: false,
+            wrap_lines: WrapLines::default(),
+            editor_command: String::new(),
         }
     }
 }

@@ -28,8 +28,8 @@ use ui_resources::themes::ZedThemeFile;
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
-    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, apply_saved_theme,
-    apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
+    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines,
+    apply_saved_theme, apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
     syntax_palette_names, update_settings,
 };
 use crate::shortcut_dialog::{self, keystroke_element, where_label};
@@ -856,6 +856,32 @@ impl Render for SettingsView {
                         ],
                         settings(cx).diff_layout,
                         |st, v| st.diff_layout = v,
+                    )
+                }),
+            ))
+            .item(
+                SettingItem::new(
+                    s.show_whole_file.clone(),
+                    SettingField::switch(
+                        |cx| settings(cx).show_whole_file,
+                        |value, cx| update_settings(cx, |s| s.show_whole_file = value),
+                    ),
+                )
+                .description(s.show_whole_file_desc.clone()),
+            )
+            .item(SettingItem::new(
+                s.wrap_lines.clone(),
+                SettingField::render(|_, _, cx| {
+                    let s = tr();
+                    choice_buttons(
+                        "wrap-lines",
+                        vec![
+                            (s.wrap_split_only.clone(), WrapLines::SplitOnly),
+                            (s.wrap_always.clone(), WrapLines::Always),
+                            (s.wrap_never.clone(), WrapLines::Never),
+                        ],
+                        settings(cx).wrap_lines,
+                        |st, v| st.wrap_lines = v,
                     )
                 }),
             ))

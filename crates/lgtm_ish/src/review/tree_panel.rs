@@ -19,13 +19,15 @@ use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
 use super::{
-    CollapseSelected, ExpandSelected, HiddenFile, NextFile, OpenSelected, PreviousFile,
+    CollapseSelected, ExpandSelected, FindFile, HiddenFile, NextFile, OpenSelected, PreviousFile,
     ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow,
 };
 use crate::localization::tr;
-use crate::settings_store::{HideScope, TreeMode, add_hide_pattern, settings, update_settings};
+use crate::settings_store::{
+    HideScope, TreeMode, TreeSide, add_hide_pattern, settings, update_settings,
+};
 
-const ROW_HEIGHT: f32 = 1.625;
+pub(super) const ROW_HEIGHT: f32 = 1.625;
 const HIDDEN_ROW: f32 = 1.625;
 
 fn view_options_panel(
@@ -256,7 +258,10 @@ impl ReviewView {
             let view = cx.entity();
             let hidden = self.hidden.clone();
             Popover::new("tree-view-options")
-                .anchor(Anchor::TopRight)
+                .anchor(match settings(cx).tree_side {
+                    TreeSide::Left => Anchor::TopLeft,
+                    TreeSide::Right => Anchor::TopRight,
+                })
                 .trigger(
                     Button::new("tree-view-options-button")
                         .ghost()
@@ -271,6 +276,8 @@ impl ReviewView {
                 )
                 .content(move |_, _, cx| view_options_panel(&view, &hidden, cx))
         };
+        let search_field = self.render_search_field(cx);
+        let results = self.render_search_results(cx);
         let theme = cx.theme();
         let header = v_flex()
             .flex_none()
@@ -288,6 +295,17 @@ impl ReviewView {
                             .text_sm()
                             .font_semibold()
                             .child(s.files.clone()),
+                    )
+                    .child(
+                        Button::new("tree-find-file")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Search)
+                            .selected(self.file_search.is_some())
+                            .tooltip_with_action(s.find_file.clone(), &FindFile, Some("Review"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_file_search(window, cx)
+                            })),
                     )
                     .when(!flat, |el| {
                         el.child(
@@ -308,30 +326,37 @@ impl ReviewView {
                         )
                     })
                     .child(view_options),
-            );
+            )
+            .children(search_field);
 
-        let rows = self.rows.clone();
-        let selected = self.selected_row;
-        let current = self.current_file;
-        let list = uniform_list(
-            "review-tree",
-            rows.len(),
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                range
-                    .map(|ix| this.render_row(ix, &rows[ix], selected == Some(ix), current, cx))
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&self.tree_scroll)
-        .size_full();
-
-        v_flex()
-            .id("review-tree-panel")
+        let list = match results {
+            Some(results) => results,
+            None => {
+                let rows = self.rows.clone();
+                let selected = self.selected_row;
+                let current = self.current_file;
+                uniform_list(
+                    "review-tree",
+                    rows.len(),
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        range
+                            .map(|ix| {
+                                this.render_row(ix, &rows[ix], selected == Some(ix), current, cx)
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .track_scroll(&self.tree_scroll)
+                .size_full()
+                .into_any_element()
+            }
+        };
+        let body = div()
+            .id("review-tree-body")
             .key_context("ReviewTree")
             .track_focus(&self.tree_focus)
-            .size_full()
-            .min_w_0()
-            .bg(theme.sidebar)
+            .flex_1()
+            .min_h_0()
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &NextFile, _, cx| this.step_file(1, cx)))
@@ -350,8 +375,14 @@ impl ReviewView {
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.focus_tree(window, cx)),
             )
+            .child(list);
+        v_flex()
+            .id("review-tree-panel")
+            .size_full()
+            .min_w_0()
+            .bg(theme.sidebar)
             .child(header)
-            .child(div().flex_1().min_h_0().child(list))
+            .child(body)
             .into_any_element()
     }
 

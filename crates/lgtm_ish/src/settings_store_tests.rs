@@ -1,6 +1,6 @@
 use rstest::rstest;
 
-use super::{Settings, SyntaxPalettes, fit_split_ratio};
+use super::{Settings, SyntaxPalettes, WrapLines, fit_split_ratio};
 
 #[test]
 fn settings_without_syntax_colors_still_load() {
@@ -8,6 +8,9 @@ fn settings_without_syntax_colors_still_load() {
         serde_json::from_str(r#"{ "theme": "system", "diff_layout": "unified" }"#).unwrap();
     assert_eq!(settings.syntax_colors, SyntaxPalettes::default());
     assert!(!settings.show_blame);
+    assert!(!settings.show_whole_file);
+    assert_eq!(settings.wrap_lines, WrapLines::SplitOnly);
+    assert!(settings.editor_command.is_empty());
 }
 
 #[test]

@@ -123,6 +123,11 @@ impl ReviewView {
         cx.notify();
     }
 
+    pub(super) fn relayout_blame(&mut self, cx: &mut Context<Self>) {
+        self.blame.invalidate();
+        self.request_blame(cx);
+    }
+
     pub(super) fn retry_failed_blame(&mut self, cx: &mut Context<Self>) {
         if self.blame.failed.is_empty() {
             return;

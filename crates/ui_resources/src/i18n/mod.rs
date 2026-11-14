@@ -86,6 +86,24 @@ pub struct Strings {
     pub diff_layout: SharedString,
     pub ignore_whitespace: SharedString,
     pub ignore_whitespace_desc: SharedString,
+    pub show_whole_file: SharedString,
+    pub show_whole_file_desc: SharedString,
+    pub wrap_lines: SharedString,
+    pub wrap_split_only: SharedString,
+    pub wrap_always: SharedString,
+    pub wrap_never: SharedString,
+    pub reset_progress: SharedString,
+    pub reset_progress_ellipsis: SharedString,
+    pub reset_progress_title: SharedString,
+    pub reset_progress_desc_t: SharedString,
+    pub find_file: SharedString,
+    pub find_file_placeholder: SharedString,
+    pub no_matching_files: SharedString,
+    pub find_in_file: SharedString,
+    pub find_in_file_placeholder: SharedString,
+    pub find_next: SharedString,
+    pub find_previous: SharedString,
+    pub no_results: SharedString,
     pub advance_on_viewed: SharedString,
     pub advance_on_viewed_desc: SharedString,
     pub auto_mark_viewed: SharedString,
@@ -286,6 +304,10 @@ impl Strings {
 
     pub fn zed_imported(&self, themes: &str) -> String {
         fill(&self.zed_imported_t, &[themes])
+    }
+
+    pub fn reset_progress_desc(&self, count: usize) -> String {
+        fill(&self.reset_progress_desc_t, &[&count.to_string()])
     }
 
     pub fn hidden_count(&self, count: usize) -> String {
@@ -522,6 +544,7 @@ mod tests {
                 &s.hidden_files_repo_t,
                 &s.hidden_files_invalid_t,
                 &s.renamed_from_t,
+                &s.reset_progress_desc_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

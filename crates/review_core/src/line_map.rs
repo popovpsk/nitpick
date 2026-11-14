@@ -67,12 +67,52 @@ impl LineMap {
         self.old_to_new.is_empty() && self.new_to_old.is_empty()
     }
 
+    pub fn rows(&self) -> Vec<LineKind> {
+        let (old, new) = (&self.old_to_new, &self.new_to_old);
+        let mut rows = Vec::with_capacity(old.len().max(new.len()));
+        let (mut o, mut n) = (0, 0);
+        loop {
+            if o < old.len() && old[o] == ABSENT {
+                o += 1;
+            } else if n < new.len() && new[n] == ABSENT {
+                n += 1;
+            } else if o < old.len() && old[o] == CHANGED {
+                rows.push(LineKind::Removed { old: o as u32 + 1 });
+                o += 1;
+            } else if n < new.len() && new[n] == CHANGED {
+                rows.push(LineKind::Added { new: n as u32 + 1 });
+                n += 1;
+            } else if o < old.len() && n < new.len() {
+                rows.push(LineKind::Context {
+                    old: o as u32 + 1,
+                    new: n as u32 + 1,
+                });
+                o += 1;
+                n += 1;
+            } else if o < old.len() {
+                o += 1;
+            } else if n < new.len() {
+                n += 1;
+            } else {
+                return rows;
+            }
+        }
+    }
+
     pub fn shown_block_starts(
         &self,
         side: Side,
         context: Option<usize>,
         min_folded: usize,
     ) -> Vec<u32> {
+        let shown = self.shown_lines(side, context, min_folded);
+        (0..shown.len())
+            .filter(|&ix| shown[ix] && (ix == 0 || !shown[ix - 1]))
+            .map(|ix| ix as u32 + 1)
+            .collect()
+    }
+
+    pub fn shown_lines(&self, side: Side, context: Option<usize>, min_folded: usize) -> Vec<bool> {
         let (own, other) = match side {
             Side::Old => (&self.old_to_new, &self.new_to_old),
             Side::New => (&self.new_to_old, &self.old_to_new),
@@ -134,10 +174,7 @@ impl LineMap {
                 shown[start..ix].fill(true);
             }
         }
-        (0..count)
-            .filter(|&ix| shown[ix] && (ix == 0 || !shown[ix - 1]))
-            .map(|ix| ix as u32 + 1)
-            .collect()
+        shown
     }
 
     fn set(map: &mut Vec<u32>, line: u32, value: u32) {

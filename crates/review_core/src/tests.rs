@@ -310,6 +310,48 @@ fn shown_block_starts_follow_the_folding(
 }
 
 #[test]
+fn rows_follow_the_patch_order() {
+    let maps = line_maps(PATCH);
+    assert_eq!(
+        maps[0].rows(),
+        vec![
+            LineKind::Context { old: 1, new: 1 },
+            LineKind::Removed { old: 2 },
+            LineKind::Added { new: 2 },
+            LineKind::Added { new: 3 },
+            LineKind::Context { old: 3, new: 4 },
+            LineKind::Context { old: 4, new: 5 },
+            LineKind::Context { old: 5, new: 6 },
+        ]
+    );
+    assert!(maps[1].rows().is_empty());
+    assert_eq!(
+        maps[3].rows(),
+        vec![
+            LineKind::Context { old: 10, new: 10 },
+            LineKind::Removed { old: 11 },
+            LineKind::Context { old: 12, new: 11 },
+        ]
+    );
+}
+
+#[test]
+fn shown_lines_mark_what_the_folding_keeps() {
+    let map = &line_maps(&whole_file_patch(".........+.........."))[0];
+    let shown = map.shown_lines(Side::New, Some(3), 2);
+    let lines: Vec<usize> = (0..shown.len())
+        .filter(|&ix| shown[ix])
+        .map(|ix| ix + 1)
+        .collect();
+    assert_eq!(lines, vec![7, 8, 9, 10, 11, 12, 13]);
+    assert!(
+        map.shown_lines(Side::New, None, 2)
+            .iter()
+            .all(|shown| *shown)
+    );
+}
+
+#[test]
 fn shown_block_starts_begin_each_hunk_of_a_short_patch() {
     let patch = "\
 diff --git a/f b/f

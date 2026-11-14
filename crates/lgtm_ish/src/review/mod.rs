@@ -2,6 +2,8 @@ mod blame;
 mod branch_picker;
 mod comments;
 mod diff_panel;
+mod file_search;
+mod find_bar;
 pub mod model;
 mod tree_panel;
 mod viewed;
@@ -58,6 +60,8 @@ actions!(
         FocusDiff,
         Refresh,
         ToggleTree,
+        FindFile,
+        FindInFile,
     ]
 );
 
@@ -251,6 +255,9 @@ pub struct ReviewView {
     split_width: f32,
     split_drag: Option<(Pixels, f32)>,
     file_label: Option<diff_panel::FileLabel>,
+    file_search: Option<file_search::FileSearch>,
+    find: Option<find_bar::FindBar>,
+    search_opens: usize,
     busy: Option<Busy>,
     _tree_close: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
@@ -271,7 +278,12 @@ impl ReviewView {
             DiffLayout::Split => DiffMode::Split,
             DiffLayout::Unified => DiffMode::Unified,
         };
-        let diff = cx.new(|cx| DiffState::new([], cx).with_mode(mode));
+        let context = context_lines(cx);
+        let diff = cx.new(|cx| {
+            DiffState::new([], cx)
+                .with_mode(mode)
+                .with_context_lines(context)
+        });
         let subscription = cx.subscribe_in(&diff, window, |_, _, event: &DiffEvent, _, cx| {
             if matches!(
                 event,
@@ -342,6 +354,9 @@ impl ReviewView {
             split_width: 0.,
             split_drag: None,
             file_label: None,
+            file_search: None,
+            find: None,
+            search_opens: 0,
             busy: None,
             _tree_close: Task::ready(()),
             branch_pickers,
@@ -475,6 +490,7 @@ impl ReviewView {
             .copied()
             .filter(|&f| self.is_tracked(f))
             .collect();
+        self.rank_file_search(cx);
     }
 
     pub fn is_tracked(&self, file: usize) -> bool {
@@ -589,6 +605,7 @@ impl ReviewView {
                     self.load_discussions(cx);
                 }
                 self.request_blame(cx);
+                self.sync_find(cx);
             }
             Err(err) => {
                 log::warn!("review load failed: {err:#}");
@@ -652,6 +669,17 @@ impl ReviewView {
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
         let whitespace = settings(cx).ignore_whitespace;
         self.sync_diff_mode(cx);
+        let context = context_lines(cx);
+        if self.diff.read(cx).context_lines() != context {
+            self.diff
+                .update(cx, |state, cx| state.set_context_lines(context, cx));
+            self.relayout_blame(cx);
+            if let Some(find) = self.find.as_mut() {
+                find.forget_text();
+            }
+            self.sync_find(cx);
+        }
+        self.refresh_find_view(cx);
         let patterns_changed = settings(cx).hidden_files != self.hide_patterns.0
             || settings(cx).repo_hidden(self.repo.root()) != self.hide_patterns.1.as_slice();
         if !patterns_changed && Self::tree_view(cx) != self.tree_view {
@@ -793,6 +821,7 @@ impl ReviewView {
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
             self.request_blame(cx);
+            self.sync_find(cx);
         }
         if let Some(node) = self.tree.file_node(ix) {
             let mut changed = false;
@@ -979,6 +1008,27 @@ impl ReviewView {
         self.rebuild_rows();
         cx.emit(ReviewEvent::Changed);
         cx.notify();
+    }
+
+    pub fn viewed_count(&self) -> usize {
+        self.viewed.iter().filter(|v| **v).count()
+    }
+
+    pub fn reset_progress(&mut self, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let files: Vec<usize> = (0..self.viewed.len()).filter(|&f| self.viewed[f]).collect();
+        if files.is_empty() {
+            return;
+        }
+        self.set_viewed(&files, false, cx);
+        for &ix in &files {
+            let file = &review.files[ix];
+            self.kept_unviewed
+                .remove(&(file.path.clone(), file.fingerprint.clone()));
+        }
+        self.shown_at = Some(Instant::now());
     }
 
     pub fn toggle_file_viewed(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1425,7 +1475,10 @@ impl ReviewView {
     }
 
     pub fn toggle_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tree_visible && self.tree_focus.contains_focused(window, cx) {
+        if self.tree_visible
+            && (self.tree_focus.contains_focused(window, cx)
+                || self.file_search_focused(window, cx))
+        {
             self.focus_diff(window, cx);
         }
         self.tree_visible = !self.tree_visible;
@@ -1510,6 +1563,12 @@ impl ReviewView {
         let handle = self.diff.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
     }
+}
+
+const FOLD_CONTEXT: usize = 3;
+
+fn context_lines(cx: &App) -> Option<usize> {
+    (!settings(cx).show_whole_file).then_some(FOLD_CONTEXT)
 }
 
 enum PostRequest {

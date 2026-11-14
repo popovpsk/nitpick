@@ -41,6 +41,7 @@ gpui_kit_assets::icon_assets!(
         Eye,
         CircleX,
         GitCommitHorizontal,
+        RotateCcw,
     ]
 );
 
