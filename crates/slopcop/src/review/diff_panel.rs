@@ -1,6 +1,6 @@
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle, DragMoveEvent,
-    ElementId, Empty, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    ElementId, Empty, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, ease_out_quint,
     prelude::FluentBuilder as _, px,
 };
@@ -11,7 +11,9 @@ use gpui_component::{
     checkbox::Checkbox,
     diff::{Diff, DiffHoverHighlight},
     h_flex,
+    progress::Progress as ProgressBar,
     spinner::Spinner,
+    tooltip::Tooltip,
     v_flex,
 };
 use ui_resources::Icons;
@@ -21,6 +23,7 @@ use super::{
     ReviewView, TREE_SLIDE, ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
+use crate::picker::Picker;
 use crate::settings_store::{DiffLayout, TreeSide, settings};
 
 impl ReviewView {
@@ -29,12 +32,55 @@ impl ReviewView {
         let busy = self.busy;
         let chips = match &self.source {
             ReviewSource::Branches { target, source } => Some((
-                branch_chip("target", target.clone(), PullSide::Target, busy, cx),
-                branch_chip("source", source.clone(), PullSide::Source, busy, cx),
+                branch_chip(
+                    0,
+                    target.clone(),
+                    PullSide::Target,
+                    self.branch_pickers.picker(PullSide::Target),
+                    busy,
+                    cx,
+                ),
+                branch_chip(
+                    1,
+                    source.clone(),
+                    PullSide::Source,
+                    self.branch_pickers.picker(PullSide::Source),
+                    busy,
+                    cx,
+                ),
             )),
             ReviewSource::MergeRequest { .. } | ReviewSource::WorkingTree => None,
         };
         let theme = cx.theme();
+        let (viewed, total) = self.progress();
+        let progress = (total > 0).then(|| {
+            let complete = viewed == total;
+            h_flex()
+                .id("viewed-progress")
+                .flex_none()
+                .gap_1p5()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(if complete {
+                            theme.success
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .child(format!("{viewed}/{total}")),
+                )
+                .child(
+                    ProgressBar::new("viewed-progress-bar")
+                        .xsmall()
+                        .w(px(56.))
+                        .value(viewed as f32 * 100. / total as f32)
+                        .when(complete, |bar| bar.color(theme.success)),
+                )
+                .tooltip(move |window, cx| {
+                    Tooltip::new(tr().viewed_progress(viewed, total)).build(window, cx)
+                })
+        });
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
         match (&self.source, &self.mr) {
             (_, Some(ctx)) => {
@@ -155,13 +201,14 @@ impl ReviewView {
                 },
             )
             .children(comments_button)
+            .children(progress)
             .child(
                 Button::new("refresh-review")
                     .ghost()
                     .small()
                     .icon(IconName::RefreshCw)
                     .loading(busy == Some(Busy::Refreshing))
-                    .tooltip(s.refresh.clone())
+                    .tooltip_with_action(s.refresh.clone(), &Refresh, Some("Review"))
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
             .into_any_element()
@@ -368,14 +415,15 @@ impl ReviewView {
 }
 
 fn branch_chip(
-    id: &'static str,
+    ix: usize,
     branch: String,
     side: PullSide,
+    picker: &Entity<Picker>,
     busy: Option<Busy>,
     cx: &mut Context<ReviewView>,
 ) -> AnyElement {
     let s = tr();
-    let pull = Button::new(ElementId::Name(format!("pull-{id}").into()))
+    let pull = Button::new(("pull-branch", ix))
         .ghost()
         .xsmall()
         .icon(Icon::new(Icons::ArrowDownToLine))
@@ -383,20 +431,25 @@ fn branch_chip(
         .disabled(busy.is_some())
         .tooltip(s.pull_branch(&branch))
         .on_click(cx.listener(move |this, _, window, cx| this.pull(side, window, cx)));
+    let name = Button::new(("pick-branch", ix))
+        .ghost()
+        .small()
+        .icon(Icon::new(Icons::GitBranch))
+        .label(SharedString::from(branch))
+        .tooltip(match side {
+            PullSide::Target => s.change_target_branch.clone(),
+            PullSide::Source => s.change_source_branch.clone(),
+        });
+    let name = picker.read(cx).popover(("branch-picker", ix), name, cx);
     let theme = cx.theme();
     h_flex()
         .flex_none()
         .gap_0p5()
         .items_center()
-        .px_1p5()
+        .pr_0p5()
         .rounded(theme.radius)
         .bg(theme.secondary)
-        .child(
-            Icon::new(Icons::GitBranch)
-                .xsmall()
-                .text_color(theme.muted_foreground),
-        )
-        .child(div().text_sm().child(SharedString::from(branch)))
+        .child(name)
         .child(pull)
         .into_any_element()
 }

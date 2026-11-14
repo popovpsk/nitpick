@@ -1,15 +1,14 @@
 use git_repo::{Branch, BranchKind, Repo};
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
+    AppContext as _, Context, ElementId, Entity, EventEmitter, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
-    select::{SearchableVec, Select, SelectEvent, SelectState},
     spinner::Spinner,
     tag::Tag,
     v_flex,
@@ -17,6 +16,7 @@ use gpui_component::{
 use ui_resources::Icons;
 
 use crate::localization::tr;
+use crate::picker::{Picker, PickerEvent, branch_entries};
 use crate::review::ReviewSource;
 use crate::settings_store::settings;
 
@@ -27,14 +27,24 @@ pub enum StartEvent {
 
 impl EventEmitter<StartEvent> for StartView {}
 
-type BranchSelect = Entity<SelectState<SearchableVec<SharedString>>>;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Target,
+    Source,
+}
+
+struct BranchField {
+    name: Option<SharedString>,
+    hint: Option<SharedString>,
+    picker: Entity<Picker>,
+}
 
 pub struct StartView {
     repo: Repo,
     branches: Vec<Branch>,
     loading_branches: bool,
-    target: BranchSelect,
-    source: BranchSelect,
+    target: BranchField,
+    source: BranchField,
     mr_input: Entity<InputState>,
     filter: Entity<InputState>,
     gitlab_project: Option<String>,
@@ -87,24 +97,19 @@ enum MrListState {
 impl StartView {
     pub fn new(repo: Repo, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let s = tr();
-        let target = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(Vec::<SharedString>::new()),
-                None,
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
-        let source = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(Vec::<SharedString>::new()),
-                None,
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
+        let new_picker = |window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                Picker::new(
+                    Icons::GitBranch,
+                    || tr().search_branches.clone(),
+                    px(420.),
+                    window,
+                    cx,
+                )
+            })
+        };
+        let target = new_picker(window, cx);
+        let source = new_picker(window, cx);
         let mr_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(s.mr_input_placeholder.clone()));
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(s.filter_mrs.clone()));
@@ -124,21 +129,29 @@ impl StartView {
                     cx.notify();
                 }
             }),
-            cx.subscribe(
-                &target,
-                |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
-            ),
-            cx.subscribe(
-                &source,
-                |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
-            ),
+            cx.subscribe(&target, |this, _, event: &PickerEvent, cx| {
+                this.on_pick(Side::Target, event, cx)
+            }),
+            cx.subscribe(&source, |this, _, event: &PickerEvent, cx| {
+                this.on_pick(Side::Source, event, cx)
+            }),
+            cx.observe(&target, |_, _, cx| cx.notify()),
+            cx.observe(&source, |_, _, cx| cx.notify()),
         ];
         let mut this = Self {
             repo,
             branches: Vec::new(),
             loading_branches: true,
-            target,
-            source,
+            target: BranchField {
+                name: None,
+                hint: None,
+                picker: target,
+            },
+            source: BranchField {
+                name: None,
+                hint: None,
+                picker: source,
+            },
             mr_input,
             filter,
             gitlab_project: None,
@@ -162,6 +175,7 @@ impl StartView {
     fn load_branches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         self.loading_branches = true;
+        self.set_pickers_loading(true, cx);
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -177,7 +191,10 @@ impl StartView {
                     Ok((branches, current, default)) => {
                         this.install_branches(branches, current, default, window, cx)
                     }
-                    Err(err) => log::warn!("branches: {err}"),
+                    Err(err) => {
+                        log::warn!("branches: {err}");
+                        this.set_pickers_loading(false, cx);
+                    }
                 }
                 cx.notify();
             });
@@ -193,30 +210,74 @@ impl StartView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let names: Vec<SharedString> = branches
-            .iter()
-            .map(|b| SharedString::from(b.name.clone()))
-            .collect();
-        let pick = |name: Option<&str>| -> Option<IndexPath> {
-            let name = name?;
-            names
-                .iter()
-                .position(|n| n.as_ref() == name)
-                .map(IndexPath::new)
+        let known = |name: Option<&str>| {
+            name.filter(|name| branches.iter().any(|b| b.name == *name))
+                .map(|name| SharedString::from(name.to_string()))
         };
-        let prev_target = self.target.read(cx).selected_value().cloned();
-        let prev_source = self.source.read(cx).selected_value().cloned();
-        let target_ix = pick(prev_target.as_deref()).or_else(|| pick(default.as_deref()));
-        let source_ix = pick(prev_source.as_deref())
-            .or_else(|| pick(current.as_deref()).filter(|ix| Some(*ix) != target_ix));
-        for (select, ix) in [(&self.target, target_ix), (&self.source, source_ix)] {
-            let items = SearchableVec::new(names.clone());
-            select.update(cx, |state, cx| {
-                state.set_items(items, window, cx);
-                state.set_selected_index(ix, window, cx);
+        let target = known(self.target.name.as_deref()).or_else(|| known(default.as_deref()));
+        let source = known(self.source.name.as_deref())
+            .or_else(|| known(current.as_deref()).filter(|s| Some(s) != target.as_ref()));
+        let entries = branch_entries(&branches);
+        self.branches = branches;
+        self.target.name = target;
+        self.source.name = source;
+        for picker in [&self.target.picker, &self.source.picker] {
+            let entries = entries.clone();
+            picker.update(cx, |picker, cx| {
+                picker.set_entries(entries, None, window, cx)
             });
         }
-        self.branches = branches;
+        self.sync_selection(cx);
+    }
+
+    fn set_pickers_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
+        for picker in [&self.target.picker, &self.source.picker] {
+            picker.update(cx, |picker, cx| {
+                let loading = loading && picker.is_empty(cx);
+                picker.set_loading(loading, cx);
+            });
+        }
+    }
+
+    pub fn close_pickers(&mut self, cx: &mut Context<Self>) {
+        for picker in [&self.target.picker, &self.source.picker] {
+            picker.update(cx, |picker, cx| picker.close(cx));
+        }
+    }
+
+    pub fn select_branches(&mut self, target: &str, source: &str, cx: &mut Context<Self>) {
+        self.target.name = Some(SharedString::from(target.to_string()));
+        self.source.name = Some(SharedString::from(source.to_string()));
+        self.sync_selection(cx);
+    }
+
+    fn on_pick(&mut self, side: Side, event: &PickerEvent, cx: &mut Context<Self>) {
+        let PickerEvent::Confirm { entry, .. } = event else {
+            return;
+        };
+        let Some(branch) = self.branches.get(*entry) else {
+            return;
+        };
+        let name = Some(SharedString::from(branch.name.clone()));
+        match side {
+            Side::Target => self.target.name = name,
+            Side::Source => self.source.name = name,
+        }
+        self.sync_selection(cx);
+    }
+
+    fn sync_selection(&mut self, cx: &mut Context<Self>) {
+        for field in [&mut self.target, &mut self.source] {
+            let index = field
+                .name
+                .as_deref()
+                .and_then(|name| self.branches.iter().position(|b| b.name == name));
+            field.hint = index.map(|ix| branch_hint(&self.branches[ix]));
+            field
+                .picker
+                .update(cx, |picker, cx| picker.set_checked(index, cx));
+        }
+        cx.notify();
     }
 
     fn load_merge_requests(&mut self, cx: &mut Context<Self>) {
@@ -269,9 +330,7 @@ impl StartView {
     }
 
     fn compare(&mut self, cx: &mut Context<Self>) {
-        let target = self.target.read(cx).selected_value().cloned();
-        let source = self.source.read(cx).selected_value().cloned();
-        if let (Some(target), Some(source)) = (target, source)
+        if let (Some(target), Some(source)) = (&self.target.name, &self.source.name)
             && target != source
         {
             cx.emit(StartEvent::Open(ReviewSource::Branches {
@@ -281,14 +340,9 @@ impl StartView {
         }
     }
 
-    fn swap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self.target.read(cx).selected_index(cx);
-        let source = self.source.read(cx).selected_index(cx);
-        self.target
-            .update(cx, |s, cx| s.set_selected_index(source, window, cx));
-        self.source
-            .update(cx, |s, cx| s.set_selected_index(target, window, cx));
-        cx.notify();
+    fn swap(&mut self, cx: &mut Context<Self>) {
+        std::mem::swap(&mut self.target.name, &mut self.source.name);
+        self.sync_selection(cx);
     }
 
     fn open_mr_from_input(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -311,23 +365,6 @@ impl StartView {
                 iid,
             }));
         }
-    }
-
-    fn branch_hint(&self, name: Option<&SharedString>) -> Option<SharedString> {
-        let name = name?;
-        let branch = self.branches.iter().find(|b| b.name == name.as_ref())?;
-        let kind = match branch.kind {
-            BranchKind::Local => "",
-            BranchKind::Remote => "remote · ",
-        };
-        let subject: String = branch.subject.chars().take(60).collect();
-        Some(
-            format!(
-                "{kind}{} · {subject}",
-                &branch.sha[..branch.sha.len().min(8)]
-            )
-            .into(),
-        )
     }
 
     fn render_mr_list(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -460,11 +497,10 @@ impl Render for StartView {
         let s = tr();
         let mr_list = self.render_mr_list(cx);
         let theme = cx.theme();
-        let target = self.target.read(cx).selected_value().cloned();
-        let source = self.source.read(cx).selected_value().cloned();
-        let can_compare = matches!((&target, &source), (Some(t), Some(s)) if t != s);
-        let target_hint = self.branch_hint(target.as_ref());
-        let source_hint = self.branch_hint(source.as_ref());
+        let can_compare = matches!(
+            (&self.target.name, &self.source.name),
+            (Some(t), Some(s)) if t != s
+        );
         let card = |title: SharedString, icon: Icon| {
             v_flex()
                 .w_full()
@@ -483,10 +519,43 @@ impl Render for StartView {
                         .child(div().font_semibold().child(title)),
                 )
         };
-        let branch_field = |label: SharedString,
-                            select: &BranchSelect,
-                            hint: Option<SharedString>,
-                            id: &'static str| {
+        let branch_field = |label: SharedString, field: &BranchField, id: &'static str| {
+            let (name, color) = match &field.name {
+                Some(name) => (name.clone(), theme.foreground),
+                None => (s.choose_branch.clone(), theme.muted_foreground),
+            };
+            let trigger = Button::new(id).outline().w_full().child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Icon::new(Icons::GitBranch)
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(color)
+                            .child(name),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    ),
+            );
+            let picker = field
+                .picker
+                .read(cx)
+                .popover(ElementId::from((id, 1usize)), trigger, cx)
+                .trigger_style(StyleRefinement::default().w_full());
             v_flex()
                 .flex_1()
                 .min_w_0()
@@ -497,14 +566,7 @@ impl Render for StartView {
                         .text_color(theme.muted_foreground)
                         .child(label),
                 )
-                .child(
-                    Select::new(select)
-                        .id(id)
-                        .icon(Icon::new(Icons::GitBranch))
-                        .placeholder(s.choose_branch.clone())
-                        .search_placeholder(s.search.clone())
-                        .menu_max_h(px(360.)),
-                )
+                .child(picker)
                 .child(
                     div()
                         .h(px(16.))
@@ -513,16 +575,10 @@ impl Render for StartView {
                         .overflow_hidden()
                         .text_ellipsis()
                         .whitespace_nowrap()
-                        .children(hint),
+                        .children(field.hint.clone()),
                 )
         };
         let compare = card(s.compare_branches.clone(), Icon::new(Icons::GitCompare))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child(s.compare_hint.clone()),
-            )
             .child(
                 h_flex()
                     .gap_2()
@@ -530,8 +586,7 @@ impl Render for StartView {
                     .child(branch_field(
                         s.target_branch.clone(),
                         &self.target,
-                        target_hint,
-                        "target-select",
+                        "target-branch",
                     ))
                     .child(
                         div().pt(px(20.)).child(
@@ -540,14 +595,13 @@ impl Render for StartView {
                                 .small()
                                 .icon(IconName::ArrowLeft)
                                 .tooltip(s.swap.clone())
-                                .on_click(cx.listener(|this, _, window, cx| this.swap(window, cx))),
+                                .on_click(cx.listener(|this, _, _, cx| this.swap(cx))),
                         ),
                     )
                     .child(branch_field(
                         s.source_branch.clone(),
                         &self.source,
-                        source_hint,
-                        "source-select",
+                        "source-branch",
                     )),
             )
             .child(
@@ -560,9 +614,42 @@ impl Render for StartView {
                             .primary()
                             .icon(Icon::new(Icons::GitCompare))
                             .label(s.compare.clone())
+                            .tooltip(s.compare_tooltip.clone())
                             .disabled(!can_compare)
                             .on_click(cx.listener(|this, _, _, cx| this.compare(cx))),
                     ),
+            );
+        let local = h_flex()
+            .w_full()
+            .max_w(px(760.))
+            .gap_3()
+            .px_4()
+            .py_3()
+            .items_center()
+            .rounded(theme.radius_lg)
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .child(Icon::new(Icons::FilePen).text_color(theme.primary))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().font_semibold().child(s.uncommitted_changes.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(s.uncommitted_changes_desc.clone()),
+                    ),
+            )
+            .child(
+                Button::new("review-uncommitted")
+                    .outline()
+                    .label(s.open.clone())
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(StartEvent::Open(ReviewSource::WorkingTree))
+                    })),
             );
         let mrs = card(s.merge_requests.clone(), Icon::new(Icons::GitPullRequest)).child(mr_list);
         div()
@@ -577,7 +664,21 @@ impl Render for StartView {
                     .gap_4()
                     .p_6()
                     .child(compare)
+                    .child(local)
                     .child(mrs),
             )
     }
+}
+
+fn branch_hint(branch: &Branch) -> SharedString {
+    let kind = match branch.kind {
+        BranchKind::Local => "",
+        BranchKind::Remote => "remote · ",
+    };
+    let subject: String = branch.subject.chars().take(60).collect();
+    format!(
+        "{kind}{} · {subject}",
+        &branch.sha[..branch.sha.len().min(8)]
+    )
+    .into()
 }

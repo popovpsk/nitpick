@@ -3,6 +3,7 @@ mod diff;
 mod pull;
 mod remote_url;
 mod repo;
+mod scan;
 mod worktree;
 
 #[cfg(test)]
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 pub use command::NETWORK_TIMEOUT;
 pub use remote_url::{RemoteLocation, parse_remote_url};
 pub use repo::Repo;
+pub use scan::{SCAN_DEPTH, find_repositories};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {

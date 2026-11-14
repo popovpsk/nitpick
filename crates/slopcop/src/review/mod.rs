@@ -1,3 +1,4 @@
+mod branch_picker;
 mod comments;
 mod diff_panel;
 pub mod model;
@@ -189,6 +190,7 @@ impl DiscussionView {
 
 pub enum ReviewEvent {
     Changed,
+    Open(ReviewSource),
 }
 
 impl EventEmitter<ReviewEvent> for ReviewView {}
@@ -224,6 +226,7 @@ pub struct ReviewView {
     busy: Option<Busy>,
     _tree_close: Task<()>,
     _tree_width_save: Task<()>,
+    branch_pickers: branch_picker::BranchPickers,
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -261,6 +264,7 @@ impl ReviewView {
                 this.reload(cx);
             }
         });
+        let branch_pickers = branch_picker::BranchPickers::new(window, cx);
         let mut this = Self {
             repo,
             source,
@@ -292,6 +296,7 @@ impl ReviewView {
             busy: None,
             _tree_close: Task::ready(()),
             _tree_width_save: Task::ready(()),
+            branch_pickers,
             _load: Task::ready(()),
             _discussions: Task::ready(()),
             _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],

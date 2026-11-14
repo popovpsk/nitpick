@@ -13,12 +13,14 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    h_flex,
     notification::Notification,
     v_flex,
 };
 use ui_resources::Icons;
 
 use crate::localization::tr;
+use crate::picker::{Picker, PickerEntry, PickerEvent};
 use crate::recent::{RecentRepos, StoredReview, now, recent};
 use crate::review::{ReviewEvent, ReviewSource, ReviewView};
 use crate::settings_view::SettingsView;
@@ -28,6 +30,7 @@ actions!(
     workspace,
     [
         OpenRepository,
+        AddRepositories,
         NewReview,
         ShowSettings,
         CloseWindow,
@@ -69,12 +72,43 @@ pub struct Workspace {
     start: Option<Entity<StartView>>,
     review: Option<Entity<ReviewView>>,
     settings: Option<Entity<SettingsView>>,
+    repo_picker: Entity<Picker>,
+    repo_paths: Vec<PathBuf>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    _picker_subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
     pub fn new(repo: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let footer = title_bar::repo_picker_footer(cx.entity().downgrade());
+        let repo_picker = cx.new(|cx| {
+            Picker::new(
+                Icons::FolderGit2,
+                || tr().search_repositories.clone(),
+                px(520.),
+                window,
+                cx,
+            )
+            .with_footer(footer)
+        });
+        let picker_subscriptions = vec![
+            cx.subscribe_in(
+                &repo_picker,
+                window,
+                |this, _, event: &PickerEvent, window, cx| {
+                    if let PickerEvent::Confirm { entry, secondary } = event
+                        && let Some(path) = this.repo_paths.get(*entry).cloned()
+                    {
+                        this.open_path(path, *secondary, window, cx);
+                    }
+                },
+            ),
+            cx.observe(&repo_picker, |_, _, cx| cx.notify()),
+            cx.observe_global_in::<RecentRepos>(window, |this, window, cx| {
+                this.refresh_repo_picker(window, cx)
+            }),
+        ];
         let mut this = Self {
             repo: None,
             repo_name: SharedString::default(),
@@ -83,14 +117,41 @@ impl Workspace {
             start: None,
             review: None,
             settings: None,
+            repo_picker,
+            repo_paths: Vec::new(),
             focus: cx.focus_handle(),
             _subscriptions: Vec::new(),
+            _picker_subscriptions: picker_subscriptions,
         };
         if let Some(path) = repo {
             this.open_repo(&path, true, window, cx);
         }
+        this.refresh_repo_picker(window, cx);
         this.update_title(window, cx);
         this
+    }
+
+    fn refresh_repo_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.repo_path();
+        let home = dirs::home_dir();
+        let repos = recent(cx).repos();
+        let checked = repos.iter().position(|r| Some(r.path.as_path()) == current);
+        let entries: Vec<PickerEntry> = repos
+            .iter()
+            .map(|r| PickerEntry {
+                label: repo_label(&r.path),
+                detail: display_path(&r.path, home.as_deref()),
+                search_detail: true,
+            })
+            .collect();
+        self.repo_paths = repos.iter().map(|r| r.path.clone()).collect();
+        self.repo_picker.update(cx, |picker, cx| {
+            picker.set_entries(entries, checked, window, cx)
+        });
+    }
+
+    fn close_repo_picker(&mut self, cx: &mut Context<Self>) {
+        self.repo_picker.update(cx, |picker, cx| picker.close(cx));
     }
 
     pub fn repo_path(&self) -> Option<&Path> {
@@ -139,6 +200,7 @@ impl Workspace {
             self.open_review(source, window, cx);
         }
         crate::window_registry::set_repo(window, self.repo_path().map(Path::to_path_buf), cx);
+        self.refresh_repo_picker(window, cx);
         self.update_title(window, cx);
         cx.notify();
     }
@@ -152,8 +214,12 @@ impl Workspace {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        self.close_screen_pickers(cx);
         cx.global_mut::<RecentRepos>()
             .set_last_review(repo.root(), StoredReview::from_source(&source));
+        if let (Some(start), ReviewSource::Branches { target, source }) = (&self.start, &source) {
+            start.update(cx, |start, cx| start.select_branches(target, source, cx));
+        }
         let review = cx.new(|cx| ReviewView::new(repo, source, window, cx));
         let subscription = cx.subscribe_in(
             &review,
@@ -163,6 +229,7 @@ impl Workspace {
                     this.update_title(window, cx);
                     cx.notify();
                 }
+                ReviewEvent::Open(source) => this.open_review(source.clone(), window, cx),
             },
         );
         self._subscriptions.truncate(1);
@@ -190,7 +257,17 @@ impl Workspace {
         }
     }
 
+    fn close_screen_pickers(&self, cx: &mut Context<Self>) {
+        if let Some(start) = &self.start {
+            start.update(cx, |start, cx| start.close_pickers(cx));
+        }
+        if let Some(review) = &self.review {
+            review.update(cx, |review, cx| review.close_branch_pickers(cx));
+        }
+    }
+
     pub fn show_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_screen_pickers(cx);
         if self.screen == Screen::Settings {
             self.screen = self.previous_screen;
         } else {
@@ -219,6 +296,7 @@ impl Workspace {
         if self.repo.is_none() {
             return;
         }
+        self.close_screen_pickers(cx);
         if let Some(start) = &self.start {
             start.update(cx, |start, cx| start.refresh(window, cx));
         }
@@ -228,6 +306,7 @@ impl Workspace {
 
     fn back_to_review(&mut self, cx: &mut Context<Self>) {
         if self.review.is_some() {
+            self.close_screen_pickers(cx);
             self.screen = Screen::Review;
             cx.notify();
         }
@@ -249,6 +328,42 @@ impl Workspace {
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 this.open_path(path, true, window, cx)
+            });
+        })
+        .detach();
+    }
+
+    pub fn prompt_add_repositories(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr().open.clone()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let scanned = folder.clone();
+            let result = cx
+                .background_spawn(async move { git_repo::find_repositories(&scanned) })
+                .await;
+            let _ = this.update_in(cx, |_, window, cx| {
+                let s = tr();
+                let notification = match result {
+                    Ok(found) => match cx.global_mut::<RecentRepos>().add(&found) {
+                        0 => Notification::info(s.no_new_repositories.clone()),
+                        added => Notification::success(s.repositories_added(added)),
+                    },
+                    Err(err) => {
+                        log::warn!("scan {}: {err}", folder.display());
+                        Notification::error(err.to_string()).title(s.scan_failed.clone())
+                    }
+                };
+                window.push_notification(notification, cx);
             });
         })
         .detach();
@@ -309,12 +424,25 @@ impl Workspace {
                     .child(s.welcome_hint.clone()),
             )
             .child(
-                Button::new("welcome-open")
-                    .primary()
-                    .icon(IconName::FolderOpen)
-                    .label(s.open_repository.clone())
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.prompt_open_repository(window, cx)),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("welcome-open")
+                            .primary()
+                            .icon(IconName::FolderOpen)
+                            .label(s.open_repository.clone())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.prompt_open_repository(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("welcome-add-repositories")
+                            .outline()
+                            .icon(IconName::Plus)
+                            .label(s.add_repositories_ellipsis.clone())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.prompt_add_repositories(window, cx)
+                            })),
                     ),
             )
             .child(list)
@@ -357,6 +485,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &OpenRepository, window, cx| {
                 this.prompt_open_repository(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &AddRepositories, window, cx| {
+                this.prompt_add_repositories(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &NewReview, window, cx| this.new_review(window, cx)))
             .on_action(
                 cx.listener(|this, _: &ShowSettings, window, cx| this.show_settings(window, cx)),
@@ -378,5 +509,21 @@ impl Render for Workspace {
                     },
                 ))
             })
+    }
+}
+
+fn repo_label(path: &Path) -> SharedString {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+        .into()
+}
+
+fn display_path(path: &Path, home: Option<&Path>) -> SharedString {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()).into()
+        }
+        _ => path.display().to_string().into(),
     }
 }

@@ -21,9 +21,11 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   a debounced save, `flush_all` at quit.
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
-- `diff_panel.rs` — the review header (branches with pull buttons, the MR, or the work
-  tree), the file toolbar and the `Diff` element; the sliding, resizable tree panel;
-  `Render for ReviewView`.
+- `diff_panel.rs` — the review header (branch pickers with pull buttons, the MR, or the work
+  tree; viewed progress), the file toolbar and the `Diff` element; the sliding, resizable tree
+  panel; `Render for ReviewView`.
+- `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
+  branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
   general and outdated discussions.
 
@@ -83,6 +85,14 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
   so comment positions follow GitLab's real diff rather than the whitespace-blind one.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
+- Header branch chips: the name opens a fuzzy branch picker for that side only (the branch
+  list is read with `git for-each-ref` each time a picker opens, off the UI thread);
+  picking emits `ReviewEvent::Open` with that side replaced and the other kept, and the
+  window opens it as a new review exactly like the start screen does, recording it as the
+  repository's last review. Picking the other side's branch, or the current one, does
+  nothing.
+- The review header shows viewed progress before the refresh button (`viewed/total` and a
+  thin bar, the count in the tooltip), read from `progress()`; the title bar does not.
 
 ## Decisions
 

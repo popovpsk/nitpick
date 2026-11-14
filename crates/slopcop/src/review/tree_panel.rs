@@ -6,9 +6,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex,
-    progress::Progress as ProgressBar,
-    v_flex,
+    h_flex, v_flex,
 };
 use review_core::FileStatus;
 use ui_resources::Icons;
@@ -28,20 +26,13 @@ impl ReviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let (viewed, total) = self.progress();
+        let (_, total) = self.progress();
         let s = tr();
         let theme = cx.theme();
-        let percent = if total == 0 {
-            0.
-        } else {
-            viewed as f32 * 100. / total as f32
-        };
         let header = v_flex()
             .flex_none()
             .px_2()
-            .pt_2()
-            .pb_1()
-            .gap_1()
+            .py_1p5()
             .border_b_1()
             .border_color(theme.border)
             .child(
@@ -59,7 +50,7 @@ impl ReviewView {
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{viewed}/{total}")),
+                            .child(total.to_string()),
                     )
                     .child(
                         Button::new("tree-expand-all")
@@ -77,8 +68,7 @@ impl ReviewView {
                             .tooltip(s.collapse_all.clone())
                             .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
                     ),
-            )
-            .child(ProgressBar::new("tree-progress").value(percent).h(px(3.)));
+            );
 
         let rows = self.rows.clone();
         let selected = self.selected_row;
