@@ -17,6 +17,7 @@ use crate::workspace::{
     AddRepositories, CloseWindow, NewReview, NewWindow, OpenRepository, ShowNextWindowTab,
     ShowPreviousWindowTab, ShowSettings,
 };
+use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
@@ -221,6 +222,30 @@ pub static COMMANDS: &[Command] = &[
         defaults: &["secondary-w"],
         action: || Box::new(CloseWindow),
         title: |s| s.close_window.clone(),
+    },
+    Command {
+        id: "window.zoom_in",
+        group: Group::Window,
+        context: None,
+        defaults: &["secondary-=", "secondary-+"],
+        action: || Box::new(ZoomIn),
+        title: |s| s.cmd_zoom_in.clone(),
+    },
+    Command {
+        id: "window.zoom_out",
+        group: Group::Window,
+        context: None,
+        defaults: &["secondary--"],
+        action: || Box::new(ZoomOut),
+        title: |s| s.cmd_zoom_out.clone(),
+    },
+    Command {
+        id: "window.zoom_reset",
+        group: Group::Window,
+        context: None,
+        defaults: &["secondary-0"],
+        action: || Box::new(ZoomReset),
+        title: |s| s.cmd_zoom_reset.clone(),
     },
     Command {
         id: "window.next_tab",

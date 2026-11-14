@@ -34,6 +34,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
   settings change, and `set_repository` reloads both each time the screen opens.
 - `localization.rs` — resolves the saved language and exposes `tr()`.
+- `zoom.rs` — the zoom actions (code text size, global handlers so they work with nothing
+  focused) and re-applying the theme when `ui_scale` or `code_zoom` change.
 - `keymap.rs` — `COMMANDS`, the registry of every user-facing shortcut (id, group, key
   context, default keys with `secondary-` for ⌘/Ctrl, action, title); `init` and `apply`
   build the live keymap; `keys`, `conflict`, `assign`, `reset` for the settings screen.
@@ -52,6 +54,12 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `workspace/`, `review/` — see their `doc.md`.
 
 ## Rules
+
+- Applying a theme first resets the metrics a theme file may set (font sizes and families,
+  radii, window radius, shadow) to gpui-component's defaults, since a theme only writes the
+  fields it has: without the reset, Matrix's square corners stayed after switching away.
+  Then `ui_scale` scales the UI font size (the window's rem) and `code_zoom` adds to the
+  mono font size the Diff uses, so both survive theme changes and previews.
 
 - Shortcuts: modules no longer bind their own keys; `keymap::init` runs after every other
   `init`, snapshots what gpui-component and the fixed bindings registered (`BaseKeymap`),

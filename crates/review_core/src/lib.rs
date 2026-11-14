@@ -9,7 +9,7 @@ pub use fuzzy::{FuzzyMatch, Ranked, fuzzy_match, highlight_ranges, rank};
 pub use hidden::{HideRules, RuleError};
 pub use language::language_override;
 pub use line_map::{Change, LineKind, LineMap, Side, line_maps};
-pub use tree::{FileStatus, FileTree, Node, NodeKind, Progress, Row, TreeFile};
+pub use tree::{FileStatus, FileTree, Node, NodeKind, Progress, Row, TreeFile, TreeShape};
 pub use viewed::{ViewedStore, fingerprint, write_atomic};
 
 #[cfg(test)]

@@ -26,11 +26,11 @@ use gpui_component::{
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
-use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side};
+use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side, TreeShape};
 
 use crate::localization::tr;
 use crate::settings_store::{
-    DiffLayout, SettingsStore, TREE_WIDTH_RANGE, settings, update_settings,
+    DiffLayout, SettingsStore, TREE_WIDTH_RANGE, TreeMode, settings, update_settings,
 };
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
@@ -60,7 +60,7 @@ actions!(
 
 const TREE_SLIDE: Duration = Duration::from_millis(200);
 const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
-const AUTO_MARK_DWELL: Duration = Duration::from_millis(1000);
+const AUTO_MARK_DWELL: Duration = Duration::from_millis(500);
 const CROSS_HINT_TIMEOUT: Duration = Duration::from_millis(3000);
 
 static TREE_WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -73,6 +73,8 @@ pub struct TreeRow {
     pub expanded: bool,
     pub name: SharedString,
     pub path: SharedString,
+    pub detail: Option<SharedString>,
+    pub muted: bool,
     pub file: Option<usize>,
     pub status: FileStatus,
     pub progress: Progress,
@@ -85,6 +87,12 @@ pub enum CrossHint {
     PressForPreviousFile,
     NoNextFile,
     NoPreviousFile,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct TreeView {
+    shape: TreeShape,
+    show_hidden: bool,
 }
 
 #[derive(Clone)]
@@ -188,6 +196,7 @@ pub enum ReviewEvent {
     Changed,
     Open(ReviewSource),
     OpenSettings,
+    EditHiddenFiles,
 }
 
 impl EventEmitter<ReviewEvent> for ReviewView {}
@@ -205,6 +214,9 @@ pub struct ReviewView {
     viewed: Vec<bool>,
     tree: Arc<FileTree>,
     hidden: Rc<Vec<HiddenFile>>,
+    hidden_mask: Vec<bool>,
+    nav_order: Vec<usize>,
+    tree_view: TreeView,
     hide_patterns: (Vec<String>, Vec<String>),
     viewed_store: Entity<SharedViewed>,
     loaded_whitespace: bool,
@@ -283,6 +295,9 @@ impl ReviewView {
             viewed: Vec::new(),
             tree: Arc::default(),
             hidden: Rc::default(),
+            hidden_mask: Vec::new(),
+            nav_order: Vec::new(),
+            tree_view: TreeView::default(),
             hide_patterns: (Vec::new(), Vec::new()),
             viewed_store,
             loaded_whitespace: settings(cx).ignore_whitespace,
@@ -332,7 +347,7 @@ impl ReviewView {
     }
 
     pub fn progress(&self) -> (usize, usize) {
-        let order = self.tree.file_order();
+        let order = &self.nav_order;
         (
             order
                 .iter()
@@ -395,20 +410,63 @@ impl ReviewView {
             .iter()
             .map(|h| h.ix)
             .ne(self.hidden.iter().map(|h| h.ix));
-        self.tree = if hidden.is_empty() {
+        let mut mask = vec![false; review.files.len()];
+        for file in &hidden {
+            mask[file.ix] = true;
+        }
+        self.hidden_mask = mask;
+        self.hidden = Rc::new(hidden);
+        self.rebuild_tree(cx);
+        changed
+    }
+
+    fn tree_view(cx: &App) -> TreeView {
+        let current = settings(cx);
+        TreeView {
+            shape: TreeShape {
+                flat: current.tree_mode == TreeMode::List,
+                compact: current.compact_folders,
+            },
+            show_hidden: current.show_hidden_files,
+        }
+    }
+
+    fn rebuild_tree(&mut self, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let view = Self::tree_view(cx);
+        self.tree_view = view;
+        let mask = &self.hidden_mask;
+        let no_hidden = !mask.iter().any(|h| *h);
+        self.tree = if view.shape == TreeShape::default() && (no_hidden || view.show_hidden) {
             review.tree.clone()
         } else {
-            let mut skip = vec![false; review.files.len()];
-            for file in &hidden {
-                skip[file.ix] = true;
-            }
-            Arc::new(FileTree::build_with(
+            Arc::new(FileTree::build_shaped(
                 &model::tree_files(&review.files),
-                |ix| !skip[ix],
+                |ix| view.show_hidden || !mask.get(ix).copied().unwrap_or(false),
+                view.shape,
             ))
         };
-        self.hidden = Rc::new(hidden);
-        changed
+        self.nav_order = self
+            .tree
+            .file_order()
+            .iter()
+            .copied()
+            .filter(|&f| self.is_tracked(f))
+            .collect();
+    }
+
+    pub fn is_tracked(&self, file: usize) -> bool {
+        !self.hidden_mask.get(file).copied().unwrap_or(false)
+    }
+
+    pub fn nav_len(&self) -> usize {
+        self.nav_order.len()
+    }
+
+    pub fn nav_position(&self, file: usize) -> Option<usize> {
+        self.nav_order.iter().position(|&f| f == file)
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -498,7 +556,7 @@ impl ReviewView {
                     let target = kept_path
                         .and_then(|path| review.file_index(&path))
                         .or_else(|| self.first_unviewed())
-                        .or_else(|| self.tree.file_order().first().copied());
+                        .or_else(|| self.nav_order.first().copied());
                     self.current_file = None;
                     if let Some(ix) = target {
                         self.show_file(ix, cx);
@@ -574,11 +632,18 @@ impl ReviewView {
         self.sync_diff_mode(cx);
         let patterns_changed = settings(cx).hidden_files != self.hide_patterns.0
             || settings(cx).repo_hidden(self.repo.root()) != self.hide_patterns.1.as_slice();
+        if !patterns_changed && Self::tree_view(cx) != self.tree_view {
+            self.rebuild_tree(cx);
+            self.rebuild_rows();
+            if let Some(row) = self.selected_row {
+                self.tree_scroll
+                    .scroll_to_item(row, gpui::ScrollStrategy::Center);
+            }
+            cx.emit(ReviewEvent::Changed);
+        }
         if patterns_changed && self.apply_hide_rules(cx) {
             self.rebuild_rows();
-            let current_hidden = self
-                .current_file
-                .is_some_and(|f| self.tree.file_node(f).is_none());
+            let current_hidden = self.current_file.is_some_and(|f| !self.is_tracked(f));
             if current_hidden || self.current_file.is_none() {
                 let next = self
                     .current_file
@@ -588,7 +653,7 @@ impl ReviewView {
                             .and_then(|f| self.visible_neighbour(f, true))
                     })
                     .or_else(|| self.first_unviewed())
-                    .or_else(|| self.tree.file_order().first().copied());
+                    .or_else(|| self.nav_order.first().copied());
                 self.current_file = None;
                 match next {
                     Some(ix) => self.show_file(ix, cx),
@@ -605,11 +670,7 @@ impl ReviewView {
 
     fn first_unviewed(&self) -> Option<usize> {
         self.review.as_ref()?;
-        self.tree
-            .file_order()
-            .iter()
-            .copied()
-            .find(|&ix| !self.viewed[ix])
+        self.nav_order.iter().copied().find(|&ix| !self.viewed[ix])
     }
 
     fn rebuild_rows(&mut self) {
@@ -617,7 +678,11 @@ impl ReviewView {
             self.rows = Rc::default();
             return;
         };
-        let progress = self.tree.progress(&self.viewed);
+        let mask = &self.hidden_mask;
+        let progress = self
+            .tree
+            .progress_tracked(&self.viewed, |f| !mask.get(f).copied().unwrap_or(false));
+        let flat = self.tree_view.shape.flat;
         let rows: Vec<TreeRow> = self
             .tree
             .rows(&self.collapsed)
@@ -632,6 +697,14 @@ impl ReviewView {
                     expanded: row.expanded,
                     name: node.name.clone().into(),
                     path: node.path.clone().into(),
+                    detail: flat
+                        .then(|| node.path.rsplit_once('/').map(|(dir, _)| dir))
+                        .flatten()
+                        .map(|dir| SharedString::from(dir.to_string())),
+                    muted: match file {
+                        Some(f) => mask.get(f).copied().unwrap_or(false),
+                        None => progress[row.node].total == 0,
+                    },
                     file,
                     status: file.map_or(FileStatus::Modified, |f| review.files[f].status),
                     progress: progress[row.node],
@@ -665,17 +738,22 @@ impl ReviewView {
         if self.current_file != Some(ix) {
             if let Some(left) = self.current_file
                 && settings(cx).auto_mark_viewed
-                && self
+            {
+                let dwelled = self
                     .shown_at
-                    .is_some_and(|at| at.elapsed() >= AUTO_MARK_DWELL)
-                && self.tree.file_node(left).is_some()
-                && !self.viewed.get(left).copied().unwrap_or(true)
-                && !review.files.get(left).is_some_and(|f| {
+                    .is_some_and(|at| at.elapsed() >= AUTO_MARK_DWELL);
+                let tracked = self.is_tracked(left);
+                let unviewed = !self.viewed.get(left).copied().unwrap_or(true);
+                let kept = review.files.get(left).is_some_and(|f| {
                     self.kept_unviewed
                         .contains(&(f.path.clone(), f.fingerprint.clone()))
-                })
-            {
-                self.set_viewed(&[left], true, cx);
+                });
+                log::debug!(
+                    "auto-mark {left}: dwelled {dwelled}, tracked {tracked}, unviewed {unviewed}, kept unviewed {kept}"
+                );
+                if dwelled && tracked && unviewed && !kept {
+                    self.set_viewed(&[left], true, cx);
+                }
             }
             self.shown_at = Some(Instant::now());
             self.change_cursor = None;
@@ -804,7 +882,7 @@ impl ReviewView {
     }
 
     fn step_file(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let order = self.tree.file_order();
+        let order = &self.nav_order;
         let target = match self.current_file {
             Some(current) => self.visible_neighbour(current, delta > 0),
             None if delta > 0 => order.first().copied(),
@@ -816,7 +894,7 @@ impl ReviewView {
     }
 
     fn visible_neighbour(&self, from: usize, forward: bool) -> Option<usize> {
-        let order = self.tree.file_order();
+        let order = &self.nav_order;
         if let Some(pos) = order.iter().position(|&f| f == from) {
             return if forward {
                 order.get(pos + 1).copied()
@@ -824,9 +902,13 @@ impl ReviewView {
                 pos.checked_sub(1).map(|p| order[p])
             };
         }
-        let all = self.review.as_ref()?.tree.file_order();
+        let all = if self.tree.file_node(from).is_some() {
+            self.tree.file_order()
+        } else {
+            self.review.as_ref()?.tree.file_order()
+        };
         let pos = all.iter().position(|&f| f == from)?;
-        let visible = |f: &&usize| self.tree.file_node(**f).is_some();
+        let visible = |f: &&usize| self.is_tracked(**f) && self.tree.file_node(**f).is_some();
         if forward {
             all[pos + 1..].iter().find(visible).copied()
         } else {
@@ -872,7 +954,7 @@ impl ReviewView {
     }
 
     fn next_unviewed_after(&self, ix: usize) -> Option<usize> {
-        let order = self.tree.file_order();
+        let order = &self.nav_order;
         let (after, before) = match order.iter().position(|&x| x == ix) {
             Some(pos) => (&order[pos + 1..], &order[..pos]),
             None => {
@@ -895,7 +977,8 @@ impl ReviewView {
         if let Some(file) = row.file {
             self.toggle_file_viewed(file, cx);
         } else if self.review.is_some() {
-            let files = self.tree.files_under(row.node);
+            let mut files = self.tree.files_under(row.node);
+            files.retain(|&f| self.is_tracked(f));
             let viewed = !row.progress.is_complete();
             self.set_viewed(&files, viewed, cx);
         }

@@ -18,6 +18,7 @@ pub mod settings_view;
 pub mod shortcut_dialog;
 pub mod window_registry;
 pub mod workspace;
+pub mod zoom;
 
 const TABBING_IDENTIFIER: &str = "lgtm-ish";
 
@@ -101,6 +102,7 @@ fn main() {
 
         settings_view::init(cx);
         updater::init(cx, env!("CARGO_PKG_VERSION"), true);
+        zoom::init(cx);
         keymap::init(cx);
 
         cx.on_window_closed(|cx, id| {

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{App, Global};
+use gpui::{App, Global, px};
 use gpui_component::{
     Theme, ThemeRegistry, WindowExt as _, highlighter::HighlightTheme, notification::Notification,
 };
@@ -32,6 +32,14 @@ pub enum TreeSide {
     #[default]
     Left,
     Right,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TreeMode {
+    #[default]
+    Tree,
+    List,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,11 +101,29 @@ pub struct Settings {
     #[serde(default)]
     pub keybindings: BTreeMap<String, Vec<String>>,
     #[serde(default)]
+    pub tree_mode: TreeMode,
+    #[serde(default)]
+    pub show_hidden_files: bool,
+    #[serde(default = "default_true")]
+    pub compact_folders: bool,
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: u16,
+    #[serde(default)]
+    pub code_zoom: i16,
+    #[serde(default)]
     pub gitlab_url: String,
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
     #[serde(default)]
     pub syntax_colors: SyntaxPalettes,
+}
+
+pub const UI_SCALE_RANGE: (u16, u16) = (80, 150);
+pub const UI_SCALES: [u16; 6] = [90, 100, 110, 125, 140, 150];
+pub const CODE_ZOOM_RANGE: (i16, i16) = (-5, 14);
+
+fn default_ui_scale() -> u16 {
+    100
 }
 
 fn default_true() -> bool {
@@ -124,6 +150,11 @@ impl Default for Settings {
             hidden_files: Vec::new(),
             repo_hidden_files: BTreeMap::new(),
             keybindings: BTreeMap::new(),
+            tree_mode: TreeMode::Tree,
+            show_hidden_files: false,
+            compact_folders: true,
+            ui_scale: default_ui_scale(),
+            code_zoom: 0,
             gitlab_url: String::new(),
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
@@ -264,7 +295,34 @@ pub fn update_settings(cx: &mut App, change: impl FnOnce(&mut Settings)) {
     cx.refresh_windows();
 }
 
+fn reset_theme_metrics(cx: &mut App) {
+    let defaults = Theme::default();
+    let theme = Theme::global_mut(cx);
+    theme.font_size = defaults.font_size;
+    theme.font_family = defaults.font_family.clone();
+    theme.mono_font_size = defaults.mono_font_size;
+    theme.mono_font_family = defaults.mono_font_family.clone();
+    theme.radius = defaults.radius;
+    theme.radius_lg = defaults.radius_lg;
+    theme.window_radius = defaults.window_radius;
+    theme.shadow = defaults.shadow;
+}
+
+fn apply_zoom(cx: &mut App) {
+    let (scale, code) = {
+        let current = settings(cx);
+        (current.ui_scale, current.code_zoom)
+    };
+    let theme = Theme::global_mut(cx);
+    let (min, max) = UI_SCALE_RANGE;
+    theme.font_size *= scale.clamp(min, max) as f32 / 100.;
+    let (min, max) = CODE_ZOOM_RANGE;
+    let mono = f32::from(theme.mono_font_size) + code.clamp(min, max) as f32;
+    theme.mono_font_size = px(mono.max(6.));
+}
+
 pub fn apply_theme(choice: &ThemeChoice, cx: &mut App) {
+    reset_theme_metrics(cx);
     match choice {
         ThemeChoice::System => Theme::sync_system_appearance(None, cx),
         ThemeChoice::Named(name) => {
@@ -285,6 +343,7 @@ pub fn apply_theme(choice: &ThemeChoice, cx: &mut App) {
             Theme::change(mode, None, cx);
         }
     }
+    apply_zoom(cx);
     cx.refresh_windows();
 }
 

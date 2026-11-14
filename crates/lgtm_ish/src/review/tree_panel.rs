@@ -1,26 +1,195 @@
+use std::rc::Rc;
+
 use gpui::{
-    Context, Entity, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    Anchor, AnyElement, Context, Entity, HighlightStyle, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    StyledText, Window, div, prelude::FluentBuilder as _, px, relative, rems, uniform_list,
 };
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    StyledExt as _,
+    button::{Button, ButtonGroup, ButtonVariants as _},
     h_flex,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    popover::{Popover, PopoverState},
+    switch::Switch,
     v_flex,
 };
 use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
 use super::{
-    CollapseSelected, ExpandSelected, NextFile, OpenSelected, PreviousFile, ReviewEvent,
-    ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow,
+    CollapseSelected, ExpandSelected, HiddenFile, NextFile, OpenSelected, PreviousFile,
+    ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow,
 };
 use crate::localization::tr;
-use crate::settings_store::{HideScope, add_hide_pattern};
+use crate::settings_store::{HideScope, TreeMode, add_hide_pattern, settings, update_settings};
 
-const ROW_HEIGHT: f32 = 26.;
+const ROW_HEIGHT: f32 = 1.625;
+const HIDDEN_ROW: f32 = 1.625;
+
+fn view_options_panel(
+    view: &Entity<ReviewView>,
+    hidden: &Rc<Vec<HiddenFile>>,
+    cx: &mut Context<PopoverState>,
+) -> AnyElement {
+    let s = tr();
+    let current = settings(cx);
+    let flat = current.tree_mode == TreeMode::List;
+    let show_hidden = current.show_hidden_files;
+    let compact = current.compact_folders;
+    let theme = cx.theme();
+    let popover = cx.entity();
+    let rows = hidden.len();
+    let list_view = view.clone();
+    let list_hidden = hidden.clone();
+    let settings_view = view.clone();
+    let option = |label: SharedString, control: AnyElement| {
+        h_flex()
+            .w_full()
+            .gap_3()
+            .items_center()
+            .justify_between()
+            .child(div().text_sm().child(label))
+            .child(control)
+    };
+    v_flex()
+        .w(px(340.))
+        .gap_2()
+        .child(
+            ButtonGroup::new("tree-mode")
+                .small()
+                .outline()
+                .w_full()
+                .child(
+                    Button::new("tree-mode-tree")
+                        .flex_1()
+                        .icon(Icon::new(Icons::ListTree))
+                        .label(s.tree_mode_tree.clone())
+                        .selected(!flat),
+                )
+                .child(
+                    Button::new("tree-mode-list")
+                        .flex_1()
+                        .icon(IconName::Menu)
+                        .label(s.tree_mode_list.clone())
+                        .selected(flat),
+                )
+                .on_click(|clicks: &Vec<usize>, _, cx| {
+                    let mode = if clicks.first() == Some(&1) {
+                        TreeMode::List
+                    } else {
+                        TreeMode::Tree
+                    };
+                    update_settings(cx, |s| s.tree_mode = mode);
+                }),
+        )
+        .child(div().h(px(1.)).w_full().bg(theme.border))
+        .child(option(
+            s.compact_folders.clone(),
+            Switch::new("tree-compact")
+                .small()
+                .checked(compact && !flat)
+                .disabled(flat)
+                .on_click(|checked, _, cx| {
+                    let checked = *checked;
+                    update_settings(cx, move |s| s.compact_folders = checked)
+                })
+                .into_any_element(),
+        ))
+        .child(option(
+            s.show_hidden_files.clone(),
+            Switch::new("tree-show-hidden")
+                .small()
+                .checked(show_hidden)
+                .on_click(|checked, _, cx| {
+                    let checked = *checked;
+                    update_settings(cx, move |s| s.show_hidden_files = checked)
+                })
+                .into_any_element(),
+        ))
+        .when(rows > 0 && !show_hidden, |el| {
+            el.child(div().h(px(1.)).w_full().bg(theme.border)).child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(s.hidden_count(rows)),
+                    )
+                    .child(
+                        uniform_list("hidden-files-list", rows, move |range, _, cx| {
+                            let hover = cx.theme().list_hover;
+                            let muted = cx.theme().muted_foreground;
+                            let highlight = HighlightStyle {
+                                color: Some(cx.theme().blue),
+                                ..Default::default()
+                            };
+                            range
+                                .map(|ix| {
+                                    let file = &list_hidden[ix];
+                                    let file_ix = file.ix;
+                                    let view = list_view.clone();
+                                    let popover = popover.clone();
+                                    h_flex()
+                                        .id(("hidden-file", ix))
+                                        .h(rems(HIDDEN_ROW))
+                                        .px_1p5()
+                                        .gap_2()
+                                        .items_center()
+                                        .rounded_sm()
+                                        .cursor_pointer()
+                                        .hover(move |style| style.bg(hover))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .whitespace_nowrap()
+                                                .text_sm()
+                                                .child(
+                                                    StyledText::new(file.path.clone())
+                                                        .with_highlights(file.matched.iter().map(
+                                                            |range| (range.clone(), highlight),
+                                                        )),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_xs()
+                                                .text_color(muted)
+                                                .child(file.rule.clone()),
+                                        )
+                                        .on_click(move |_, window, cx| {
+                                            view.update(cx, |this, cx| this.show_file(file_ix, cx));
+                                            popover
+                                                .update(cx, |state, cx| state.dismiss(window, cx));
+                                        })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .h(rems(rows.min(8) as f32 * HIDDEN_ROW)),
+                    ),
+            )
+        })
+        .child(div().h(px(1.)).w_full().bg(theme.border))
+        .child(
+            h_flex().justify_end().child(
+                Button::new("edit-hidden-files")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Settings)
+                    .label(s.edit_hidden_files.clone())
+                    .on_click(move |_, _, cx| {
+                        settings_view.update(cx, |_, cx| cx.emit(ReviewEvent::EditHiddenFiles))
+                    }),
+            ),
+        )
+        .into_any_element()
+}
 
 fn hide_menu(
     menu: PopupMenu,
@@ -68,7 +237,7 @@ fn hide_menu(
     menu.separator()
         .item(
             PopupMenuItem::new(s.edit_hidden_files.clone()).on_click(move |_, _, cx| {
-                settings_view.update(cx, |_, cx| cx.emit(ReviewEvent::OpenSettings))
+                settings_view.update(cx, |_, cx| cx.emit(ReviewEvent::EditHiddenFiles))
             }),
         )
 }
@@ -80,8 +249,29 @@ impl ReviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let (_, total) = self.progress();
         let s = tr();
+        let flat = self.tree_view.shape.flat;
+        let hidden_count = self.hidden.len();
+        let show_hidden = self.tree_view.show_hidden;
+        let view_options = {
+            let view = cx.entity();
+            let hidden = self.hidden.clone();
+            Popover::new("tree-view-options")
+                .anchor(Anchor::TopRight)
+                .trigger(
+                    Button::new("tree-view-options-button")
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::new(if hidden_count > 0 && !show_hidden {
+                            Icons::EyeOff
+                        } else {
+                            Icons::Eye
+                        }))
+                        .when(hidden_count > 0, |b| b.label(hidden_count.to_string()))
+                        .tooltip(s.tree_view_options.clone()),
+                )
+                .content(move |_, _, cx| view_options_panel(&view, &hidden, cx))
+        };
         let theme = cx.theme();
         let header = v_flex()
             .flex_none()
@@ -100,28 +290,25 @@ impl ReviewView {
                             .font_semibold()
                             .child(s.files.clone()),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(total.to_string()),
-                    )
-                    .child(
-                        Button::new("tree-expand-all")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(Icons::ChevronsUpDown))
-                            .tooltip(s.expand_all.clone())
-                            .on_click(cx.listener(|this, _, _, cx| this.expand_all(cx))),
-                    )
-                    .child(
-                        Button::new("tree-collapse-all")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(Icons::ChevronsDownUp))
-                            .tooltip(s.collapse_all.clone())
-                            .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
-                    ),
+                    .when(!flat, |el| {
+                        el.child(
+                            Button::new("tree-expand-all")
+                                .ghost()
+                                .xsmall()
+                                .icon(Icon::new(Icons::ChevronsUpDown))
+                                .tooltip(s.expand_all.clone())
+                                .on_click(cx.listener(|this, _, _, cx| this.expand_all(cx))),
+                        )
+                        .child(
+                            Button::new("tree-collapse-all")
+                                .ghost()
+                                .xsmall()
+                                .icon(Icon::new(Icons::ChevronsDownUp))
+                                .tooltip(s.collapse_all.clone())
+                                .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
+                        )
+                    })
+                    .child(view_options),
             );
 
         let rows = self.rows.clone();
@@ -181,7 +368,9 @@ impl ReviewView {
         let complete = row.progress.is_complete();
         let partial = row.progress.is_partial();
         let is_current = row.file.is_some() && row.file == current;
-        let text_color = if complete {
+        let text_color = if row.muted {
+            theme.muted_foreground.opacity(0.6)
+        } else if complete {
             theme.muted_foreground
         } else {
             theme.sidebar_foreground
@@ -204,7 +393,11 @@ impl ReviewView {
                 FileStatus::Renamed => (Icons::FileDiff, theme.blue),
                 FileStatus::Modified => (Icons::FileDiff, theme.yellow),
             };
-            Icon::new(name).text_color(color)
+            Icon::new(name).text_color(if row.muted {
+                theme.muted_foreground.opacity(0.6)
+            } else {
+                color
+            })
         };
         let chevron = if row.is_dir {
             Icon::new(if row.expanded {
@@ -262,7 +455,7 @@ impl ReviewView {
         h_flex()
             .id(("tree-row", ix))
             .group("tree-row")
-            .h(px(ROW_HEIGHT))
+            .h(rems(ROW_HEIGHT))
             .w_full()
             .pl(px(6. + row.depth as f32 * INDENT))
             .pr_1()
@@ -286,8 +479,21 @@ impl ReviewView {
                     .text_ellipsis()
                     .whitespace_nowrap()
                     .when(complete && !row.is_dir, |el| el.line_through())
+                    .when(row.muted, |el| el.italic())
                     .child(row.name.clone()),
             )
+            .children(row.detail.clone().map(|detail| {
+                div()
+                    .flex_shrink(1.)
+                    .min_w_0()
+                    .max_w(relative(0.5))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(detail)
+            }))
             .children(comments)
             .children(mark)
             .child(

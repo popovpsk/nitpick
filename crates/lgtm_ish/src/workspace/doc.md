@@ -26,6 +26,8 @@ window options and opening windows (`main.rs`).
   nothing in the window may be focused, so it would not reach `Workspace`. Every screen
   switch ends in `focus_screen`: the settings screen, the review's tree (its diff when the
   tree is hidden), or the window root, so menu items and shortcuts keep reaching the window.
+  As a safety net, a render that finds focus nowhere inside the window (and no dialog or
+  sheet open, while the window is active) focuses the current screen on the next frame.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with
   `~` for the home dir; both are matched, the name preferred), in `recent.json` order, the
   current one checked. Enter or a click switches this window to the repository;

@@ -18,7 +18,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{DropdownMenu as _, PopupMenuItem},
     notification::Notification,
-    setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+    setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex,
 };
 use ui_resources::Icons;
@@ -28,11 +28,12 @@ use ui_resources::themes::ZedThemeFile;
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
-    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
-    end_syntax_preview, preview_syntax_colors, repo_key, settings, syntax_palette_names,
-    update_settings,
+    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, apply_saved_theme,
+    apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
+    syntax_palette_names, update_settings,
 };
 use crate::shortcut_dialog::{self, keystroke_element, where_label};
+use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 
 actions!(settings_view, [CloseSettings]);
 
@@ -206,6 +207,13 @@ pub enum SettingsEvent {
     Close,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    HiddenFiles,
+}
+
+const HIDDEN_FILES_GROUP: usize = 2;
+
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl Focusable for SettingsView {
@@ -216,6 +224,8 @@ impl Focusable for SettingsView {
 
 pub struct SettingsView {
     focus: FocusHandle,
+    generation: u64,
+    revealed: Option<SelectIndex>,
     gitlab_url: Entity<InputState>,
     gitlab_token: Entity<InputState>,
     hidden_global: HiddenRules,
@@ -276,6 +286,8 @@ impl SettingsView {
         ];
         let mut this = Self {
             focus: cx.focus_handle(),
+            generation: 0,
+            revealed: None,
             gitlab_url,
             gitlab_token,
             hidden_global: HiddenRules::new(global_input),
@@ -298,6 +310,18 @@ impl SettingsView {
             },
         ));
         this
+    }
+
+    pub fn reveal(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        let group_ix = match section {
+            SettingsSection::HiddenFiles => HIDDEN_FILES_GROUP,
+        };
+        self.generation += 1;
+        self.revealed = Some(SelectIndex {
+            page_ix: 0,
+            group_ix: Some(group_ix),
+        });
+        cx.notify();
     }
 
     pub fn set_repository(
@@ -674,6 +698,49 @@ fn language_dropdown(cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+fn code_size_control(cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let zoom = settings(cx).code_zoom;
+    let size = f32::from(theme.mono_font_size).round() as i32;
+    h_flex()
+        .gap_1()
+        .items_center()
+        .child(
+            Button::new("code-size-down")
+                .outline()
+                .small()
+                .icon(IconName::Minus)
+                .tooltip_with_action(tr().cmd_zoom_out.clone(), &ZoomOut, None)
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ZoomOut), cx)),
+        )
+        .child(
+            div()
+                .w(px(44.))
+                .text_sm()
+                .text_center()
+                .child(format!("{size} px")),
+        )
+        .child(
+            Button::new("code-size-up")
+                .outline()
+                .small()
+                .icon(IconName::Plus)
+                .tooltip_with_action(tr().cmd_zoom_in.clone(), &ZoomIn, None)
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ZoomIn), cx)),
+        )
+        .when(zoom != 0, |el| {
+            el.child(
+                Button::new("code-size-reset")
+                    .ghost()
+                    .small()
+                    .icon(Icon::new(Icons::Undo2))
+                    .tooltip_with_action(tr().cmd_zoom_reset.clone(), &ZoomReset, None)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ZoomReset), cx)),
+            )
+        })
+        .into_any_element()
+}
+
 fn choice_buttons<T: Copy + PartialEq + 'static>(
     id: &'static str,
     options: Vec<(SharedString, T)>,
@@ -738,7 +805,28 @@ impl Render for SettingsView {
             .item(SettingItem::new(
                 s.language.clone(),
                 SettingField::render(|_, _, cx| language_dropdown(cx)),
-            ));
+            ))
+            .item(SettingItem::new(
+                s.interface_size.clone(),
+                SettingField::render(|_, _, cx| {
+                    choice_buttons(
+                        "ui-scale",
+                        UI_SCALES
+                            .iter()
+                            .map(|scale| (SharedString::from(format!("{scale}%")), *scale))
+                            .collect(),
+                        settings(cx).ui_scale,
+                        |s, value| s.ui_scale = value,
+                    )
+                }),
+            ))
+            .item(
+                SettingItem::new(
+                    s.code_text_size.clone(),
+                    SettingField::render(|_, _, cx| code_size_control(cx)),
+                )
+                .description(s.code_text_size_desc.clone()),
+            );
         let review = SettingGroup::new()
             .title(s.review.clone())
             .item(SettingItem::new(
@@ -916,7 +1004,14 @@ impl Render for SettingsView {
             )
             .child(
                 div().flex_1().min_h_0().child(
-                    Settings::new("lgtm-ish-settings").pages([
+                    Settings::new(ElementId::NamedInteger(
+                        "lgtm-ish-settings".into(),
+                        self.generation,
+                    ))
+                    .when_some(self.revealed, |settings, ix| {
+                        settings.default_selected_index(ix)
+                    })
+                    .pages([
                         SettingPage::new(s.settings.clone())
                             .group(appearance)
                             .group(review)

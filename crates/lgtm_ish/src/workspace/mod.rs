@@ -23,7 +23,7 @@ use crate::localization::tr;
 use crate::picker::{Picker, PickerEntry, PickerEvent};
 use crate::recent::{RecentRepos, StoredReview, now, recent};
 use crate::review::{ReviewEvent, ReviewSource, ReviewView};
-use crate::settings_view::{SettingsEvent, SettingsView};
+use crate::settings_view::{SettingsEvent, SettingsSection, SettingsView};
 use start::{StartEvent, StartView};
 
 actions!(
@@ -221,6 +221,15 @@ impl Workspace {
                         this.show_settings(window, cx);
                     }
                 }
+                ReviewEvent::EditHiddenFiles => {
+                    if this.screen != Screen::Settings {
+                        this.show_settings(window, cx);
+                    }
+                    if let Some(settings) = &this.settings {
+                        settings
+                            .update(cx, |view, cx| view.reveal(SettingsSection::HiddenFiles, cx));
+                    }
+                }
             },
         );
         self._subscriptions.truncate(1);
@@ -295,6 +304,22 @@ impl Workspace {
         }
         self.focus_screen(window, cx);
         cx.notify();
+    }
+
+    fn keep_focus_inside(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let stray = |this: &Self, window: &mut Window, cx: &mut Context<Self>| {
+            window.is_window_active()
+                && !this.focus.contains_focused(window, cx)
+                && !window.has_active_dialog(cx)
+                && !window.has_active_sheet(cx)
+        };
+        if stray(self, window, cx) {
+            cx.defer_in(window, move |this, window, cx| {
+                if stray(this, window, cx) {
+                    this.focus_screen(window, cx);
+                }
+            });
+        }
     }
 
     fn focus_screen(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -477,6 +502,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.keep_focus_inside(window, cx);
         let body = match (self.screen, &self.repo) {
             (Screen::Settings, _) => self
                 .settings

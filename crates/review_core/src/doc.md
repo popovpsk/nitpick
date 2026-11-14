@@ -13,7 +13,9 @@ drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the pi
 ## Files
 
 - `tree.rs` — `FileTree::build` from `TreeFile`s (`build_with` leaves out files a filter
-  rejects and keeps the others' indices), `rows` (the visible rows for a set of
+  rejects and keeps the others' indices; `build_shaped` with a `TreeShape` builds a flat
+  list sorted by path or a tree without folder compression; `progress_tracked` counts only
+  the files a filter tracks), `rows` (the visible rows for a set of
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`.
 - `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `snapshot` / `save`),
   `fingerprint`, `write_atomic`.

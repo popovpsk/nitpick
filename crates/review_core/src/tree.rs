@@ -81,12 +81,38 @@ struct Builder {
     files: Vec<(String, usize)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeShape {
+    pub flat: bool,
+    pub compact: bool,
+}
+
+impl Default for TreeShape {
+    fn default() -> Self {
+        Self {
+            flat: false,
+            compact: true,
+        }
+    }
+}
+
 impl FileTree {
     pub fn build(files: &[TreeFile]) -> Self {
         Self::build_with(files, |_| true)
     }
 
     pub fn build_with(files: &[TreeFile], include: impl Fn(usize) -> bool) -> Self {
+        Self::build_shaped(files, include, TreeShape::default())
+    }
+
+    pub fn build_shaped(
+        files: &[TreeFile],
+        include: impl Fn(usize) -> bool,
+        shape: TreeShape,
+    ) -> Self {
+        if shape.flat {
+            return Self::build_flat(files, include);
+        }
         let mut root = Builder::default();
         for (ix, file) in files.iter().enumerate().filter(|(ix, _)| include(*ix)) {
             let mut parts: Vec<&str> = file.path.split('/').filter(|p| !p.is_empty()).collect();
@@ -103,7 +129,7 @@ impl FileTree {
             file_nodes: vec![usize::MAX; files.len()],
             ..FileTree::default()
         };
-        let roots = tree.add_children(root, None, "", 0);
+        let roots = tree.add_children(root, None, "", 0, shape.compact);
         tree.roots = roots;
         let mut order = Vec::with_capacity(files.len());
         for &root in &tree.roots {
@@ -113,19 +139,45 @@ impl FileTree {
         tree
     }
 
+    fn build_flat(files: &[TreeFile], include: impl Fn(usize) -> bool) -> Self {
+        let mut included: Vec<usize> = (0..files.len()).filter(|&ix| include(ix)).collect();
+        included.sort_by(|&a, &b| natural_key(&files[a].path).cmp(&natural_key(&files[b].path)));
+        let mut tree = FileTree {
+            file_nodes: vec![usize::MAX; files.len()],
+            ..FileTree::default()
+        };
+        for ix in included {
+            let path = files[ix].path.trim_matches('/').to_string();
+            let name = path.rsplit('/').next().unwrap_or_default().to_string();
+            let id = tree.nodes.len();
+            tree.nodes.push(Node {
+                name,
+                path,
+                parent: None,
+                depth: 0,
+                kind: NodeKind::File { file: ix },
+            });
+            tree.file_nodes[ix] = id;
+            tree.roots.push(id);
+            tree.order.push(ix);
+        }
+        tree
+    }
+
     fn add_children(
         &mut self,
         builder: Builder,
         parent: Option<usize>,
         prefix: &str,
         depth: usize,
+        compact: bool,
     ) -> Vec<usize> {
         let mut ids = Vec::with_capacity(builder.dirs.len() + builder.files.len());
         let mut dirs: Vec<(String, Builder)> = builder.dirs.into_iter().collect();
         dirs.sort_by(|a, b| natural_key(&a.0).cmp(&natural_key(&b.0)));
         for (name, mut sub) in dirs {
             let mut display = name;
-            while sub.files.is_empty() && sub.dirs.len() == 1 {
+            while compact && sub.files.is_empty() && sub.dirs.len() == 1 {
                 let (child_name, child) = sub.dirs.pop_first().unwrap_or_default();
                 display = format!("{display}/{child_name}");
                 sub = child;
@@ -141,7 +193,7 @@ impl FileTree {
                     children: Vec::new(),
                 },
             });
-            let children = self.add_children(sub, Some(id), &path, depth + 1);
+            let children = self.add_children(sub, Some(id), &path, depth + 1, compact);
             self.nodes[id].kind = NodeKind::Dir { children };
             ids.push(id);
         }
@@ -237,9 +289,18 @@ impl FileTree {
     }
 
     pub fn progress(&self, viewed: &[bool]) -> Vec<Progress> {
+        self.progress_tracked(viewed, |_| true)
+    }
+
+    pub fn progress_tracked(
+        &self,
+        viewed: &[bool],
+        tracked: impl Fn(usize) -> bool,
+    ) -> Vec<Progress> {
         let mut progress = vec![Progress::default(); self.nodes.len()];
         for ix in (0..self.nodes.len()).rev() {
             progress[ix] = match &self.nodes[ix].kind {
+                NodeKind::File { file } if !tracked(*file) => Progress::default(),
                 NodeKind::File { file } => Progress {
                     viewed: usize::from(viewed.get(*file).copied().unwrap_or(false)),
                     total: 1,

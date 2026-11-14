@@ -52,21 +52,23 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `LoadedReview::files` is in patch order; the tree's `file_order` is the navigation order.
   `line_maps` and the parsed files are index-aligned; if the counts ever differ the review
   still loads but diff comments are disabled (`comments_aligned`).
-- Hidden files: the patterns from settings (all repositories, then this repository) hide
-  matching files from the review's own `tree` (`FileTree::build_with`), so they are out of
-  the tree, the progress, change and file navigation, auto-mark and the "first unviewed"
-  pick; `LoadedReview::tree` keeps every file and is reused when nothing is hidden. The
-  header's "N hidden" popover lists them with the pattern that hid each one, the part of the
-  path the pattern matched highlighted (`HiddenFile::matched`, computed with the rules), and
-  "Edit hidden files…" there or in the tree menu emits `ReviewEvent::OpenSettings`; a click
-  shows that file without putting it back in the tree; from it, file and change navigation
-  and `advance_on_viewed` continue with the nearest visible file in full tree order
-  (`visible_neighbour`), and auto-mark never marks it. Changing the patterns re-applies
-  them at once; if the shown file becomes hidden the next unviewed visible file opens, and
-  when files reappear after everything was hidden one opens again. Tree selection survives
-  a rebuild by node path, never by a row index that now points elsewhere. The
-  tree's context menu adds a pattern (this file or folder in this repository, the file's
-  family such as `*_mock.go` here or everywhere, a folder name everywhere).
+- Hidden files: the patterns from settings (all repositories, then this repository) mark
+  matching files untracked (`hidden_mask`): they are out of the progress, change and file
+  navigation (`nav_order`), auto-mark and the "first unviewed" pick. They are left out of
+  the tree unless "Show hidden files" is on, in which case they appear muted and italic and
+  a folder holding only hidden files is muted too. The Files header's eye button opens the
+  view options: tree or flat list (`TreeMode`; the list sorts by path and shows each file's
+  folder beside it, and navigation follows it), compact single-child folders, show hidden
+  files, and, while hidden files are not in the tree, a scrolling list of them with the
+  part of each path its pattern matched highlighted; a click shows that file. "Edit hidden
+  files…" there or in the row menu emits `ReviewEvent::EditHiddenFiles`, which opens
+  Settings scrolled to the Hidden files group. The review's own `tree` is rebuilt from
+  `LoadedReview::tree` (reused when the shape is the default and nothing is left out)
+  whenever the patterns or the view options change; if the shown file becomes hidden the
+  next unviewed tracked file opens, and when files reappear after everything was hidden
+  one opens again. Tree selection survives a rebuild by node path. The row menu adds a
+  pattern (this file or folder in this repository, the file's family such as `*_mock.go`
+  here or everywhere, a folder name everywhere).
 - Viewed marks key on `path` + `old_blob..new_blob`. Every review of a repository, in any
   window, shares one store entity and observes it, so marks made in one window show in the
   others and no window overwrites another's marks with a stale copy. A change schedules one
@@ -102,7 +104,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   manual scroll or another jump disarms it. No wrap-around after the last file. Opening a
   file any other way resets the cursor. The viewport position itself is private to
   gpui-component's `DiffState`, hence the cursor and the scroll detection.- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
-  for at least `AUTO_MARK_DWELL` (1 s), so running through the tree with j/k marks nothing,
+  for at least `AUTO_MARK_DWELL` (0.5 s); each decision is logged at debug level, so running through the tree with j/k marks nothing,
   and unless the user unmarked it by hand (`kept_unviewed`, keyed by path + fingerprint so it
   survives reloads of this review). Reloads and the first file of a load never mark anything.
 - A reload that finds the same files with the same fingerprints (and the same whitespace and

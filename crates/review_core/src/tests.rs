@@ -303,3 +303,63 @@ fn a_filtered_tree_leaves_hidden_files_out_and_keeps_indices() {
         }
     );
 }
+
+#[test]
+fn a_flat_tree_lists_files_by_path_and_an_uncompacted_tree_keeps_every_folder() {
+    let files = [
+        file("src/b.rs"),
+        file("a/deep/x.rs"),
+        file("README.md"),
+        file("src/a.rs"),
+    ];
+    let flat = FileTree::build_shaped(
+        &files,
+        |ix| ix != 2,
+        TreeShape {
+            flat: true,
+            compact: true,
+        },
+    );
+    assert_eq!(flat.file_order(), &[1, 3, 0]);
+    assert_eq!(labels(&flat, &HashSet::new()), vec!["x.rs", "a.rs", "b.rs"]);
+    assert_eq!(flat.node(flat.file_node(1).unwrap()).path, "a/deep/x.rs");
+    assert_eq!(flat.file_node(2), None);
+
+    let loose = FileTree::build_shaped(
+        &files,
+        |_| true,
+        TreeShape {
+            flat: false,
+            compact: false,
+        },
+    );
+    assert_eq!(
+        labels(&loose, &HashSet::new()),
+        vec![
+            "a",
+            "  deep",
+            "    x.rs",
+            "src",
+            "  a.rs",
+            "  b.rs",
+            "README.md"
+        ]
+    );
+}
+
+#[test]
+fn untracked_files_count_nowhere_in_progress() {
+    let files = [file("src/a.rs"), file("src/a_mock.rs")];
+    let tree = FileTree::build(&files);
+    let progress = tree.progress_tracked(&[true, false], |ix| ix != 1);
+    let root = tree.roots()[0];
+    assert_eq!(
+        progress[root],
+        Progress {
+            viewed: 1,
+            total: 1
+        }
+    );
+    let mock = tree.file_node(1).unwrap();
+    assert_eq!(progress[mock], Progress::default());
+}
