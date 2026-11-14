@@ -37,6 +37,7 @@ gpui_kit_assets::icon_assets!(
         Space,
         CheckCheck,
         FilePen,
+        EyeOff,
     ]
 );
 

@@ -275,3 +275,31 @@ fn changes_are_runs_of_changed_lines_with_context_above_as_anchor() {
         }]
     );
 }
+
+#[test]
+fn a_filtered_tree_leaves_hidden_files_out_and_keeps_indices() {
+    let files = [
+        file("store/user.go"),
+        file("store/user_mock.go"),
+        file("vendor/lib/a.go"),
+        file("main.go"),
+    ];
+    let (rules, _) = HideRules::new(&["*_mock.go".to_string(), "vendor/".to_string()], &[]);
+    let tree = FileTree::build_with(&files, |ix| !rules.is_hidden(&files[ix].path));
+    assert_eq!(tree.file_order(), &[0, 3]);
+    assert_eq!(tree.file_node(1), None);
+    assert_eq!(tree.file_node(2), None);
+    assert_eq!(
+        labels(&tree, &HashSet::new()),
+        vec!["store", "  user.go", "main.go"]
+    );
+    let progress = tree.progress(&[true, false, false, false]);
+    let root = tree.roots()[0];
+    assert_eq!(
+        progress[root],
+        Progress {
+            viewed: 1,
+            total: 1
+        }
+    );
+}

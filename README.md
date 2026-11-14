@@ -10,6 +10,9 @@ A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "
   marks that roll up to folders and reset when a file changes again; optionally a file is
   marked viewed as soon as you move on from it.
 - Review your own uncommitted changes (staged, unstaged and untracked) before you commit.
+- Hide noise by gitignore-style patterns, for all repositories or one (`*_mock.go`,
+  `vendor/`, `/gen/`): hidden files leave the tree and the progress, the header says how
+  many; right-click a file or folder to hide its kind.
 - Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, Java, Kotlin,
   Scala, Swift, C, C++, C#, Ruby, PHP, Lua, Elixir, Zig, SQL, GraphQL, JSON, YAML, TOML,
   Markdown, Bash, Protobuf, CSS, HTML, Make, CMake, diff), split or unified layout, expandable

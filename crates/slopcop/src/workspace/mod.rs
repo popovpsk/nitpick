@@ -274,6 +274,10 @@ impl Workspace {
             if self.settings.is_none() {
                 self.settings = Some(cx.new(|cx| SettingsView::new(window, cx)));
             }
+            let root = self.repo_path().map(Path::to_path_buf);
+            if let Some(settings) = &self.settings {
+                settings.update(cx, |view, cx| view.set_repository(root, window, cx));
+            }
             self.previous_screen = self.screen;
             self.screen = Screen::Settings;
         }

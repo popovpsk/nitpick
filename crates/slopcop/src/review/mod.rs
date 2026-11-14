@@ -7,6 +7,7 @@ mod viewed;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,7 @@ use gpui_component::{
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
-use review_core::{FileStatus, LineKind, Progress, Side};
+use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side};
 
 use crate::localization::tr;
 use crate::settings_store::{
@@ -116,6 +117,13 @@ pub enum CrossHint {
     PressForPreviousFile,
     NoNextFile,
     NoPreviousFile,
+}
+
+#[derive(Clone)]
+pub struct HiddenFile {
+    pub ix: usize,
+    pub path: SharedString,
+    pub rule: SharedString,
 }
 
 pub enum LoadState {
@@ -225,6 +233,9 @@ pub struct ReviewView {
     general: Vec<usize>,
     discussions_loading: bool,
     viewed: Vec<bool>,
+    tree: Arc<FileTree>,
+    hidden: Rc<Vec<HiddenFile>>,
+    hide_patterns: (Vec<String>, Vec<String>),
     viewed_store: Entity<SharedViewed>,
     loaded_whitespace: bool,
     window_handle: AnyWindowHandle,
@@ -300,6 +311,9 @@ impl ReviewView {
             general: Vec::new(),
             discussions_loading: false,
             viewed: Vec::new(),
+            tree: Arc::default(),
+            hidden: Rc::default(),
+            hide_patterns: (Vec::new(), Vec::new()),
             viewed_store,
             loaded_whitespace: settings(cx).ignore_whitespace,
             window_handle: window.window_handle(),
@@ -348,10 +362,82 @@ impl ReviewView {
     }
 
     pub fn progress(&self) -> (usize, usize) {
+        let order = self.tree.file_order();
         (
-            self.viewed.iter().filter(|v| **v).count(),
-            self.viewed.len(),
+            order
+                .iter()
+                .filter(|&&f| self.viewed.get(f).copied().unwrap_or(false))
+                .count(),
+            order.len(),
         )
+    }
+
+    pub fn repo_root(&self) -> &std::path::Path {
+        self.repo.root()
+    }
+
+    pub fn tree_node(&self, node: usize) -> Option<&review_core::Node> {
+        self.tree.nodes().get(node)
+    }
+
+    pub fn hidden_files(&self) -> Rc<Vec<HiddenFile>> {
+        self.hidden.clone()
+    }
+
+    fn apply_hide_rules(&mut self, cx: &mut Context<Self>) -> bool {
+        let current = settings(cx);
+        let patterns = (
+            current.hidden_files.clone(),
+            current.repo_hidden(self.repo.root()).to_vec(),
+        );
+        let Some(review) = self.review.clone() else {
+            self.hide_patterns = patterns;
+            return false;
+        };
+        let (rules, errors) = HideRules::new(&patterns.0, &patterns.1);
+        for error in &errors {
+            log::warn!(
+                "hidden files pattern {:?}: {}",
+                error.pattern,
+                error.message
+            );
+        }
+        self.hide_patterns = patterns;
+        let hidden: Vec<HiddenFile> = if rules.is_empty() {
+            Vec::new()
+        } else {
+            review
+                .files
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, file)| {
+                    let rule = rules.matching_rule(&file.path)?;
+                    Some(HiddenFile {
+                        ix,
+                        path: file.path.clone(),
+                        rule: rule.into(),
+                    })
+                })
+                .collect()
+        };
+        let changed = hidden
+            .iter()
+            .map(|h| h.ix)
+            .ne(self.hidden.iter().map(|h| h.ix));
+        self.tree = if hidden.is_empty() {
+            review.tree.clone()
+        } else {
+            let mut skip = vec![false; review.files.len()];
+            for file in &hidden {
+                skip[file.ix] = true;
+            }
+            Arc::new(FileTree::build_with(
+                &model::tree_files(&review.files),
+                |ix| !skip[ix],
+            ))
+        };
+        self.hidden = Rc::new(hidden);
+        changed
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -423,6 +509,7 @@ impl ReviewView {
                     .collect();
                 let review = Rc::new(review);
                 self.review = Some(review.clone());
+                self.apply_hide_rules(cx);
                 self.installed_whitespace = whitespace;
                 self.mr = mr;
                 self.load_state = LoadState::Ready;
@@ -440,7 +527,7 @@ impl ReviewView {
                     let target = kept_path
                         .and_then(|path| review.file_index(&path))
                         .or_else(|| self.first_unviewed())
-                        .or_else(|| review.tree.file_order().first().copied());
+                        .or_else(|| self.tree.file_order().first().copied());
                     self.current_file = None;
                     if let Some(ix) = target {
                         self.show_file(ix, cx);
@@ -514,6 +601,25 @@ impl ReviewView {
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
         let whitespace = settings(cx).ignore_whitespace;
         self.sync_diff_mode(cx);
+        let patterns_changed = settings(cx).hidden_files != self.hide_patterns.0
+            || settings(cx).repo_hidden(self.repo.root()) != self.hide_patterns.1.as_slice();
+        if patterns_changed && self.apply_hide_rules(cx) {
+            self.rebuild_rows();
+            let current_hidden = self
+                .current_file
+                .is_some_and(|f| self.tree.file_node(f).is_none());
+            if current_hidden {
+                let next = self
+                    .first_unviewed()
+                    .or_else(|| self.tree.file_order().first().copied());
+                self.current_file = None;
+                match next {
+                    Some(ix) => self.show_file(ix, cx),
+                    None => self.diff.update(cx, |state, cx| state.set_files([], cx)),
+                }
+            }
+            cx.emit(ReviewEvent::Changed);
+        }
         if whitespace != self.loaded_whitespace && self.review.is_some() {
             self.reload(cx);
         }
@@ -521,9 +627,8 @@ impl ReviewView {
     }
 
     fn first_unviewed(&self) -> Option<usize> {
-        let review = self.review.as_ref()?;
-        review
-            .tree
+        self.review.as_ref()?;
+        self.tree
             .file_order()
             .iter()
             .copied()
@@ -535,13 +640,13 @@ impl ReviewView {
             self.rows = Rc::default();
             return;
         };
-        let progress = review.tree.progress(&self.viewed);
-        let rows: Vec<TreeRow> = review
+        let progress = self.tree.progress(&self.viewed);
+        let rows: Vec<TreeRow> = self
             .tree
             .rows(&self.collapsed)
             .into_iter()
             .map(|row| {
-                let node = review.tree.node(row.node);
+                let node = self.tree.node(row.node);
                 let file = node.file();
                 TreeRow {
                     node: row.node,
@@ -598,9 +703,9 @@ impl ReviewView {
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
         }
-        if let Some(node) = review.tree.file_node(ix) {
+        if let Some(node) = self.tree.file_node(ix) {
             let mut changed = false;
-            for ancestor in review.tree.ancestors(node) {
+            for ancestor in self.tree.ancestors(node) {
                 changed |= self.collapsed.remove(&ancestor.path);
             }
             if changed {
@@ -646,7 +751,7 @@ impl ReviewView {
         let Some(current) = self.current_file else {
             return;
         };
-        let order = review.tree.file_order();
+        let order = self.tree.file_order();
         let neighbour = order.iter().position(|&f| f == current).and_then(|pos| {
             if forward {
                 order.get(pos + 1).copied()
@@ -723,10 +828,8 @@ impl ReviewView {
     }
 
     fn step_file(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
-            return;
-        };
-        let order = review.tree.file_order();
+        let tree = self.tree.clone();
+        let order = tree.file_order();
         if order.is_empty() {
             return;
         }
@@ -776,8 +879,7 @@ impl ReviewView {
     }
 
     fn next_unviewed_after(&self, ix: usize) -> Option<usize> {
-        let review = self.review.as_ref()?;
-        let order = review.tree.file_order();
+        let order = self.tree.file_order();
         let pos = order.iter().position(|&x| x == ix)?;
         order[pos + 1..]
             .iter()
@@ -792,24 +894,21 @@ impl ReviewView {
         };
         if let Some(file) = row.file {
             self.toggle_file_viewed(file, cx);
-        } else if let Some(review) = self.review.clone() {
-            let files = review.tree.files_under(row.node);
+        } else if self.review.is_some() {
+            let files = self.tree.files_under(row.node);
             let viewed = !row.progress.is_complete();
             self.set_viewed(&files, viewed, cx);
         }
     }
 
     pub fn toggle_dir(&mut self, row: usize, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
-            return;
-        };
         let Some(row) = self.rows.get(row).cloned() else {
             return;
         };
         if !row.is_dir {
             return;
         }
-        let path = review.tree.node(row.node).path.clone();
+        let path = self.tree.node(row.node).path.clone();
         if !self.collapsed.remove(&path) {
             self.collapsed.insert(path);
         }
@@ -819,10 +918,7 @@ impl ReviewView {
     }
 
     pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
-            return;
-        };
-        self.collapsed = review.tree.dir_paths().map(str::to_string).collect();
+        self.collapsed = self.tree.dir_paths().map(str::to_string).collect();
         self.rebuild_rows();
         self.selected_row = self
             .current_file

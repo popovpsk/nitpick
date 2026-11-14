@@ -89,6 +89,18 @@ pub struct Strings {
     pub advance_on_viewed: SharedString,
     pub advance_on_viewed_desc: SharedString,
     pub auto_mark_viewed: SharedString,
+    pub auto_mark_label: SharedString,
+    pub hidden_files_title: SharedString,
+    pub hidden_files_tooltip: SharedString,
+    pub edit_hidden_files: SharedString,
+    pub hide_file_here: SharedString,
+    pub hide_folder_here: SharedString,
+    pub all_files_hidden: SharedString,
+    pub hidden_files_setting: SharedString,
+    pub hidden_files_setting_desc: SharedString,
+    pub hidden_files_global: SharedString,
+    pub hidden_files_global_desc: SharedString,
+    pub hidden_files_repo_desc: SharedString,
     pub previous_change: SharedString,
     pub next_change: SharedString,
     pub press_again_next_file: SharedString,
@@ -142,6 +154,11 @@ pub struct Strings {
     pub viewed_progress_t: SharedString,
     pub zed_imported_t: SharedString,
     pub zed_import_failed_t: SharedString,
+    pub hidden_count_t: SharedString,
+    pub hide_here_t: SharedString,
+    pub hide_everywhere_t: SharedString,
+    pub hidden_files_repo_t: SharedString,
+    pub hidden_files_invalid_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -207,6 +224,26 @@ impl Strings {
 
     pub fn zed_imported(&self, themes: &str) -> String {
         fill(&self.zed_imported_t, &[themes])
+    }
+
+    pub fn hidden_count(&self, count: usize) -> String {
+        fill(&self.hidden_count_t, &[&count.to_string()])
+    }
+
+    pub fn hide_here(&self, pattern: &str) -> String {
+        fill(&self.hide_here_t, &[pattern])
+    }
+
+    pub fn hide_everywhere(&self, pattern: &str) -> String {
+        fill(&self.hide_everywhere_t, &[pattern])
+    }
+
+    pub fn hidden_files_repo(&self, repo: &str) -> String {
+        fill(&self.hidden_files_repo_t, &[repo])
+    }
+
+    pub fn hidden_files_invalid(&self, patterns: &str) -> String {
+        fill(&self.hidden_files_invalid_t, &[patterns])
     }
 
     pub fn zed_import_failed(&self, err: &str) -> String {
@@ -345,6 +382,11 @@ mod tests {
                 &s.repositories_added_t,
                 &s.zed_imported_t,
                 &s.zed_import_failed_t,
+                &s.hidden_count_t,
+                &s.hide_here_t,
+                &s.hide_everywhere_t,
+                &s.hidden_files_repo_t,
+                &s.hidden_files_invalid_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

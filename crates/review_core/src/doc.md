@@ -12,7 +12,8 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
 
 ## Files
 
-- `tree.rs` — `FileTree::build` from `TreeFile`s, `rows` (the visible rows for a set of
+- `tree.rs` — `FileTree::build` from `TreeFile`s (`build_with` leaves out files a filter
+  rejects and keeps the others' indices), `rows` (the visible rows for a set of
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`.
 - `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `snapshot` / `save`),
   `fingerprint`, `write_atomic`.
@@ -28,6 +29,11 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
 - `tests.rs` — tree shape and order, collapse, roll-up, store round trip and expiry,
   line-map cases including a removed line that looks like a `---` header, language cases.
 - `fuzzy_tests.rs` — match positions, ranking order, highlight ranges.
+- `hidden.rs` — `HideRules`: gitignore-style patterns (the `ignore` crate's matcher, rooted
+  at the repository, global then repository lines so a repository `!pattern` re-shows a
+  file); `matching_rule` names the pattern that hid a path; the pattern suggestions the tree
+  menu offers (`file_pattern`, `dir_pattern`, `dir_name_pattern`, `family_pattern`).
+- `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
 
 ## Spec
 

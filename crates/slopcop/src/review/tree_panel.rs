@@ -1,14 +1,16 @@
 use gpui::{
-    Context, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    Context, Entity, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    v_flex,
 };
-use review_core::FileStatus;
+use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
 use super::{
@@ -16,8 +18,59 @@ use super::{
     SelectPrevious, ToggleViewed, TreeRow,
 };
 use crate::localization::tr;
+use crate::settings_store::{HideScope, add_hide_pattern};
 
 const ROW_HEIGHT: f32 = 26.;
+
+fn hide_menu(
+    menu: PopupMenu,
+    view: &Entity<ReviewView>,
+    node: usize,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let s = tr();
+    let review = view.read(cx);
+    let root = review.repo_root().to_path_buf();
+    let Some(node) = review.tree_node(node) else {
+        return menu;
+    };
+    let here = HideScope::Repository(root);
+    let item = |label: String, scope: HideScope, pattern: String| {
+        PopupMenuItem::new(label)
+            .on_click(move |_, _, cx| add_hide_pattern(cx, scope.clone(), pattern.clone()))
+    };
+    let menu = if node.is_dir() {
+        let name = hidden::dir_name_pattern(&node.path);
+        menu.item(item(
+            s.hide_folder_here.to_string(),
+            here,
+            hidden::dir_pattern(&node.path),
+        ))
+        .item(item(s.hide_everywhere(&name), HideScope::Everywhere, name))
+    } else {
+        let menu = menu.item(item(
+            s.hide_file_here.to_string(),
+            here.clone(),
+            hidden::file_pattern(&node.path),
+        ));
+        match hidden::family_pattern(&node.path) {
+            Some(family) => menu
+                .item(item(s.hide_here(&family), here, family.clone()))
+                .item(item(
+                    s.hide_everywhere(&family),
+                    HideScope::Everywhere,
+                    family,
+                )),
+            None => menu,
+        }
+    };
+    menu.separator()
+        .item(
+            PopupMenuItem::new(s.edit_hidden_files.clone()).on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(crate::workspace::ShowSettings), cx)
+            }),
+        )
+}
 const INDENT: f32 = 14.;
 
 impl ReviewView {
@@ -198,6 +251,8 @@ impl ReviewView {
             None
         };
         let hover = theme.list_hover;
+        let view = cx.entity();
+        let node = row.node;
         let toggle_tooltip = if complete {
             tr().mark_unviewed.clone()
         } else {
@@ -255,6 +310,7 @@ impl ReviewView {
                     ),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.click_row(ix, cx)))
+            .context_menu(move |menu, _, cx| hide_menu(menu, &view, node, cx))
     }
 
     fn collapse_selected(&mut self, cx: &mut Context<Self>) {

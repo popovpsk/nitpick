@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -86,6 +87,10 @@ pub struct Settings {
     #[serde(default = "default_tree_width")]
     pub tree_width: f32,
     #[serde(default)]
+    pub hidden_files: Vec<String>,
+    #[serde(default)]
+    pub repo_hidden_files: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     pub gitlab_url: String,
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
@@ -114,6 +119,8 @@ impl Default for Settings {
             advance_on_viewed: true,
             auto_mark_viewed: false,
             tree_width: default_tree_width(),
+            hidden_files: Vec::new(),
+            repo_hidden_files: BTreeMap::new(),
             gitlab_url: String::new(),
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
@@ -121,7 +128,35 @@ impl Default for Settings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HideScope {
+    Everywhere,
+    Repository(PathBuf),
+}
+
+pub fn repo_key(root: &Path) -> String {
+    root.to_string_lossy().into_owned()
+}
+
+pub fn add_hide_pattern(cx: &mut App, scope: HideScope, pattern: String) {
+    update_settings(cx, move |s| {
+        let list = match &scope {
+            HideScope::Everywhere => &mut s.hidden_files,
+            HideScope::Repository(root) => s.repo_hidden_files.entry(repo_key(root)).or_default(),
+        };
+        if !list.contains(&pattern) {
+            list.push(pattern);
+        }
+    });
+}
+
 impl Settings {
+    pub fn repo_hidden(&self, root: &Path) -> &[String] {
+        self.repo_hidden_files
+            .get(&repo_key(root))
+            .map_or(&[], Vec::as_slice)
+    }
+
     pub fn gitlab_configured(&self) -> bool {
         !self.gitlab_url.trim().is_empty() && !self.gitlab_token.trim().is_empty()
     }

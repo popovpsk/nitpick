@@ -1,8 +1,10 @@
+use std::rc::Rc;
+
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle, DragMoveEvent,
-    ElementId, Empty, Entity, InteractiveElement as _, IntoElement, KeyDownEvent,
+    Anchor, Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle,
+    DragMoveEvent, ElementId, Empty, Entity, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, ease_out_quint, prelude::FluentBuilder as _, px,
+    div, ease_out_quint, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -10,6 +12,7 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariants as _},
     diff::{Diff, DiffHoverHighlight},
     h_flex,
+    popover::{Popover, PopoverState},
     progress::Progress as ProgressBar,
     spinner::Spinner,
     tooltip::Tooltip,
@@ -18,9 +21,9 @@ use gpui_component::{
 use ui_resources::Icons;
 
 use super::{
-    Busy, CrossHint, FocusDiff, FocusTree, LoadState, NextChange, NextFile, PreviousChange,
-    PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleTree,
-    ToggleViewed, comments,
+    Busy, CrossHint, FocusDiff, FocusTree, HiddenFile, LoadState, NextChange, NextFile,
+    PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
+    ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -80,6 +83,21 @@ impl ReviewView {
                 .tooltip(move |window, cx| {
                     Tooltip::new(tr().viewed_progress(viewed, total)).build(window, cx)
                 })
+        });
+        let hidden_button = (!self.hidden.is_empty()).then(|| {
+            let hidden = self.hidden.clone();
+            let view = cx.entity();
+            Popover::new("hidden-files")
+                .anchor(Anchor::TopRight)
+                .trigger(
+                    Button::new("hidden-files-button")
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::new(Icons::EyeOff))
+                        .label(s.hidden_count(hidden.len()))
+                        .tooltip(s.hidden_files_tooltip.clone()),
+                )
+                .content(move |_, _, cx| hidden_list(&view, &hidden, cx))
         });
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
         match (&self.source, &self.mr) {
@@ -201,6 +219,7 @@ impl ReviewView {
                 },
             )
             .children(comments_button)
+            .children(hidden_button)
             .children(progress)
             .child(
                 Button::new("refresh-review")
@@ -219,8 +238,8 @@ impl ReviewView {
         let theme = cx.theme();
         let layout = settings(cx).diff_layout;
         let (position, count) = match (&self.review, self.current_file) {
-            (Some(review), Some(current)) => {
-                let order = review.tree.file_order();
+            (Some(_), Some(current)) => {
+                let order = self.tree.file_order();
                 (
                     order
                         .iter()
@@ -229,7 +248,7 @@ impl ReviewView {
                     order.len(),
                 )
             }
-            (Some(review), None) => (0, review.files.len()),
+            (Some(_), None) => (0, self.tree.file_order().len()),
             _ => (0, 0),
         };
         let current_viewed = self
@@ -299,8 +318,9 @@ impl ReviewView {
             .child(
                 Button::new("auto-mark")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(Icon::new(Icons::CheckCheck))
+                    .label(s.auto_mark_label.clone())
                     .selected(auto_mark)
                     .tooltip(if auto_mark {
                         s.auto_mark_on.clone()
@@ -376,6 +396,9 @@ impl ReviewView {
         };
         if review.files.is_empty() {
             return empty_state(tr().no_changes.clone(), cx);
+        }
+        if self.tree.file_order().is_empty() && self.current_file.is_none() {
+            return empty_state(tr().all_files_hidden.clone(), cx);
         }
         let split = settings(cx).diff_layout == DiffLayout::Split;
         let theme = cx.theme();
@@ -469,6 +492,93 @@ fn branch_chip(
         .child(pull)
         .into_any_element()
 }
+
+fn hidden_list(
+    view: &Entity<ReviewView>,
+    hidden: &Rc<Vec<HiddenFile>>,
+    cx: &mut Context<PopoverState>,
+) -> AnyElement {
+    let s = tr();
+    let theme = cx.theme();
+    let popover = cx.entity();
+    let rows = hidden.len();
+    let list_view = view.clone();
+    let list_hidden = hidden.clone();
+    v_flex()
+        .w(px(480.))
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .child(s.hidden_files_title.clone()),
+        )
+        .child(
+            uniform_list("hidden-files-list", rows, move |range, _, cx| {
+                let hover = cx.theme().list_hover;
+                let muted = cx.theme().muted_foreground;
+                range
+                    .map(|ix| {
+                        let file = &list_hidden[ix];
+                        let file_ix = file.ix;
+                        let view = list_view.clone();
+                        let popover = popover.clone();
+                        h_flex()
+                            .id(("hidden-file", ix))
+                            .h(px(HIDDEN_ROW))
+                            .px_2()
+                            .gap_3()
+                            .items_center()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_sm()
+                                    .child(file.path.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(file.rule.clone()),
+                            )
+                            .on_click(move |_, window, cx| {
+                                view.update(cx, |this, cx| this.show_file(file_ix, cx));
+                                popover.update(cx, |state, cx| state.dismiss(window, cx));
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .h(px(rows.min(12) as f32 * HIDDEN_ROW)),
+        )
+        .child(
+            h_flex()
+                .justify_end()
+                .border_t_1()
+                .border_color(theme.border)
+                .pt_2()
+                .child(
+                    Button::new("edit-hidden-files")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Settings)
+                        .label(s.edit_hidden_files.clone())
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::workspace::ShowSettings), cx)
+                        }),
+                ),
+        )
+        .into_any_element()
+}
+
+const HIDDEN_ROW: f32 = 28.;
 
 fn short_sha(sha: &str) -> &str {
     sha.get(..8).unwrap_or(sha)

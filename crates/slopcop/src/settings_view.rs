@@ -1,18 +1,19 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
     Anchor, AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, KeyBinding, ParentElement as _, PathPromptOptions, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, Window, actions, div, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{DropdownMenu as _, PopupMenuItem},
     notification::Notification,
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
@@ -24,10 +25,48 @@ use ui_resources::themes::ZedThemeFile;
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
     DiffLayout, LangChoice, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
-    end_syntax_preview, preview_syntax_colors, settings, syntax_palette_names, update_settings,
+    end_syntax_preview, preview_syntax_colors, repo_key, settings, syntax_palette_names,
+    update_settings,
 };
 
 actions!(settings_view, [CloseSettings]);
+
+const HIDDEN_SAVE_DELAY: Duration = Duration::from_millis(400);
+
+fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
+    let (_, errors) = review_core::HideRules::new(patterns, &[]);
+    (!errors.is_empty()).then(|| {
+        let list: Vec<&str> = errors.iter().map(|e| e.pattern.as_str()).collect();
+        tr().hidden_files_invalid(&list.join(", ")).into()
+    })
+}
+
+fn hidden_rules_item(
+    title: SharedString,
+    description: SharedString,
+    rules: &HiddenRules,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(div().text_sm().child(title))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(description),
+        )
+        .child(Textarea::new(&rules.input).font_family(theme.mono_font_family.clone()))
+        .children(
+            rules
+                .invalid
+                .clone()
+                .map(|invalid| div().text_xs().text_color(theme.danger).child(invalid)),
+        )
+        .into_any_element()
+}
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
@@ -45,9 +84,19 @@ enum GitlabStatus {
     Failed(SharedString),
 }
 
+struct HiddenRules {
+    input: Entity<TextareaState>,
+    invalid: Option<SharedString>,
+    _save: Task<()>,
+}
+
 pub struct SettingsView {
     gitlab_url: Entity<InputState>,
     gitlab_token: Entity<InputState>,
+    hidden_global: HiddenRules,
+    hidden_repo: HiddenRules,
+    repo: Option<(PathBuf, SharedString)>,
+    _hidden_subscriptions: [Subscription; 2],
     status: GitlabStatus,
     zed_files: Rc<Vec<ZedThemeFile>>,
     _check: Task<()>,
@@ -78,15 +127,128 @@ impl SettingsView {
                 cx.notify();
             });
         });
-        Self {
+        let hidden_input = |window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(3, 12)
+                    .placeholder("*_mock.go\nvendor/")
+            })
+        };
+        let global_input = hidden_input(window, cx);
+        let repo_input = hidden_input(window, cx);
+        let subscriptions = [
+            cx.subscribe(&global_input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_hidden_save(false, cx);
+                }
+            }),
+            cx.subscribe(&repo_input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_hidden_save(true, cx);
+                }
+            }),
+        ];
+        let mut this = Self {
             gitlab_url,
             gitlab_token,
+            hidden_global: HiddenRules {
+                input: global_input,
+                invalid: None,
+                _save: Task::ready(()),
+            },
+            hidden_repo: HiddenRules {
+                input: repo_input,
+                invalid: None,
+                _save: Task::ready(()),
+            },
+            repo: None,
+            _hidden_subscriptions: subscriptions,
             status: GitlabStatus::Idle,
             zed_files: Rc::default(),
             _check: Task::ready(()),
             _zed_discovery: zed_discovery,
             _zed_import: Task::ready(()),
-        }
+        };
+        this.reload_hidden(window, cx);
+        this
+    }
+
+    pub fn set_repository(
+        &mut self,
+        root: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.repo = root.map(|root| {
+            let name = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string_lossy().into_owned());
+            (root, name.into())
+        });
+        self.reload_hidden(window, cx);
+        cx.notify();
+    }
+
+    fn reload_hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = settings(cx);
+        let global = current.hidden_files.join("\n");
+        let repo = self
+            .repo
+            .as_ref()
+            .map(|(root, _)| current.repo_hidden(root).join("\n"))
+            .unwrap_or_default();
+        self.hidden_global.invalid = invalid_patterns(&current.hidden_files);
+        self.hidden_repo.invalid = self
+            .repo
+            .as_ref()
+            .and_then(|(root, _)| invalid_patterns(current.repo_hidden(root)));
+        self.hidden_global
+            .input
+            .update(cx, |state, cx| state.set_value(global, window, cx));
+        self.hidden_repo
+            .input
+            .update(cx, |state, cx| state.set_value(repo, window, cx));
+    }
+
+    fn schedule_hidden_save(&mut self, repository: bool, cx: &mut Context<Self>) {
+        let rules = if repository {
+            &mut self.hidden_repo
+        } else {
+            &mut self.hidden_global
+        };
+        let patterns: Vec<String> = rules
+            .input
+            .read(cx)
+            .value()
+            .lines()
+            .map(|line| line.trim_end().to_string())
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        rules.invalid = invalid_patterns(&patterns);
+        let root = self.repo.as_ref().map(|(root, _)| root.clone());
+        let task = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(HIDDEN_SAVE_DELAY).await;
+            cx.update(|cx| {
+                update_settings(cx, move |s| match (repository, root) {
+                    (false, _) => s.hidden_files = patterns,
+                    (true, Some(root)) if patterns.is_empty() => {
+                        s.repo_hidden_files.remove(&repo_key(&root));
+                    }
+                    (true, Some(root)) => {
+                        s.repo_hidden_files.insert(repo_key(&root), patterns);
+                    }
+                    (true, None) => {}
+                })
+            });
+        });
+        let rules = if repository {
+            &mut self.hidden_repo
+        } else {
+            &mut self.hidden_global
+        };
+        rules._save = task;
+        cx.notify();
     }
 
     fn import_zed_theme(
@@ -570,6 +732,32 @@ impl Render for SettingsView {
                             }),
                     )
             }));
+        let global_view = view.clone();
+        let repo_view = view.clone();
+        let mut hidden = SettingGroup::new()
+            .title(s.hidden_files_setting.clone())
+            .description(s.hidden_files_setting_desc.clone())
+            .item(SettingItem::render(move |_, _, cx| {
+                let this = global_view.read(cx);
+                hidden_rules_item(
+                    tr().hidden_files_global.clone(),
+                    tr().hidden_files_global_desc.clone(),
+                    &this.hidden_global,
+                    cx,
+                )
+            }));
+        if let Some((_, name)) = &self.repo {
+            let title: SharedString = s.hidden_files_repo(name).into();
+            hidden = hidden.item(SettingItem::render(move |_, _, cx| {
+                let this = repo_view.read(cx);
+                hidden_rules_item(
+                    title.clone(),
+                    tr().hidden_files_repo_desc.clone(),
+                    &this.hidden_repo,
+                    cx,
+                )
+            }));
+        }
         v_flex()
             .id("settings-screen")
             .key_context("SettingsScreen")
@@ -599,6 +787,7 @@ impl Render for SettingsView {
                     Settings::new("slopcop-settings").pages([SettingPage::new(s.settings.clone())
                         .group(appearance)
                         .group(review)
+                        .group(hidden)
                         .group(gitlab)]),
                 ),
             )

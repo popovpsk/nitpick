@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
 use git_repo::{ChangeStatus, ChangedFile, Comparison, DiffOptions, Repo};
@@ -89,7 +90,7 @@ pub struct LoadedReview {
     pub source: String,
     pub merge_base_refs: Vec<String>,
     pub files: Vec<ReviewFile>,
-    pub tree: FileTree,
+    pub tree: Arc<FileTree>,
     pub context_limited: bool,
     pub comments_aligned: bool,
     pub commits: Vec<git_repo::Commit>,
@@ -190,17 +191,7 @@ fn build_range(
         .zip(changes)
         .map(|((diff, line_map), changes)| review_file(diff, line_map, changes, &by_path))
         .collect();
-    let tree = FileTree::build(
-        &files
-            .iter()
-            .map(|f| TreeFile {
-                path: f.path.to_string(),
-                status: f.status,
-                additions: f.additions,
-                deletions: f.deletions,
-            })
-            .collect::<Vec<_>>(),
-    );
+    let tree = Arc::new(FileTree::build(&tree_files(&files)));
     let commits = match range_head {
         Head::Commit(head) => repo.commits(&base, head).unwrap_or_else(|err| {
             log::warn!("commits {base}..{head}: {err}");
@@ -247,6 +238,18 @@ fn aligned_maps(patch: &str, files: usize) -> (Vec<LineMap>, bool) {
         );
         (vec![LineMap::default(); files], false)
     }
+}
+
+pub fn tree_files(files: &[ReviewFile]) -> Vec<TreeFile> {
+    files
+        .iter()
+        .map(|f| TreeFile {
+            path: f.path.to_string(),
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+        })
+        .collect()
 }
 
 fn display_changes(patch: &str, files: usize) -> Vec<Vec<Change>> {

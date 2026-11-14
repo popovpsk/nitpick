@@ -17,12 +17,17 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab
   token sealed by `secret_store`), the `SettingsStore` global, `update_settings`,
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
-  observer that keeps it applied, hover previews, `syntax_palette_names`.
+  observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
+  patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
+  tree's path), `HideScope`, `add_hide_pattern`.
 - `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
   palettes per appearance.
 - `settings_view.rs` — the one-page settings screen: theme and syntax colors (hover
-  previews), Zed theme import, language, review options, GitLab URL + token with a
-  connection check.
+  previews), Zed theme import, language, review options, hidden-file patterns (all
+  repositories, and the window's repository when it has one; saved 400 ms after typing
+  stops, invalid lines named under the field), GitLab URL + token with a connection check.
+  `set_repository` reloads the pattern fields each time the screen opens, so patterns added
+  from the tree show up.
 - `localization.rs` — resolves the saved language and exposes `tr()`.
 - `recent.rs` — `RecentRepos` global (`recent.json` in the data dir): every known
   repository (opened or added from a folder) with the last review of each, and the

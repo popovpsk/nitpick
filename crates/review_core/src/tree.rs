@@ -83,8 +83,12 @@ struct Builder {
 
 impl FileTree {
     pub fn build(files: &[TreeFile]) -> Self {
+        Self::build_with(files, |_| true)
+    }
+
+    pub fn build_with(files: &[TreeFile], include: impl Fn(usize) -> bool) -> Self {
         let mut root = Builder::default();
-        for (ix, file) in files.iter().enumerate() {
+        for (ix, file) in files.iter().enumerate().filter(|(ix, _)| include(*ix)) {
             let mut parts: Vec<&str> = file.path.split('/').filter(|p| !p.is_empty()).collect();
             let Some(name) = parts.pop() else {
                 continue;
