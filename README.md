@@ -60,7 +60,7 @@ macOS needs the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
 sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build-essential cmake clang
 ```
 
-Tests and lints: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`. Releases (macOS dmg, Windows installer and portable, Linux AppImage, `.deb`, AUR) are built by `.github/workflows/release.yml`.
+Tests and lints: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`. Releases (macOS dmg, Windows installer and portable, Linux AppImage and `.deb`) are built by `.github/workflows/release.yml`.
 
 ## License
 

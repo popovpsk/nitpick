@@ -95,21 +95,6 @@ icons = [
     "../ui_resources/assets/app-icon/icon.ico",
 ]
 
-[package.metadata.packager.pacman]
-depends = [
-    "dbus",
-    "fontconfig",
-    "hicolor-icon-theme",
-    "libxcb",
-    "libxkbcommon",
-    "libxkbcommon-x11",
-    "vulkan-icd-loader",
-    "wayland",
-]
-
-[package.metadata.packager.pacman.files]
-"../../LICENSE" = "/usr/share/licenses/nitpick-bin/LICENSE"
-
 [package.metadata.packager.deb]
 section = "devel"
 depends = [

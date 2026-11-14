@@ -45,7 +45,7 @@ no Settings switch yet: `nitpick` calls `init` with auto-update on.
   relaunches the app only after an explicit apply.
 - `is_supported`: macOS and Windows installer builds always, the portable build never
   (compile-time). Linux only when `$APPIMAGE` is set and no `AM-updater` file sits next to it
-  (`managed_by_am`), so `.deb` and pacman/AUR copies show no update UI and are left
+  (`managed_by_am`), so `.deb` copies show no update UI and are left
   to what installed them. That falls out of the `$APPIMAGE` check and needs no per-package
   code; keep it so.
 

@@ -120,7 +120,6 @@ mod tests {
     use super::*;
 
     const RELEASE_ASSETS: &[&str] = &[
-        "nitpick_1.0.0_aarch64-pacman.tar.gz",
         "nitpick_1.0.0_aarch64.AppImage",
         "nitpick_1.0.0_aarch64.AppImage.zsync",
         "Nitpick_1.0.0_aarch64.dmg",
@@ -130,7 +129,6 @@ mod tests {
         "nitpick_1.0.0_arm64.deb",
         "nitpick_1.0.0_x64-portable.zip",
         "nitpick_1.0.0_x64-setup.exe",
-        "nitpick_1.0.0_x86_64-pacman.tar.gz",
         "nitpick_1.0.0_x86_64.AppImage",
         "nitpick_1.0.0_x86_64.AppImage.zsync",
     ];

@@ -59,11 +59,11 @@ jobs:
             formats: nsis
           - label: linux-x86_64
             os: ubuntu-22.04
-            formats: appimage,deb,pacman
+            formats: appimage,deb
             update_info: gh-releases-zsync|popovpsk|nitpick|latest|nitpick_*_x86_64.AppImage.zsync
           - label: linux-arm64
             os: ubuntu-22.04-arm
-            formats: appimage,deb,pacman
+            formats: appimage,deb
             update_info: gh-releases-zsync|popovpsk|nitpick|latest|nitpick_*_aarch64.AppImage.zsync
     steps:
       - uses: actions/checkout@v5
@@ -250,21 +250,6 @@ jobs:
           for f in dist/*_arm64-setup.exe; do
             mv "$f" "${f%_arm64-setup.exe}_arm64-installer.exe"
           done
-          ls -la dist
-
-      - name: Collect pacman archive
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
-          arch="$(uname -m)"
-          mapfile -t found < <(find target/release -maxdepth 1 -name '*.tar.gz' -not -name '*-pacman.tar.gz')
-          if [ "${#found[@]}" -ne 1 ]; then
-            echo "::error::expected exactly one pacman tarball under target/release, found: ${found[*]:-none}"
-            find target/release -maxdepth 2 -name 'PKGBUILD' -o -maxdepth 2 -name '*.tar.gz'
-            exit 1
-          fi
-          cp "${found[0]}" "dist/nitpick_${version}_${arch}-pacman.tar.gz"
           ls -la dist
 
       - uses: actions/upload-artifact@v5

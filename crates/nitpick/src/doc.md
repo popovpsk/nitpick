@@ -8,7 +8,7 @@ window (`workspace/`) and the review itself (`review/`); this file covers the cr
 Not here: git (`git_repo`), the host clients (`forge` over `gitlab` and `github`; the app
 uses only `forge`), the tree / viewed / line-map model
 (`review_core`), token sealing (`secret_store`), icons and strings (`ui_resources`),
-packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
+packaging (`Cargo.toml` `[package.metadata.packager]`).
 
 ## Files
 
