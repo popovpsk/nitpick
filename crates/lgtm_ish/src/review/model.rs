@@ -75,6 +75,8 @@ pub struct ReviewFile {
     pub old_path: SharedString,
     pub new_path: SharedString,
     pub fingerprint: String,
+    pub old_blob: String,
+    pub new_blob: String,
     pub status: FileStatus,
     pub additions: u32,
     pub deletions: u32,
@@ -291,9 +293,15 @@ fn review_file(
             _ => FileStatus::Modified,
         },
     };
-    let fingerprint = match changed {
-        Some(c) => review_core::fingerprint(&c.old_blob, &c.new_blob),
-        None => index_fingerprint(&diff).unwrap_or_else(|| format!("?{path}")),
+    let blobs = changed
+        .map(|c| (c.old_blob.clone(), c.new_blob.clone()))
+        .or_else(|| index_blobs(&diff));
+    let (old_blob, new_blob, fingerprint) = match blobs {
+        Some((old, new)) => {
+            let fingerprint = review_core::fingerprint(&old, &new);
+            (old, new, fingerprint)
+        }
+        None => (String::new(), String::new(), format!("?{path}")),
     };
     let old_path = diff
         .original_path()
@@ -312,6 +320,8 @@ fn review_file(
         old_path,
         new_path,
         fingerprint,
+        old_blob,
+        new_blob,
         status,
         line_map,
         display_map,
@@ -319,12 +329,12 @@ fn review_file(
     }
 }
 
-fn index_fingerprint(diff: &DiffFile) -> Option<String> {
+fn index_blobs(diff: &DiffFile) -> Option<(String, String)> {
     diff.extended_headers().iter().find_map(|h| {
         let rest = h.strip_prefix("index ")?;
         let ids = rest.split_whitespace().next()?;
         let (old, new) = ids.split_once("..")?;
-        Some(review_core::fingerprint(old, new))
+        Some((old.to_string(), new.to_string()))
     })
 }
 
