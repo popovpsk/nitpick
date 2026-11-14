@@ -32,7 +32,10 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the pic
 - `hidden.rs` — `HideRules`: gitignore-style patterns (the `ignore` crate's matcher, rooted
   at the repository, global then repository lines so a repository `!pattern` re-shows a
   file); `matching_rule` names the pattern that hid a path; the pattern suggestions the tree
-  menu offers (`file_pattern`, `dir_pattern`, `dir_name_pattern`, `family_pattern`).
+  menu offers (`file_pattern`, `dir_pattern`, `dir_name_pattern`, `family_pattern`), which
+  `escape` glob characters and a leading `!`/`#` so `[slug]/` means that folder only;
+  `merge_patterns` (an edit applied as a diff against the list it started from); a rooted
+  path (a drive-like first component on Windows) never matches instead of panicking.
 - `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
 
 ## Spec

@@ -25,9 +25,11 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `settings_view.rs` — the one-page settings screen: theme and syntax colors (hover
   previews), Zed theme import, language, review options, hidden-file patterns (all
   repositories, and the window's repository when it has one; saved 400 ms after typing
-  stops, invalid lines named under the field), GitLab URL + token with a connection check.
-  `set_repository` reloads the pattern fields each time the screen opens, so patterns added
-  from the tree show up.
+  stops by a detached task, invalid lines named under the field), GitLab URL + token with a
+  connection check. A save applies the difference between the list the field was loaded
+  from and what was typed (`review_core::hidden::merge_patterns`), so a pattern added from a
+  tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
+  settings change, and `set_repository` reloads both each time the screen opens.
 - `localization.rs` — resolves the saved language and exposes `tr()`.
 - `recent.rs` — `RecentRepos` global (`recent.json` in the data dir): every known
   repository (opened or added from a folder) with the last review of each, and the

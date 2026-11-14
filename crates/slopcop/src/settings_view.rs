@@ -1,12 +1,14 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _,
-    IntoElement, KeyBinding, ParentElement as _, PathPromptOptions, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, px,
+    Anchor, AnyElement, App, AppContext as _, Context, Entity, Focusable as _,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PathPromptOptions,
+    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
+    actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
@@ -24,7 +26,7 @@ use ui_resources::themes::ZedThemeFile;
 
 use crate::localization::{sync_active_lang, tr};
 use crate::settings_store::{
-    DiffLayout, LangChoice, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
+    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, apply_saved_theme, apply_theme,
     end_syntax_preview, preview_syntax_colors, repo_key, settings, syntax_palette_names,
     update_settings,
 };
@@ -87,7 +89,35 @@ enum GitlabStatus {
 struct HiddenRules {
     input: Entity<TextareaState>,
     invalid: Option<SharedString>,
-    _save: Task<()>,
+    baseline: Vec<String>,
+    generation: Rc<Cell<u64>>,
+}
+
+impl HiddenRules {
+    fn new(input: Entity<TextareaState>) -> Self {
+        Self {
+            input,
+            invalid: None,
+            baseline: Vec::new(),
+            generation: Rc::default(),
+        }
+    }
+
+    fn load(&mut self, list: &[String], force: bool, window: &mut Window, cx: &mut App) {
+        let focused = self
+            .input
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        if !force && (focused || self.baseline == list) {
+            return;
+        }
+        self.baseline = list.to_vec();
+        self.invalid = invalid_patterns(list);
+        let text = list.join("\n");
+        self.input
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
 }
 
 pub struct SettingsView {
@@ -97,6 +127,7 @@ pub struct SettingsView {
     hidden_repo: HiddenRules,
     repo: Option<(PathBuf, SharedString)>,
     _hidden_subscriptions: [Subscription; 2],
+    _settings_sync: Option<Subscription>,
     status: GitlabStatus,
     zed_files: Rc<Vec<ZedThemeFile>>,
     _check: Task<()>,
@@ -151,25 +182,25 @@ impl SettingsView {
         let mut this = Self {
             gitlab_url,
             gitlab_token,
-            hidden_global: HiddenRules {
-                input: global_input,
-                invalid: None,
-                _save: Task::ready(()),
-            },
-            hidden_repo: HiddenRules {
-                input: repo_input,
-                invalid: None,
-                _save: Task::ready(()),
-            },
+            hidden_global: HiddenRules::new(global_input),
+            hidden_repo: HiddenRules::new(repo_input),
             repo: None,
             _hidden_subscriptions: subscriptions,
+            _settings_sync: None,
             status: GitlabStatus::Idle,
             zed_files: Rc::default(),
             _check: Task::ready(()),
             _zed_discovery: zed_discovery,
             _zed_import: Task::ready(()),
         };
-        this.reload_hidden(window, cx);
+        this.reload_hidden(true, window, cx);
+        this._settings_sync = Some(cx.observe_global_in::<SettingsStore>(
+            window,
+            |this, window, cx| {
+                this.reload_hidden(false, window, cx);
+                cx.notify();
+            },
+        ));
         this
     }
 
@@ -186,38 +217,30 @@ impl SettingsView {
                 .unwrap_or_else(|| root.to_string_lossy().into_owned());
             (root, name.into())
         });
-        self.reload_hidden(window, cx);
+        self.reload_hidden(true, window, cx);
         cx.notify();
     }
 
-    fn reload_hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let current = settings(cx);
-        let global = current.hidden_files.join("\n");
+    fn reload_hidden(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let current = settings(cx).clone();
+        self.hidden_global
+            .load(&current.hidden_files, force, window, cx);
         let repo = self
             .repo
             .as_ref()
-            .map(|(root, _)| current.repo_hidden(root).join("\n"))
+            .map(|(root, _)| current.repo_hidden(root).to_vec())
             .unwrap_or_default();
-        self.hidden_global.invalid = invalid_patterns(&current.hidden_files);
-        self.hidden_repo.invalid = self
-            .repo
-            .as_ref()
-            .and_then(|(root, _)| invalid_patterns(current.repo_hidden(root)));
-        self.hidden_global
-            .input
-            .update(cx, |state, cx| state.set_value(global, window, cx));
-        self.hidden_repo
-            .input
-            .update(cx, |state, cx| state.set_value(repo, window, cx));
+        self.hidden_repo.load(&repo, force, window, cx);
     }
 
     fn schedule_hidden_save(&mut self, repository: bool, cx: &mut Context<Self>) {
+        let root = self.repo.as_ref().map(|(root, _)| root.clone());
         let rules = if repository {
             &mut self.hidden_repo
         } else {
             &mut self.hidden_global
         };
-        let patterns: Vec<String> = rules
+        let typed: Vec<String> = rules
             .input
             .read(cx)
             .value()
@@ -225,29 +248,42 @@ impl SettingsView {
             .map(|line| line.trim_end().to_string())
             .filter(|line| !line.trim().is_empty())
             .collect();
-        rules.invalid = invalid_patterns(&patterns);
-        let root = self.repo.as_ref().map(|(root, _)| root.clone());
-        let task = cx.spawn(async move |_, cx| {
+        rules.invalid = invalid_patterns(&typed);
+        let baseline = rules.baseline.clone();
+        let generation = rules.generation.get() + 1;
+        rules.generation.set(generation);
+        let counter = rules.generation.clone();
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(HIDDEN_SAVE_DELAY).await;
+            if counter.get() != generation {
+                return;
+            }
+            let saved = typed.clone();
             cx.update(|cx| {
                 update_settings(cx, move |s| match (repository, root) {
-                    (false, _) => s.hidden_files = patterns,
-                    (true, Some(root)) if patterns.is_empty() => {
-                        s.repo_hidden_files.remove(&repo_key(&root));
+                    (false, _) => {
+                        review_core::hidden::merge_patterns(&mut s.hidden_files, &baseline, &typed)
                     }
                     (true, Some(root)) => {
-                        s.repo_hidden_files.insert(repo_key(&root), patterns);
+                        let key = repo_key(&root);
+                        let list = s.repo_hidden_files.entry(key.clone()).or_default();
+                        review_core::hidden::merge_patterns(list, &baseline, &typed);
+                        if list.is_empty() {
+                            s.repo_hidden_files.remove(&key);
+                        }
                     }
                     (true, None) => {}
                 })
             });
-        });
-        let rules = if repository {
-            &mut self.hidden_repo
-        } else {
-            &mut self.hidden_global
-        };
-        rules._save = task;
+            let _ = this.update(cx, |this, _| {
+                if repository {
+                    this.hidden_repo.baseline = saved;
+                } else {
+                    this.hidden_global.baseline = saved;
+                }
+            });
+        })
+        .detach();
         cx.notify();
     }
 

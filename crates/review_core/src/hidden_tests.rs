@@ -1,6 +1,8 @@
 use rstest::rstest;
 
-use crate::hidden::{HideRules, dir_name_pattern, dir_pattern, family_pattern, file_pattern};
+use crate::hidden::{
+    HideRules, dir_name_pattern, dir_pattern, family_pattern, file_pattern, merge_patterns,
+};
 
 fn rules(global: &[&str], repository: &[&str]) -> HideRules {
     let own = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -66,8 +68,39 @@ fn no_rules_hide_nothing_and_bad_rules_are_reported() {
 #[case::leading_underscore("_layout.tsx", Some("*.tsx"))]
 #[case::no_extension("Makefile", None)]
 #[case::dotfile(".gitignore", None)]
+#[case::bracketed("pages/[id]_test.ts", Some("*_test.ts"))]
+#[case::bracketed_ext("a.[x]", Some(r"*.\[x\]"))]
 fn family_patterns(#[case] path: &str, #[case] expected: Option<&str>) {
     assert_eq!(family_pattern(path).as_deref(), expected);
+}
+
+#[rstest]
+#[case::next_route("app/blog/[slug]/page.tsx", "app/blog/[slug]", "app/blog/s/page.tsx")]
+#[case::braces("tpl/{{name}}/a.txt", "tpl/{{name}}", "tpl/n/a.txt")]
+#[case::comment_like("#notes/a.md", "#notes", "notes/a.md")]
+#[case::negation_like("!keep/a.md", "!keep", "keep/a.md")]
+#[case::star("a*b/c.go", "a*b", "axxb/c.go")]
+fn menu_patterns_match_the_literal_name_only(
+    #[case] file: &str,
+    #[case] dir: &str,
+    #[case] other: &str,
+) {
+    let exact = rules(&[], &[&file_pattern(file)]);
+    assert!(exact.is_hidden(file));
+    let folder = rules(&[], &[&dir_pattern(dir)]);
+    assert!(folder.is_hidden(file));
+    assert!(!folder.is_hidden(other));
+    let named = rules(&[&dir_name_pattern(dir)], &[]);
+    assert!(named.is_hidden(file));
+    assert!(!named.is_hidden(other));
+}
+
+#[test]
+fn rooted_or_odd_paths_never_match_and_never_panic() {
+    let rules = rules(&["*.go"], &[]);
+    assert!(rules.is_hidden("/a.go"));
+    assert!(!rules.is_hidden(""));
+    assert!(!rules.is_hidden("/"));
 }
 
 #[test]
@@ -78,4 +111,22 @@ fn exact_patterns_are_anchored() {
     let rules = rules(&[], &[&dir_pattern("src/gen")]);
     assert!(rules.is_hidden("src/gen/a/b.go"));
     assert!(!rules.is_hidden("other/src/gen/b.go"));
+}
+
+fn owned(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn an_edit_replaces_the_list_when_nothing_changed_meanwhile() {
+    let mut list = owned(&["a", "b"]);
+    merge_patterns(&mut list, &owned(&["a", "b"]), &owned(&["!b", "a"]));
+    assert_eq!(list, owned(&["!b", "a"]));
+}
+
+#[test]
+fn an_edit_keeps_patterns_added_elsewhere_meanwhile() {
+    let mut list = owned(&["a", "b", "*_mock.go"]);
+    merge_patterns(&mut list, &owned(&["a", "b"]), &owned(&["a", "c"]));
+    assert_eq!(list, owned(&["a", "*_mock.go", "c"]));
 }

@@ -57,8 +57,12 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   the tree, the progress, change and file navigation, auto-mark and the "first unviewed"
   pick; `LoadedReview::tree` keeps every file and is reused when nothing is hidden. The
   header's "N hidden" popover lists them with the pattern that hid each one, and a click
-  shows that file without putting it back in the tree. Changing the patterns re-applies
-  them at once; if the shown file becomes hidden the next unviewed visible file opens. The
+  shows that file without putting it back in the tree; from it, file and change navigation
+  and `advance_on_viewed` continue with the nearest visible file in full tree order
+  (`visible_neighbour`), and auto-mark never marks it. Changing the patterns re-applies
+  them at once; if the shown file becomes hidden the next unviewed visible file opens, and
+  when files reappear after everything was hidden one opens again. Tree selection survives
+  a rebuild by node path, never by a row index that now points elsewhere. The
   tree's context menu adds a pattern (this file or folder in this repository, the file's
   family such as `*_mock.go` here or everywhere, a folder name everywhere).
 - Viewed marks key on `path` + `old_blob..new_blob`. Every review of a repository, in any

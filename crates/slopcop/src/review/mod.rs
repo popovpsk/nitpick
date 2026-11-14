@@ -105,6 +105,7 @@ pub struct TreeRow {
     pub is_dir: bool,
     pub expanded: bool,
     pub name: SharedString,
+    pub path: SharedString,
     pub file: Option<usize>,
     pub status: FileStatus,
     pub progress: Progress,
@@ -608,9 +609,15 @@ impl ReviewView {
             let current_hidden = self
                 .current_file
                 .is_some_and(|f| self.tree.file_node(f).is_none());
-            if current_hidden {
+            if current_hidden || self.current_file.is_none() {
                 let next = self
-                    .first_unviewed()
+                    .current_file
+                    .and_then(|f| self.next_unviewed_after(f))
+                    .or_else(|| {
+                        self.current_file
+                            .and_then(|f| self.visible_neighbour(f, true))
+                    })
+                    .or_else(|| self.first_unviewed())
                     .or_else(|| self.tree.file_order().first().copied());
                 self.current_file = None;
                 match next {
@@ -654,6 +661,7 @@ impl ReviewView {
                     is_dir: node.is_dir(),
                     expanded: row.expanded,
                     name: node.name.clone().into(),
+                    path: node.path.clone().into(),
                     file,
                     status: file.map_or(FileStatus::Modified, |f| review.files[f].status),
                     progress: progress[row.node],
@@ -663,12 +671,17 @@ impl ReviewView {
                 }
             })
             .collect();
-        if let Some(current) = self.current_file {
-            self.selected_row = rows
-                .iter()
-                .position(|r| r.file == Some(current))
-                .or(self.selected_row);
-        }
+        let selected_path = self
+            .selected_row
+            .and_then(|r| self.rows.get(r))
+            .map(|r| r.path.clone());
+        self.selected_row = self
+            .current_file
+            .and_then(|current| rows.iter().position(|r| r.file == Some(current)))
+            .or_else(|| {
+                let path = selected_path?;
+                rows.iter().position(|r| r.path == path)
+            });
         self.rows = Rc::new(rows);
     }
 
@@ -685,6 +698,7 @@ impl ReviewView {
                 && self
                     .shown_at
                     .is_some_and(|at| at.elapsed() >= AUTO_MARK_DWELL)
+                && self.tree.file_node(left).is_some()
                 && !self.viewed.get(left).copied().unwrap_or(true)
                 && !review.files.get(left).is_some_and(|f| {
                     self.kept_unviewed
@@ -751,15 +765,7 @@ impl ReviewView {
         let Some(current) = self.current_file else {
             return;
         };
-        let order = self.tree.file_order();
-        let neighbour = order.iter().position(|&f| f == current).and_then(|pos| {
-            if forward {
-                order.get(pos + 1).copied()
-            } else {
-                pos.checked_sub(1).map(|p| order[p])
-            }
-        });
-        let Some(next) = neighbour else {
+        let Some(next) = self.visible_neighbour(current, forward) else {
             self.show_cross_hint(
                 if forward {
                     CrossHint::NoNextFile
@@ -828,17 +834,34 @@ impl ReviewView {
     }
 
     fn step_file(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let tree = self.tree.clone();
-        let order = tree.file_order();
-        if order.is_empty() {
-            return;
+        let order = self.tree.file_order();
+        let target = match self.current_file {
+            Some(current) => self.visible_neighbour(current, delta > 0),
+            None if delta > 0 => order.first().copied(),
+            None => order.last().copied(),
+        };
+        if let Some(ix) = target {
+            self.show_file(ix, cx);
         }
-        let pos = self
-            .current_file
-            .and_then(|f| order.iter().position(|&x| x == f))
-            .map_or(0, |p| p as isize + delta)
-            .clamp(0, order.len() as isize - 1);
-        self.show_file(order[pos as usize], cx);
+    }
+
+    fn visible_neighbour(&self, from: usize, forward: bool) -> Option<usize> {
+        let order = self.tree.file_order();
+        if let Some(pos) = order.iter().position(|&f| f == from) {
+            return if forward {
+                order.get(pos + 1).copied()
+            } else {
+                pos.checked_sub(1).map(|p| order[p])
+            };
+        }
+        let all = self.review.as_ref()?.tree.file_order();
+        let pos = all.iter().position(|&f| f == from)?;
+        let visible = |f: &&usize| self.tree.file_node(**f).is_some();
+        if forward {
+            all[pos + 1..].iter().find(visible).copied()
+        } else {
+            all[..pos].iter().rev().find(visible).copied()
+        }
     }
 
     pub fn set_viewed(&mut self, files: &[usize], viewed: bool, cx: &mut Context<Self>) {
@@ -880,10 +903,17 @@ impl ReviewView {
 
     fn next_unviewed_after(&self, ix: usize) -> Option<usize> {
         let order = self.tree.file_order();
-        let pos = order.iter().position(|&x| x == ix)?;
-        order[pos + 1..]
+        let (after, before) = match order.iter().position(|&x| x == ix) {
+            Some(pos) => (&order[pos + 1..], &order[..pos]),
+            None => {
+                let next = self.visible_neighbour(ix, true)?;
+                let pos = order.iter().position(|&x| x == next)?;
+                (&order[pos..], &order[..pos])
+            }
+        };
+        after
             .iter()
-            .chain(order[..pos].iter())
+            .chain(before)
             .copied()
             .find(|&f| !self.viewed[f])
     }

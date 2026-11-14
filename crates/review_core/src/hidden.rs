@@ -52,7 +52,7 @@ impl HideRules {
     pub fn matching_rule(&self, path: &str) -> Option<String> {
         let matcher = self.matcher.as_ref()?;
         let path = path.trim_start_matches('/');
-        if path.is_empty() {
+        if path.is_empty() || std::path::Path::new(path).has_root() {
             return None;
         }
         match matcher.matched_path_or_any_parents(path, false) {
@@ -66,12 +66,25 @@ impl HideRules {
     }
 }
 
+pub fn escape(literal: &str) -> String {
+    let mut out = String::with_capacity(literal.len() + 2);
+    for (ix, c) in literal.chars().enumerate() {
+        if matches!(c, '\\' | '*' | '?' | '[' | ']' | '{' | '}')
+            || (ix == 0 && matches!(c, '!' | '#'))
+        {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 pub fn file_pattern(path: &str) -> String {
-    format!("/{}", path.trim_matches('/'))
+    format!("/{}", escape(path.trim_matches('/')))
 }
 
 pub fn dir_pattern(path: &str) -> String {
-    format!("/{}/", path.trim_matches('/'))
+    format!("/{}/", escape(path.trim_matches('/')))
 }
 
 pub fn dir_name_pattern(path: &str) -> String {
@@ -80,17 +93,30 @@ pub fn dir_name_pattern(path: &str) -> String {
         .rsplit('/')
         .next()
         .unwrap_or_default();
-    format!("{name}/")
+    format!("{}/", escape(name))
 }
 
 pub fn family_pattern(path: &str) -> Option<String> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let (stem, ext) = name.split_once('.').filter(|(stem, _)| !stem.is_empty())?;
-    if ext.contains('.') {
-        return Some(format!("*.{ext}"));
+    let suffix = match stem.rfind(['_', '-']) {
+        Some(at) if !ext.contains('.') && at > 0 && at + 1 < stem.len() => {
+            format!("{}.{ext}", &stem[at..])
+        }
+        _ => format!(".{ext}"),
+    };
+    Some(format!("*{}", escape(&suffix)))
+}
+
+pub fn merge_patterns(list: &mut Vec<String>, baseline: &[String], typed: &[String]) {
+    if list.as_slice() == baseline {
+        *list = typed.to_vec();
+        return;
     }
-    match stem.rfind(['_', '-']) {
-        Some(at) if at > 0 && at + 1 < stem.len() => Some(format!("*{}.{ext}", &stem[at..])),
-        _ => Some(format!("*.{ext}")),
+    list.retain(|p| typed.contains(p) || !baseline.contains(p));
+    for pattern in typed {
+        if !list.contains(pattern) {
+            list.push(pattern.clone());
+        }
     }
 }
