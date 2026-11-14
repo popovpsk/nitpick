@@ -239,6 +239,13 @@ pub struct Strings {
     pub days_ago_t: SharedString,
     pub months_ago_t: SharedString,
     pub years_ago_t: SharedString,
+    pub image_before: SharedString,
+    pub image_after: SharedString,
+    pub image_too_large: SharedString,
+    pub image_failed: SharedString,
+    pub size_bytes: SharedString,
+    pub size_kb: SharedString,
+    pub size_mb: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
