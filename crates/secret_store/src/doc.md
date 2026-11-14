@@ -7,7 +7,7 @@ on macOS and Linux, and wherever the Credential Manager fails, in a file wrapped
 compiled into the binary. GPUI-free; knows nothing of which fields are secret.
 
 Not here: which settings fields are sealed and when the file is rewritten
-(`lgtm-ish/src/doc.md`, "Settings persistence").
+(`nitpick/src/doc.md`, "Settings persistence").
 
 ## Files
 
@@ -18,13 +18,13 @@ Not here: which settings fields are sealed and when the file is rewritten
 - `embedded.rs` — the binary key E, derived from a seed fixed in the source.
 - `file_key.rs` — the file key `K_f` in `secret-<id of E>.key`, sealed with E.
 - `keychain/` — `read` / `write` of the 32-byte data key in the Credential Manager via
-  `keyring-core`, target `data-key.lgtm-ish`. Compiled on Windows only.
+  `keyring-core`, target `data-key.nitpick`. Compiled on Windows only.
 - `serde_string.rs` — `#[serde(with)]` for a `String` field.
 - `tests.rs` — sealing, key order, file key creation and its refusals, the pinned id of E.
 
 ## Spec
 
-- Format: `lgtm-ish:v1:<key id>:<base64 (no pad) of nonce(12) ‖ ciphertext+tag>`, with a fresh
+- Format: `nitpick:v1:<key id>:<base64 (no pad) of nonce(12) ‖ ciphertext+tag>`, with a fresh
   nonce on every seal, so the text changes on every save.
 - `init(dir)` runs once, blocking, before anything is (de)serialized. On Windows the
   keychain read gives `Found` → `K_kc`, `NotFound` → generate and store a new one, an

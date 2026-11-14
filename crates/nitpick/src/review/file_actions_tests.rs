@@ -179,9 +179,9 @@ fn shell(script: &str, shell: &str, file: &str, line: &str) -> Invocation {
         program: shell.to_string(),
         args: vec!["-lc".to_string(), script.to_string()],
         env: vec![
-            ("LGTM_ISH_FILE", file.to_string()),
-            ("LGTM_ISH_LINE", line.to_string()),
-            ("LGTM_ISH_ROOT", "/r".to_string()),
+            ("NITPICK_FILE", file.to_string()),
+            ("NITPICK_LINE", line.to_string()),
+            ("NITPICK_ROOT", "/r".to_string()),
         ],
         check_exit: true,
     }
@@ -205,7 +205,7 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     HostOs::Mac,
     Some("/bin/zsh"),
     shell(
-        "code -g \"$LGTM_ISH_FILE\":\"$LGTM_ISH_LINE\"",
+        "code -g \"$NITPICK_FILE\":\"$NITPICK_LINE\"",
         "/bin/zsh",
         "/r/a b.rs",
         "7"
@@ -216,7 +216,7 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     HostOs::Linux,
     Some("/usr/bin/fish"),
     shell(
-        "idea --line \"$LGTM_ISH_LINE\" \"$LGTM_ISH_FILE\"",
+        "idea --line \"$NITPICK_LINE\" \"$NITPICK_FILE\"",
         "/usr/bin/fish",
         "/r/a b.rs",
         "7"
@@ -226,36 +226,31 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     "subl \"{file}:{line}\"",
     HostOs::Mac,
     Some("/bin/bash"),
-    shell(
-        "subl \"$LGTM_ISH_FILE:$LGTM_ISH_LINE\"",
-        "/bin/bash",
-        "/r/a b.rs",
-        "7"
-    )
+    shell("subl \"$NITPICK_FILE:$NITPICK_LINE\"", "/bin/bash", "/r/a b.rs", "7")
 )]
 #[case::no_file_placeholder(
     "zed",
     HostOs::Mac,
     Some("/bin/zsh"),
-    shell("zed \"$LGTM_ISH_FILE\"", "/bin/zsh", "/r/a b.rs", "7")
+    shell("zed \"$NITPICK_FILE\"", "/bin/zsh", "/r/a b.rs", "7")
 )]
 #[case::unknown_shell(
     "zed {file}",
     HostOs::Linux,
     Some("/usr/bin/nu"),
-    shell("zed \"$LGTM_ISH_FILE\"", "/bin/sh", "/r/a b.rs", "7")
+    shell("zed \"$NITPICK_FILE\"", "/bin/sh", "/r/a b.rs", "7")
 )]
 #[case::no_shell(
     "zed {file}",
     HostOs::Mac,
     None,
-    shell("zed \"$LGTM_ISH_FILE\"", "/bin/sh", "/r/a b.rs", "7")
+    shell("zed \"$NITPICK_FILE\"", "/bin/sh", "/r/a b.rs", "7")
 )]
 #[case::braces_kept(
     "ed {x} {file}",
     HostOs::Mac,
     Some("/bin/sh"),
-    shell("ed {x} \"$LGTM_ISH_FILE\"", "/bin/sh", "/r/a b.rs", "7")
+    shell("ed {x} \"$NITPICK_FILE\"", "/bin/sh", "/r/a b.rs", "7")
 )]
 #[case::windows_split(
     "code -g {file}:{line}",
@@ -273,7 +268,7 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     "ed '{file}'",
     HostOs::Linux,
     Some("/bin/sh"),
-    shell("ed ''\"$LGTM_ISH_FILE\"''", "/bin/sh", "/r/a b.rs", "7")
+    shell("ed ''\"$NITPICK_FILE\"''", "/bin/sh", "/r/a b.rs", "7")
 )]
 #[case::windows_no_file("notepad++", HostOs::Windows, None, plain("notepad++", &["/r/a b.rs"]))]
 #[case::zed_project(
@@ -281,7 +276,7 @@ fn plain(program: &str, args: &[&str]) -> Invocation {
     HostOs::Mac,
     Some("/bin/zsh"),
     shell(
-        "zed \"$LGTM_ISH_ROOT\" \"$LGTM_ISH_FILE\":\"$LGTM_ISH_LINE\"",
+        "zed \"$NITPICK_ROOT\" \"$NITPICK_FILE\":\"$NITPICK_LINE\"",
         "/bin/zsh",
         "/r/a b.rs",
         "7"

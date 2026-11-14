@@ -39,9 +39,9 @@ tokens (the app, `secret_store`).
   fetching; `needed_commits` names what must exist locally for that (head + merge base, or
   head + target tip). GitHub's compare endpoint (`merge_base_commit`) is not used: its answer
   carries every changed file's patch.
-- `Request::refspecs`: GitLab `refs/merge-requests/<n>/head` → `refs/lgtm-ish/mr/<n>`
-  (unchanged from before GitHub); GitHub `refs/pull/<n>/head` → `refs/lgtm-ish/pr/<n>/head`
-  plus the target tip `start_sha` itself → `refs/lgtm-ish/pr/<n>/base` (GitHub serves
+- `Request::refspecs`: GitLab `refs/merge-requests/<n>/head` → `refs/nitpick/mr/<n>`
+  (unchanged from before GitHub); GitHub `refs/pull/<n>/head` → `refs/nitpick/pr/<n>/head`
+  plus the target tip `start_sha` itself → `refs/nitpick/pr/<n>/base` (GitHub serves
   reachable commits by id), so the merge base is computed from exactly the commit GitHub
   reported, and a deleted or force-pushed target branch does not break the fetch. Names
   under one prefix never nest, since a ref cannot be both a file and a folder.

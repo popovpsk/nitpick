@@ -1,11 +1,11 @@
 # diagnostics
 
-The single log sink of the app, behind the `log` facade: a rolling `lgtm-ish.log`, user-facing
+The single log sink of the app, behind the `log` facade: a rolling `nitpick.log`, user-facing
 notices, and panics captured into the same file. GPUI-free on purpose, so any crate
 (including the `forbid(unsafe_code)` libraries) can log through `log` without pulling in the
 UI framework.
 
-Not here: showing a `Notice` as a toast (`lgtm-ish` does not consume notices yet); what gets
+Not here: showing a `Notice` as a toast (`nitpick` does not consume notices yet); what gets
 logged is up to each caller.
 
 ## Files
@@ -21,14 +21,14 @@ logged is up to each caller.
   and its receiver never gets a notice. Tests drive `write_line` directly instead of `init`.
 - `FileLogger::log` only formats the line and sends it down a channel, so the caller never
   takes a file lock or does I/O: the audio callback's rare error path must not block.
-- The `lgtm-ish-diagnostics` writer thread owns the file and flushes every line. Rotation is
-  size-based: past `Config.max_bytes` the file becomes `lgtm-ish.log.1` (one generation).
+- The `nitpick-diagnostics` writer thread owns the file and flushes every line. Rotation is
+  size-based: past `Config.max_bytes` the file becomes `nitpick.log.1` (one generation).
 - The writer thread is a deliberate exception to "background work on GPUI's executor": this
   crate cannot depend on GPUI. It is never joined (the logger is leaked); `flush()` polls
   the channel until it is empty (bounded, about 200 ms) instead, and the app calls it on
   quit so shutdown-path lines reach disk. Each line is already flushed on its own, so this
   only closes the in-flight-at-exit gap.
-- `Config.log_dir` comes from the caller (the app passes `dirs::data_dir()/lgtm-ish/logs`): the
+- `Config.log_dir` comes from the caller (the app passes `dirs::data_dir()/nitpick/logs`): the
   crate holds no path conventions. `also_stderr` defaults to `cfg!(debug_assertions)`:
   console echo in dev, file only in release.
 
@@ -37,7 +37,7 @@ logged is up to each caller.
 - `Config.level` is the global level (Info by default). `Config.target_levels` caps single
   targets; the longest prefix on a `::` boundary wins. The default is `NOISY_TARGETS`:
   `gpui::window::a11y` at `Warn`, because gpui logs "focused element has no accessibility
-  node" at `Info` on every focus change and lgtm-ish sets no roles; it flooded the log on
+  node" at `Info` on every focus change and nitpick sets no roles; it flooded the log on
   Windows, where accessibility activates. Muted here rather than disabling accessibility
   (`Application::new_inaccessible`), which would also drop gpui-component's own roles.
 - `log::set_max_level` is the most permissive of the global level and every override: an

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="crates/ui_resources/assets/app-icon/128x128.png" width="96" alt="lgtm-ish icon" />
+<img src="crates/ui_resources/assets/app-icon/128x128.png" width="96" alt="nitpick icon" />
 
-# lgtm-ish
+# nitpick
 
 **A fast, native diff reviewer for huge merge requests, built in Rust and GPUI**: see only what a branch brings, keep track of every file you have read, and stay on the keyboard.
 

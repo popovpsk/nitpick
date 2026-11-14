@@ -7,8 +7,8 @@ picker filters with, and the syntax language of paths the diff component does no
 only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab or GitHub (`forge`),
-drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the picker UI
-(`lgtm-ish/src/picker.rs`).
+drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the picker UI
+(`nitpick/src/picker.rs`).
 
 ## Files
 

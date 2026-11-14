@@ -115,8 +115,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
   `head_sha`, so `resolve_mr_refs` takes `git merge-base` of the two locally (`MrRefs`), which
   is the three-dot diff GitHub shows. When a needed commit (`forge::DiffRefs::needed_commits`:
   head and the merge base, or head and the target tip) is missing, `Request::refspecs` are
-  fetched (GitLab: `refs/merge-requests/<n>/head` into `refs/lgtm-ish/mr/<n>`; GitHub:
-  `refs/pull/<n>/head` and the target branch into `refs/lgtm-ish/pr/<n>/{head,base}`, hidden
+  fetched (GitLab: `refs/merge-requests/<n>/head` into `refs/nitpick/mr/<n>`; GitHub:
+  `refs/pull/<n>/head` and the target branch into `refs/nitpick/pr/<n>/{head,base}`, hidden
   from branch lists) from the remote whose URL path is the project, else `upstream` on the
   same host as `origin`, else `origin`, else any
   remote on the host (`forge_remote` with just that host).
@@ -356,7 +356,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   a line. Otherwise on macOS/Linux the template runs as `$SHELL -lc` (a login shell, so the
   PATH from the profile files, not the interactive rc files, reaches a GUI app; `/bin/sh`
   when `$SHELL` is not an sh-family shell or fish). `{root}` (the repository's work tree),
-  `{file}` and `{line}` become references to `LGTM_ISH_ROOT`/`LGTM_ISH_FILE`/`LGTM_ISH_LINE`,
+  `{file}` and `{line}` become references to `NITPICK_ROOT`/`NITPICK_FILE`/`NITPICK_LINE`,
   passed in the environment, so the path never goes
   through quoting; the reference depends on the quoting around the placeholder
   (`substitute_shell`): `"$VAR"` outside quotes, `$VAR` inside `"…"`, `'"$VAR"'` inside

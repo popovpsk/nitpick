@@ -16,7 +16,7 @@ use crate::models::{
 use crate::request::{BodyOnly, GraphQlRequest, NewReviewComment, RepoRef};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-const USER_AGENT: &str = "lgtm-ish";
+const USER_AGENT: &str = "nitpick";
 const MEDIA_TYPE: &str = "application/vnd.github+json";
 const API_VERSION_HEADER: HeaderName = HeaderName::from_static("x-github-api-version");
 const API_VERSION: &str = "2022-11-28";

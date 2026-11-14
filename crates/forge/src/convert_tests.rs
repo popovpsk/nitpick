@@ -95,8 +95,8 @@ fn a_github_pull_request_leaves_the_merge_base_to_git() {
     assert_eq!(
         request.refspecs(),
         vec![
-            "+refs/pull/9/head:refs/lgtm-ish/pr/9/head".to_string(),
-            "+tip1:refs/lgtm-ish/pr/9/base".to_string(),
+            "+refs/pull/9/head:refs/nitpick/pr/9/head".to_string(),
+            "+tip1:refs/nitpick/pr/9/base".to_string(),
         ]
     );
 }
@@ -113,7 +113,7 @@ fn github_states_map(#[case] state: &str, #[case] merged: bool, #[case] expected
 fn gitlab_refspec_is_the_merge_request_head() {
     assert_eq!(
         ForgeKind::GitLab.refspecs(5, Some("s")),
-        vec!["+refs/merge-requests/5/head:refs/lgtm-ish/mr/5".to_string()]
+        vec!["+refs/merge-requests/5/head:refs/nitpick/mr/5".to_string()]
     );
 }
 

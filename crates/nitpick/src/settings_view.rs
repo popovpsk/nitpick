@@ -1210,7 +1210,7 @@ impl Render for SettingsView {
             .child(
                 div().flex_1().min_h_0().child(
                     Settings::new(ElementId::NamedInteger(
-                        "lgtm-ish-settings".into(),
+                        "nitpick-settings".into(),
                         self.generation,
                     ))
                     .when_some(self.revealed, |settings, ix| {

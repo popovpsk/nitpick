@@ -38,7 +38,7 @@ finding the repository from git remotes (the app), storing the token (`secret_st
   URL are rejected. Tests use the mock server as an Enterprise host.
 - Every request sends `Authorization: Bearer <token>` (sensitive, never logged, hidden from
   `Debug`), `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and
-  User-Agent `lgtm-ish`. Redirects are followed only to the API host
+  User-Agent `nitpick`. Redirects are followed only to the API host
   (`http_client::same_host_redirects`), since reqwest keeps headers across redirects.
 - Lists read `per_page=100` and follow `Link: rel="next"` only on the API's own
   scheme/host/port, stopping on an empty page, a missing link, or the cap: 3 pages of open

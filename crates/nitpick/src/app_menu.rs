@@ -6,7 +6,7 @@ use crate::workspace::{
 };
 
 actions!(
-    lgtm_ish,
+    nitpick,
     [
         Quit,
         Hide,
@@ -18,7 +18,7 @@ actions!(
     ]
 );
 
-pub(crate) const REPOSITORY_URL: &str = "https://github.com/popovpsk/lgtm-ish/";
+pub(crate) const REPOSITORY_URL: &str = "https://github.com/popovpsk/nitpick/";
 
 pub fn app_menus() -> Vec<Menu> {
     let s = tr();
@@ -47,7 +47,7 @@ pub fn app_menus() -> Vec<Menu> {
     app_items.push(MenuItem::action(s.quit_app.clone(), Quit));
     vec![
         Menu {
-            name: "LGTM-ish".into(),
+            name: "Nitpick".into(),
             items: app_items,
             disabled: false,
         },

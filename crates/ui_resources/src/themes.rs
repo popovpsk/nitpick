@@ -36,7 +36,7 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
 ];
 
 pub fn themes_dir() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join("lgtm-ish").join("themes"))
+    Some(dirs::data_dir()?.join("nitpick").join("themes"))
 }
 
 fn stage_bundled_themes() -> anyhow::Result<PathBuf> {

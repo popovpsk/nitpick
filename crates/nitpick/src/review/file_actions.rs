@@ -23,9 +23,9 @@ actions!(review, [CopyPath, OpenInEditor]);
 const FAILURE_WINDOW: Duration = Duration::from_secs(5);
 const POLL_FAST: Duration = Duration::from_millis(100);
 const POLL_SLOW: Duration = Duration::from_secs(2);
-const FILE_VAR: &str = "LGTM_ISH_FILE";
-const LINE_VAR: &str = "LGTM_ISH_LINE";
-const ROOT_VAR: &str = "LGTM_ISH_ROOT";
+const FILE_VAR: &str = "NITPICK_FILE";
+const LINE_VAR: &str = "NITPICK_LINE";
+const ROOT_VAR: &str = "NITPICK_ROOT";
 const JETBRAINS: [(&str, &str, &str); 5] = [
     ("GoLand", "GoLand.app", "goland"),
     ("IntelliJ IDEA", "IntelliJ IDEA.app", "idea"),

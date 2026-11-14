@@ -1,18 +1,18 @@
 # Maintainer: Aleksandr Popov <popov.psk@gmail.com>
-pkgname=lgtm-ish-bin
+pkgname=nitpick-bin
 pkgver=__VERSION__
 pkgrel=1
 pkgdesc="A side-by-side diff reviewer for huge merge requests"
 arch=('x86_64' 'aarch64')
-url="https://github.com/popovpsk/lgtm-ish"
+url="https://github.com/popovpsk/nitpick"
 license=('MIT')
 depends=('dbus' 'fontconfig' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
-provides=('lgtm-ish')
-conflicts=('lgtm-ish')
+provides=('nitpick')
+conflicts=('nitpick')
 options=('!strip')
-source_x86_64=("lgtm-ish-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/lgtm-ish_${pkgver}_${CARCH}-pacman.tar.gz")
+source_x86_64=("nitpick-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/nitpick_${pkgver}_${CARCH}-pacman.tar.gz")
 sha256sums_x86_64=('__SHA256_X86_64__')
-source_aarch64=("lgtm-ish-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/lgtm-ish_${pkgver}_${CARCH}-pacman.tar.gz")
+source_aarch64=("nitpick-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/nitpick_${pkgver}_${CARCH}-pacman.tar.gz")
 sha256sums_aarch64=('__SHA256_AARCH64__')
 
 package() {

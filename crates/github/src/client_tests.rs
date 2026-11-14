@@ -54,7 +54,7 @@ async fn current_user_sends_the_github_headers() {
         .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
         .and(header("accept", "application/vnd.github+json"))
         .and(header("x-github-api-version", "2022-11-28"))
-        .and(header("user-agent", "lgtm-ish"))
+        .and(header("user-agent", "nitpick"))
         .respond_with(json_response(200, USER))
         .expect(1)
         .mount(&server)

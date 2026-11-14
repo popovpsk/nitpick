@@ -245,7 +245,7 @@ impl Workspace {
         let title = match (&self.repo, &self.review) {
             (Some(_), Some(review)) => format!("{} — {}", self.repo_name, review.read(cx).title()),
             (Some(_), None) => self.repo_name.to_string(),
-            _ => "LGTM-ish".to_string(),
+            _ => "Nitpick".to_string(),
         };
         if window.window_title() != title {
             window.set_window_title(&title);
@@ -462,7 +462,7 @@ impl Workspace {
             .items_center()
             .justify_center()
             .gap_4()
-            .child(div().text_2xl().font_semibold().child("LGTM-ish"))
+            .child(div().text_2xl().font_semibold().child("Nitpick"))
             .child(
                 div()
                     .text_sm()

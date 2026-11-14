@@ -18,10 +18,10 @@ impl Drop for Mounted {
 }
 
 pub async fn install(url: &str, digest: Option<&str>, app_bundle: PathBuf) -> Result<()> {
-    let dir = net_runtime::unblock(|| tempfile::Builder::new().prefix("lgtm-ish-update").tempdir())
+    let dir = net_runtime::unblock(|| tempfile::Builder::new().prefix("nitpick-update").tempdir())
         .await
         .context("creating temp dir")?;
-    let dmg = dir.path().join("lgtm-ish.dmg");
+    let dmg = dir.path().join("nitpick.dmg");
     super::download_file(url, &dmg, digest).await?;
     net_runtime::unblock(move || replace_bundle(&dir, &dmg, &app_bundle)).await
 }

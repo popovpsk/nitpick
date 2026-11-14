@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use crate::version;
 
-const REPO: &str = "popovpsk/lgtm-ish";
-const USER_AGENT: &str = "lgtm-ish-updater";
+const REPO: &str = "popovpsk/nitpick";
+const USER_AGENT: &str = "nitpick-updater";
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
@@ -120,19 +120,19 @@ mod tests {
     use super::*;
 
     const RELEASE_ASSETS: &[&str] = &[
-        "lgtm-ish_1.0.0_aarch64-pacman.tar.gz",
-        "lgtm-ish_1.0.0_aarch64.AppImage",
-        "lgtm-ish_1.0.0_aarch64.AppImage.zsync",
-        "LGTM-ish_1.0.0_aarch64.dmg",
-        "lgtm-ish_1.0.0_amd64.deb",
-        "lgtm-ish_1.0.0_arm64-installer.exe",
-        "lgtm-ish_1.0.0_arm64-portable.zip",
-        "lgtm-ish_1.0.0_arm64.deb",
-        "lgtm-ish_1.0.0_x64-portable.zip",
-        "lgtm-ish_1.0.0_x64-setup.exe",
-        "lgtm-ish_1.0.0_x86_64-pacman.tar.gz",
-        "lgtm-ish_1.0.0_x86_64.AppImage",
-        "lgtm-ish_1.0.0_x86_64.AppImage.zsync",
+        "nitpick_1.0.0_aarch64-pacman.tar.gz",
+        "nitpick_1.0.0_aarch64.AppImage",
+        "nitpick_1.0.0_aarch64.AppImage.zsync",
+        "Nitpick_1.0.0_aarch64.dmg",
+        "nitpick_1.0.0_amd64.deb",
+        "nitpick_1.0.0_arm64-installer.exe",
+        "nitpick_1.0.0_arm64-portable.zip",
+        "nitpick_1.0.0_arm64.deb",
+        "nitpick_1.0.0_x64-portable.zip",
+        "nitpick_1.0.0_x64-setup.exe",
+        "nitpick_1.0.0_x86_64-pacman.tar.gz",
+        "nitpick_1.0.0_x86_64.AppImage",
+        "nitpick_1.0.0_x86_64.AppImage.zsync",
     ];
 
     fn assets() -> Vec<Asset> {
@@ -152,7 +152,7 @@ mod tests {
             .iter()
             .filter(|name| name.ends_with("-setup.exe"))
             .collect();
-        assert_eq!(setups, vec![&"lgtm-ish_1.0.0_x64-setup.exe"]);
+        assert_eq!(setups, vec![&"nitpick_1.0.0_x64-setup.exe"]);
     }
 
     fn only_match(rule: impl Fn(&str) -> bool) -> &'static str {
@@ -165,7 +165,7 @@ mod tests {
     fn windows_x86_64_never_picks_the_arm64_installer() {
         assert_eq!(
             only_match(|name| windows_asset(name, "x86_64")),
-            "lgtm-ish_1.0.0_x64-setup.exe"
+            "nitpick_1.0.0_x64-setup.exe"
         );
     }
 
@@ -173,24 +173,24 @@ mod tests {
     fn windows_aarch64_picks_the_arm64_installer() {
         assert_eq!(
             only_match(|name| windows_asset(name, "aarch64")),
-            "lgtm-ish_1.0.0_arm64-installer.exe"
+            "nitpick_1.0.0_arm64-installer.exe"
         );
     }
 
     #[test]
     fn macos_picks_the_only_dmg() {
-        assert_eq!(only_match(macos_asset), "LGTM-ish_1.0.0_aarch64.dmg");
+        assert_eq!(only_match(macos_asset), "Nitpick_1.0.0_aarch64.dmg");
     }
 
     #[test]
     fn linux_picks_the_appimage_for_its_arch() {
         assert_eq!(
             only_match(|name| linux_asset(name, "x86_64")),
-            "lgtm-ish_1.0.0_x86_64.AppImage"
+            "nitpick_1.0.0_x86_64.AppImage"
         );
         assert_eq!(
             only_match(|name| linux_asset(name, "aarch64")),
-            "lgtm-ish_1.0.0_aarch64.AppImage"
+            "nitpick_1.0.0_aarch64.AppImage"
         );
     }
 

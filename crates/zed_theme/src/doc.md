@@ -5,7 +5,7 @@ theme works as a full UI theme and as a syntax palette. Pure and GPUI-free: text
 out, no file I/O.
 
 Not here: finding Zed's folders and writing the result into the themes folder
-(`ui_resources/src/themes.rs`), choosing a syntax palette (`lgtm-ish/src/settings_store.rs`).
+(`ui_resources/src/themes.rs`), choosing a syntax palette (`nitpick/src/settings_store.rs`).
 
 ## Files
 

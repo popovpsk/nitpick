@@ -1,15 +1,15 @@
 [package]
-name = "lgtm_ish"
+name = "nitpick"
 version.workspace = true
 edition.workspace = true
 publish = false
 authors = ["Aleksandr Popov <popov.psk@gmail.com>"]
 description = "A side-by-side diff reviewer for huge merge requests"
-homepage = "https://github.com/popovpsk/lgtm-ish"
+homepage = "https://github.com/popovpsk/nitpick"
 license = "MIT"
 
 [[bin]]
-name = "lgtm-ish"
+name = "nitpick"
 path = "src/main.rs"
 
 [features]
@@ -79,11 +79,11 @@ tempfile = "3"
 winresource = "0.1"
 
 [package.metadata.packager]
-product-name = "LGTM-ish"
-identifier = "io.github.popovpsk.lgtm-ish"
+product-name = "Nitpick"
+identifier = "io.github.popovpsk.nitpick"
 category = "DeveloperTool"
 long-description = """
-LGTM-ish is a native side-by-side diff reviewer for huge merge requests, \
+Nitpick is a native side-by-side diff reviewer for huge merge requests, \
 with per-file "viewed" progress so a long review can be picked up where it \
 was left.
 """
@@ -108,7 +108,7 @@ depends = [
 ]
 
 [package.metadata.packager.pacman.files]
-"../../LICENSE" = "/usr/share/licenses/lgtm-ish-bin/LICENSE"
+"../../LICENSE" = "/usr/share/licenses/nitpick-bin/LICENSE"
 
 [package.metadata.packager.deb]
 section = "devel"
@@ -124,7 +124,7 @@ depends = [
 ]
 
 [package.metadata.packager.deb.files]
-"../../LICENSE" = "/usr/share/doc/lgtm-ish/copyright"
+"../../LICENSE" = "/usr/share/doc/nitpick/copyright"
 
 [package.metadata.packager.macos]
 minimum-system-version = "10.15"

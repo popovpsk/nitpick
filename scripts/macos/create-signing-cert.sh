@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IDENTITY="LGTM-ish Self Signed"
-OUT="${1:-$HOME/.lgtm-ish-signing}"
+IDENTITY="Nitpick Self Signed"
+OUT="${1:-$HOME/.nitpick-signing}"
 PASSWORD="${2:-}"
 
 if [ -z "$PASSWORD" ]; then
@@ -15,8 +15,8 @@ mkdir -p "$OUT"
 chmod 700 "$OUT"
 KEY="$OUT/key.pem"
 CERT="$OUT/cert.pem"
-P12="$OUT/lgtm-ish-signing.p12"
-B64="$OUT/lgtm-ish-signing.p12.base64"
+P12="$OUT/nitpick-signing.p12"
+B64="$OUT/nitpick-signing.p12.base64"
 
 if [ -f "$P12" ]; then
   echo "Refusing to overwrite existing cert at $P12"

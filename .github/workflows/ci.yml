@@ -43,7 +43,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Clippy (portable build, updater compiled out)
-        run: cargo clippy -p lgtm_ish --no-default-features --all-targets -- -D warnings
+        run: cargo clippy -p nitpick --no-default-features --all-targets -- -D warnings
 
       - name: AUR template depends match the packager metadata
         run: |
@@ -54,7 +54,7 @@ jobs:
             f && /^depends = \[/ { d = 1; next }
             d && /^\]/ { exit }
             d { gsub(/[",]/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 != "") print }
-          ' crates/lgtm_ish/Cargo.toml | sort)
+          ' crates/nitpick/Cargo.toml | sort)
           if [ "$tmpl" != "$toml" ]; then
             echo "::error::packaging/aur/PKGBUILD.tmpl and [package.metadata.packager.pacman].depends disagree. The template is what reaches AUR users; the packager metadata only shapes the tarball's own generated PKGBUILD, which is discarded."
             diff <(echo "$toml") <(echo "$tmpl") || true
@@ -86,4 +86,4 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: Check (portable build, updater compiled out)
-        run: cargo check -p lgtm_ish --no-default-features --all-targets
+        run: cargo check -p nitpick --no-default-features --all-targets

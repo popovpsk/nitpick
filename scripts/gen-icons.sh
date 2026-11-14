@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Generate application icons for all platforms from crates/ui_resources/assets/lgtm-ish.svg.
+# Generate application icons for all platforms from crates/ui_resources/assets/nitpick.svg.
 #
 # Outputs into crates/ui_resources/assets/app-icon/:
 #   icon.icns                 - macOS bundle icon
@@ -15,12 +15,12 @@
 # sips (macOS). icns is built with iconutil (macOS). The .ico is packed with a
 # stdlib-only Python script, so no ImageMagick/Pillow is required.
 #
-# Re-run this whenever crates/ui_resources/assets/lgtm-ish.svg changes.
+# Re-run this whenever crates/ui_resources/assets/nitpick.svg changes.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ASSETS="$ROOT/crates/ui_resources/assets"
-SVG="$ASSETS/lgtm-ish.svg"
+SVG="$ASSETS/nitpick.svg"
 OUT="$ASSETS/app-icon"
 MASTER_SIZE=1024
 

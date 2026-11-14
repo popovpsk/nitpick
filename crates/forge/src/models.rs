@@ -35,14 +35,14 @@ impl ForgeKind {
     pub fn refspecs(self, number: u64, target_tip: Option<&str>) -> Vec<String> {
         match self {
             ForgeKind::GitLab => vec![format!(
-                "+refs/merge-requests/{number}/head:refs/lgtm-ish/mr/{number}"
+                "+refs/merge-requests/{number}/head:refs/nitpick/mr/{number}"
             )],
             ForgeKind::GitHub => {
                 let mut specs = vec![format!(
-                    "+refs/pull/{number}/head:refs/lgtm-ish/pr/{number}/head"
+                    "+refs/pull/{number}/head:refs/nitpick/pr/{number}/head"
                 )];
                 if let Some(tip) = target_tip.filter(|tip| !tip.is_empty()) {
-                    specs.push(format!("+{tip}:refs/lgtm-ish/pr/{number}/base"));
+                    specs.push(format!("+{tip}:refs/nitpick/pr/{number}/base"));
                 }
                 specs
             }

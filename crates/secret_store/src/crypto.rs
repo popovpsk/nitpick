@@ -4,7 +4,7 @@ use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use sha2::{Digest, Sha256};
 
-const PREFIX: &str = "lgtm-ish:v1:";
+const PREFIX: &str = "nitpick:v1:";
 const NONCE_LEN: usize = 12;
 pub(crate) const KEY_LEN: usize = 32;
 

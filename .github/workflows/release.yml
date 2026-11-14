@@ -60,11 +60,11 @@ jobs:
           - label: linux-x86_64
             os: ubuntu-22.04
             formats: appimage,deb,pacman
-            update_info: gh-releases-zsync|popovpsk|lgtm-ish|latest|lgtm-ish_*_x86_64.AppImage.zsync
+            update_info: gh-releases-zsync|popovpsk|nitpick|latest|nitpick_*_x86_64.AppImage.zsync
           - label: linux-arm64
             os: ubuntu-22.04-arm
             formats: appimage,deb,pacman
-            update_info: gh-releases-zsync|popovpsk|lgtm-ish|latest|lgtm-ish_*_aarch64.AppImage.zsync
+            update_info: gh-releases-zsync|popovpsk|nitpick|latest|nitpick_*_aarch64.AppImage.zsync
     steps:
       - uses: actions/checkout@v5
 
@@ -102,17 +102,17 @@ jobs:
           tool: cargo-packager
 
       - name: Build release binary
-        run: cargo build --release -p lgtm_ish
+        run: cargo build --release -p nitpick
 
       - name: Verify the release binary keeps the updater
         shell: bash
         run: |
-          bin=target/release/lgtm-ish
+          bin=target/release/nitpick
           if [ "$RUNNER_OS" = "Windows" ]; then
-            bin=target/release/lgtm-ish.exe
+            bin=target/release/nitpick.exe
           fi
-          cargo tree -p lgtm_ish -e normal -f '{p} {f}' | grep 'updater v' || true
-          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < "$bin" | grep -c 'lgtm-ish-updater' || true)
+          cargo tree -p nitpick -e normal -f '{p} {f}' | grep 'updater v' || true
+          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < "$bin" | grep -c 'nitpick-updater' || true)
           echo "updater marker occurrences in $bin: $hits"
           if [ "$hits" -eq 0 ]; then
             echo "::error::$bin carries no updater — every published installer must self-update; only the Windows portable zip is built with --no-default-features."
@@ -126,7 +126,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           if [ -n "$APPLE_CERTIFICATE" ]; then
-            python3 scripts/enable_macos_signing.py "LGTM-ish Self Signed"
+            python3 scripts/enable_macos_signing.py "Nitpick Self Signed"
           else
             echo "APPLE_CERTIFICATE secret not set; building unsigned"
           fi
@@ -170,7 +170,7 @@ jobs:
           ls -l "$dest"
 
       - name: Package
-        working-directory: crates/lgtm_ish
+        working-directory: crates/nitpick
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -264,7 +264,7 @@ jobs:
             find target/release -maxdepth 2 -name 'PKGBUILD' -o -maxdepth 2 -name '*.tar.gz'
             exit 1
           fi
-          cp "${found[0]}" "dist/lgtm-ish_${version}_${arch}-pacman.tar.gz"
+          cp "${found[0]}" "dist/nitpick_${version}_${arch}-pacman.tar.gz"
           ls -la dist
 
       - uses: actions/upload-artifact@v5
@@ -312,9 +312,9 @@ jobs:
       - name: Build the portable binary
         shell: bash
         run: |
-          cargo build --release -p lgtm_ish --no-default-features
-          cargo tree -p lgtm_ish -e normal -f '{p} {f}' --no-default-features | grep 'updater v' || true
-          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < target/release/lgtm-ish.exe | grep -c 'lgtm-ish-updater' || true)
+          cargo build --release -p nitpick --no-default-features
+          cargo tree -p nitpick -e normal -f '{p} {f}' --no-default-features | grep 'updater v' || true
+          hits=$(LC_ALL=C tr -c '[:print:]' '\n' < target/release/nitpick.exe | grep -c 'nitpick-updater' || true)
           echo "updater marker occurrences in the portable binary: $hits"
           if [ "$hits" -ne 0 ]; then
             echo "::error::the portable binary still links the updater — --no-default-features did not reach updater/self-update."
@@ -328,9 +328,9 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP 'portable'
           Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item target/release/lgtm-ish.exe $stage
+          Copy-Item target/release/nitpick.exe $stage
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "$stage/*" -DestinationPath "dist/lgtm-ish_${version}_${{ matrix.arch_tag }}-portable.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/nitpick_${version}_${{ matrix.arch_tag }}-portable.zip"
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v5

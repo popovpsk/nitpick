@@ -11,7 +11,7 @@ pub async fn install(url: &str, digest: Option<&str>) -> Result<()> {
     let parent = target.parent().context("AppImage path has no parent")?;
     match replace(url, digest, &target, parent).await {
         Err(error) if denied_by_permissions(&error) => Err(anyhow::anyhow!(
-            "no write access to {} — update LGTM-ish the same way it was installed",
+            "no write access to {} — update Nitpick the same way it was installed",
             parent.display()
         )),
         result => result,

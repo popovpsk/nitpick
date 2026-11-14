@@ -3627,37 +3627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
-name = "lgtm_ish"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "diagnostics",
- "dirs 6.0.0",
- "forge",
- "git_repo",
- "gpui-component",
- "gpui-pre",
- "gpui-pre-platform",
- "image",
- "log",
- "net_runtime",
- "review_core",
- "rstest 0.28.0",
- "secret_store",
- "serde",
- "serde_json",
- "tempfile",
- "tree-sitter-c",
- "tree-sitter-c-sharp",
- "tree-sitter-cmake",
- "tree-sitter-cpp",
- "tree-sitter-swift",
- "ui_resources",
- "updater",
- "winresource",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4054,6 +4023,37 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nitpick"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "diagnostics",
+ "dirs 6.0.0",
+ "forge",
+ "git_repo",
+ "gpui-component",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "image",
+ "log",
+ "net_runtime",
+ "review_core",
+ "rstest 0.28.0",
+ "secret_store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cmake",
+ "tree-sitter-cpp",
+ "tree-sitter-swift",
+ "ui_resources",
+ "updater",
+ "winresource",
+]
 
 [[package]]
 name = "no_std_io2"
