@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,8 +19,8 @@ pub fn find_repositories(root: &Path) -> Result<Vec<PathBuf>, GitError> {
     let root = canonical(root)?;
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut found: Vec<PathBuf> = Vec::new();
-    let mut stack = vec![(root, 0usize)];
-    while let Some((dir, depth)) = stack.pop() {
+    let mut queue = VecDeque::from([(root, 0usize)]);
+    while let Some((dir, depth)) = queue.pop_front() {
         if !visited.insert(dir.clone()) {
             continue;
         }
@@ -37,6 +37,7 @@ pub fn find_repositories(root: &Path) -> Result<Vec<PathBuf>, GitError> {
         }
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
+            Err(err) if depth == 0 => return Err(err.into()),
             Err(err) => {
                 log::debug!("scan {}: {err}", dir.display());
                 continue;
@@ -45,7 +46,7 @@ pub fn find_repositories(root: &Path) -> Result<Vec<PathBuf>, GitError> {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref()) {
+            if name.starts_with('.') {
                 continue;
             }
             let Ok(file_type) = entry.file_type() else {
@@ -61,9 +62,16 @@ pub fn find_repositories(root: &Path) -> Result<Vec<PathBuf>, GitError> {
             } else {
                 continue;
             };
-            if !visited.contains(&path) {
-                stack.push((path, depth + 1));
+            if visited.contains(&path) {
+                continue;
             }
+            if SKIPPED_DIRS.contains(&name.as_ref()) {
+                if matches!(dir_kind(&path), DirKind::Repository) && visited.insert(path.clone()) {
+                    found.push(path);
+                }
+                continue;
+            }
+            queue.push_back((path, depth + 1));
         }
     }
     found.sort();
@@ -88,10 +96,16 @@ fn canonical(path: &Path) -> Result<PathBuf, GitError> {
 }
 
 pub(crate) fn strip_verbatim(path: PathBuf) -> PathBuf {
-    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => path,
+    let Some(rest) = path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) else {
+        return path;
+    };
+    if let Some(share) = rest.strip_prefix(r"UNC\") {
+        return PathBuf::from(format!(r"\\{share}"));
     }
+    if rest.as_bytes().get(1) == Some(&b':') {
+        return PathBuf::from(rest);
+    }
+    path
 }
 
 #[cfg(test)]

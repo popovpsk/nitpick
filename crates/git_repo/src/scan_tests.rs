@@ -42,6 +42,7 @@ fn finds_repositories_and_applies_the_skip_rules() {
     for skipped in ["node_modules", "target", "vendor", "build", "dist"] {
         repo(root, &format!("{skipped}/nested"));
     }
+    repo(root, "group/build");
     linked(root, "worktree");
     linked(root, "group/submodule-like");
     fs::create_dir_all(root.join("bare.git/objects")).unwrap();
@@ -49,7 +50,10 @@ fn finds_repositories_and_applies_the_skip_rules() {
     fs::write(root.join("bare.git/HEAD"), "ref: refs/heads/main\n").unwrap();
     repo(root, "bare.git/refs/not-scanned");
     fs::write(root.join("notes.txt"), "not a dir").unwrap();
-    assert_eq!(found(root), vec!["alpha", "group/beta", "group/sub/gamma"]);
+    assert_eq!(
+        found(root),
+        vec!["alpha", "group/beta", "group/build", "group/sub/gamma"]
+    );
 }
 
 #[rstest]
@@ -69,10 +73,16 @@ fn a_repository_root_is_returned_alone() {
     assert_eq!(found(dir.path()), vec![String::new()]);
 }
 
-#[test]
-fn a_missing_root_is_an_error() {
+#[rstest]
+#[case::missing("missing", false)]
+#[case::a_file("notes.txt", true)]
+fn an_unreadable_root_is_an_error(#[case] name: &str, #[case] create: bool) {
     let dir = TempDir::new().unwrap();
-    assert!(find_repositories(&dir.path().join("missing")).is_err());
+    let root = dir.path().join(name);
+    if create {
+        fs::write(&root, "not a dir").unwrap();
+    }
+    assert!(find_repositories(&root).is_err());
 }
 
 #[cfg(unix)]
@@ -102,9 +112,9 @@ fn symlinks_are_followed_once_and_loops_are_not() {
 
 #[rstest]
 #[case::drive(r"\\?\C:\Users\me\repo", r"C:\Users\me\repo")]
-#[case::unc(r"\\?\UNC\server\share", r"\\?\UNC\server\share")]
+#[case::unc(r"\\?\UNC\server\share", r"\\server\share")]
 #[case::plain("/home/me/repo", "/home/me/repo")]
-fn verbatim_prefix_is_dropped_from_drive_paths(#[case] input: &str, #[case] expected: &str) {
+fn verbatim_prefixes_are_dropped(#[case] input: &str, #[case] expected: &str) {
     assert_eq!(
         strip_verbatim(PathBuf::from(input)),
         PathBuf::from(expected)

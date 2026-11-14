@@ -58,17 +58,20 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 
 ## Scan rule
 
-`find_repositories` walks the folder (the folder itself is depth 0) down to `SCAN_DEPTH`
-(5) and returns sorted, canonical paths, each once:
+`find_repositories` walks the folder breadth-first (the folder itself is depth 0, and a dir
+keeps the depth of its shortest route) down to `SCAN_DEPTH` (5) and returns sorted,
+canonical paths, each once:
 
 - A dir whose `.git` is a directory is a repository; it is returned and not descended into.
 - A `.git` file (submodule, linked worktree) and a bare repository (`HEAD`, `objects/`,
   `refs/`) are skipped whole, so every work tree appears once, as its main checkout.
-- Hidden dirs and `node_modules`, `target`, `vendor`, `build`, `dist` are skipped.
+- Hidden dirs are skipped. `node_modules`, `target`, `vendor`, `build`, `dist` are not
+  descended into, but one that is itself a repository is returned.
 - Symlinked dirs are followed by their canonical target, except a target that contains the
   link (a loop); a visited set of canonical dirs keeps each dir to one visit.
-- Canonical paths drop Windows' `\\?\` prefix for drive paths, so they compare equal to
-  `Repo::root`. An unreadable dir is skipped; only an unreadable folder is an error.
+- Canonical paths drop Windows' `\\?\` prefix (`\\?\UNC\` becomes `\\`), so they compare
+  equal to `Repo::root`. A folder that is missing, not a dir or unreadable is an error; an
+  unreadable dir below it is skipped.
 
 ## Comparison rule
 
