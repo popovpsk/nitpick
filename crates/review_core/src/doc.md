@@ -6,7 +6,7 @@ old/new line pair GitLab positions need, where blame chips go, the fuzzy matcher
 picker filters with, and the syntax language of paths the diff component does not recognise. GPUI-free and git-free;
 only the store does file I/O.
 
-Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
+Not here: producing the file list or the patch (`git_repo`), talking to GitLab or GitHub (`forge`),
 drawing the tree or deciding when to save (`lgtm-ish/src/review/doc.md`), the picker UI
 (`lgtm-ish/src/picker.rs`).
 

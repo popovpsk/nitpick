@@ -78,7 +78,7 @@ fn render_discussion(
         .child(
             h_flex()
                 .gap_1()
-                .when(!replying, |el| {
+                .when(!replying && discussion.can_reply, |el| {
                     el.child(
                         Button::new(ElementId::NamedInteger("reply".into(), ix as u64))
                             .ghost()
@@ -95,7 +95,7 @@ fn render_discussion(
                             }),
                     )
                 })
-                .when(discussion.resolvable, |el| {
+                .when(discussion.resolve_id.is_some(), |el| {
                     el.child(
                         Button::new(ElementId::NamedInteger("resolve".into(), ix as u64))
                             .ghost()
@@ -108,7 +108,8 @@ fn render_discussion(
                             })
                             .on_click(move |_, window, cx| {
                                 resolve_view.update(cx, |this, cx| {
-                                    if let Some(id) = this.discussions.get(ix).map(|d| d.id.clone())
+                                    if let Some(id) =
+                                        this.discussions.get(ix).and_then(|d| d.resolve_id.clone())
                                     {
                                         this.set_resolved(id, !resolved, window, cx)
                                     }
@@ -215,6 +216,7 @@ pub fn open_general_sheet(
             review.composer.as_ref().map(|c| &c.target),
             Some(ComposerTarget::General)
         );
+        let title = review.comments_title();
         let (discussions, general) = review.general_discussions();
         let empty = general.is_empty();
         let mut list = v_flex().gap_3();
@@ -239,47 +241,40 @@ pub fn open_general_sheet(
             );
         }
         let new_view = view.clone();
-        sheet
-            .title(s.general_comments.clone())
-            .size(px(520.))
-            .child(
-                div()
-                    .id("general-comments")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .child(
-                        v_flex()
-                            .gap_3()
-                            .pb_4()
-                            .when(composing, |el| el.child(render_composer(&view, cx)))
-                            .when(!composing, |el| {
-                                el.child(
-                                    Button::new("new-general-comment")
-                                        .outline()
-                                        .small()
-                                        .icon(Icon::new(Icons::MessageSquarePlus))
-                                        .label(s.new_comment.clone())
-                                        .on_click(move |_, window, cx| {
-                                            new_view.update(cx, |this, cx| {
-                                                this.open_composer(
-                                                    ComposerTarget::General,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                        }),
-                                )
-                            })
-                            .when(empty, |el| {
-                                el.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(s.no_comments.clone()),
-                                )
-                            })
-                            .child(list),
-                    ),
-            )
+        sheet.title(title).size(px(520.)).child(
+            div()
+                .id("general-comments")
+                .size_full()
+                .overflow_y_scroll()
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .pb_4()
+                        .when(composing, |el| el.child(render_composer(&view, cx)))
+                        .when(!composing, |el| {
+                            el.child(
+                                Button::new("new-general-comment")
+                                    .outline()
+                                    .small()
+                                    .icon(Icon::new(Icons::MessageSquarePlus))
+                                    .label(s.new_comment.clone())
+                                    .on_click(move |_, window, cx| {
+                                        new_view.update(cx, |this, cx| {
+                                            this.open_composer(ComposerTarget::General, window, cx)
+                                        })
+                                    }),
+                            )
+                        })
+                        .when(empty, |el| {
+                            el.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(s.no_comments.clone()),
+                            )
+                        })
+                        .child(list),
+                ),
+        )
     });
 }

@@ -1,13 +1,16 @@
 use std::path::Path;
 use std::process::Command;
 
+use forge::ForgeKind;
 use git_repo::Repo;
 use gpui_component::Rope;
 use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use review_core::{Change, FileStatus, LineKind, Side};
 use rstest::rstest;
 
-use super::{build, build_working_tree, gitlab_remote, interdiff};
+use super::{
+    ForgeRemote, MrRefs, build, build_working_tree, forge_remote, interdiff, resolve_mr_refs,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -190,8 +193,22 @@ fn fingerprint_changes_when_the_source_changes_the_file_again() {
     assert_eq!(fp(&first, "web/new.ts"), fp(&second, "web/new.ts"));
 }
 
+fn forges(list: &[(ForgeKind, &str)]) -> Vec<(ForgeKind, String)> {
+    list.iter()
+        .map(|(kind, url)| (*kind, url.to_string()))
+        .collect()
+}
+
+fn found(kind: ForgeKind, remote: &str, project: &str) -> Option<ForgeRemote> {
+    Some(ForgeRemote {
+        kind,
+        remote: remote.into(),
+        project: project.into(),
+    })
+}
+
 #[test]
-fn gitlab_remote_matches_the_configured_host() {
+fn forge_remote_matches_the_configured_host() {
     let (dir, repo) = fixture();
     git(
         dir.path(),
@@ -211,11 +228,30 @@ fn gitlab_remote_matches_the_configured_host() {
             "git@gitlab.example.com:group/sub/tool.git",
         ],
     );
+    let gitlab = forges(&[(ForgeKind::GitLab, "https://gitlab.example.com/")]);
     assert_eq!(
-        gitlab_remote(&repo, "https://gitlab.example.com/", None),
-        Some(("origin".to_string(), "group/sub/tool".to_string()))
+        forge_remote(&repo, &gitlab, None),
+        found(ForgeKind::GitLab, "origin", "group/sub/tool")
     );
-    assert_eq!(gitlab_remote(&repo, "https://gitlab.other.org", None), None);
+    let other = forges(&[(ForgeKind::GitLab, "https://gitlab.other.org")]);
+    assert_eq!(forge_remote(&repo, &other, None), None);
+    let github = forges(&[(ForgeKind::GitHub, "https://github.com")]);
+    assert_eq!(
+        forge_remote(&repo, &github, None),
+        found(ForgeKind::GitHub, "upstream", "acme/tool")
+    );
+    let both = forges(&[
+        (ForgeKind::GitLab, "https://gitlab.example.com"),
+        (ForgeKind::GitHub, "https://github.com"),
+    ]);
+    assert_eq!(
+        forge_remote(&repo, &both, None),
+        found(ForgeKind::GitLab, "origin", "group/sub/tool")
+    );
+    assert_eq!(
+        forge_remote(&repo, &both, Some("acme/tool")),
+        found(ForgeKind::GitHub, "upstream", "acme/tool")
+    );
     git(
         dir.path(),
         &[
@@ -225,9 +261,41 @@ fn gitlab_remote_matches_the_configured_host() {
             "git@gitlab.example.com:me/tool.git",
         ],
     );
+    let gitlab = forges(&[(ForgeKind::GitLab, "https://gitlab.example.com")]);
     assert_eq!(
-        gitlab_remote(&repo, "https://gitlab.example.com", Some("me/tool")),
-        Some(("fork".to_string(), "me/tool".to_string()))
+        forge_remote(&repo, &gitlab, Some("me/tool")),
+        found(ForgeKind::GitLab, "fork", "me/tool")
+    );
+}
+
+#[test]
+fn a_request_without_a_merge_base_gets_it_from_git() {
+    let (_dir, repo) = fixture();
+    let head = repo.resolve("feature").unwrap();
+    let tip = repo.resolve("main").unwrap();
+    let base = repo.compare("main", "feature").unwrap().base_sha;
+    assert_ne!(base, tip);
+    let github = forge::DiffRefs {
+        base_sha: None,
+        start_sha: tip.clone(),
+        head_sha: head.clone(),
+    };
+    assert_eq!(
+        resolve_mr_refs(&repo, &github).unwrap(),
+        MrRefs {
+            base_sha: base,
+            start_sha: tip.clone(),
+            head_sha: head.clone(),
+        }
+    );
+    let gitlab = forge::DiffRefs {
+        base_sha: Some("reported".into()),
+        start_sha: tip,
+        head_sha: head,
+    };
+    assert_eq!(
+        resolve_mr_refs(&repo, &gitlab).unwrap().base_sha,
+        "reported"
     );
 }
 

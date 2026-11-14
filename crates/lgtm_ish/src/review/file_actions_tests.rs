@@ -1,9 +1,10 @@
+use forge::ForgeKind;
 use git_repo::Remote;
 use review_core::{Change, LineKind};
 use rstest::rstest;
 
 use super::{
-    Forge, HostOs, Invocation, ProjectWeb, blob_url, change_line, editor_invocation, pick_line,
+    HostOs, Invocation, ProjectWeb, blob_url, change_line, editor_invocation, pick_line,
     project_web_from_mr, project_web_from_remotes,
 };
 
@@ -17,7 +18,7 @@ fn remote(name: &str, url: &str) -> Remote {
 fn gitlab(base: &str) -> ProjectWeb {
     ProjectWeb {
         base: base.to_string(),
-        forge: Forge::GitLab,
+        forge: ForgeKind::GitLab,
     }
 }
 
@@ -45,31 +46,46 @@ fn project_web_from_an_mr_url(#[case] url: &str, #[case] expected: Option<&str>)
 }
 
 #[rstest]
+#[case::github("https://github.com/o/r/pull/12", Some("https://github.com/o/r"))]
+#[case::enterprise(
+    "https://ghe.example.com/team/app/pull/3/",
+    Some("https://ghe.example.com/team/app")
+)]
+#[case::no_project("https://github.com/pull/1", None)]
+fn project_web_from_a_pull_request_url(#[case] url: &str, #[case] expected: Option<&str>) {
+    let expected = expected.map(|base| ProjectWeb {
+        base: base.to_string(),
+        forge: ForgeKind::GitHub,
+    });
+    assert_eq!(project_web_from_mr(url), expected);
+}
+
+#[rstest]
 #[case::origin_first(
     vec![remote("upstream", "git@gitlab.com:up/project.git"), remote("origin", "git@gitlab.com:me/project.git")],
-    Some(("https://gitlab.com/me/project", Forge::GitLab))
+    Some(("https://gitlab.com/me/project", ForgeKind::GitLab))
 )]
 #[case::first_without_origin(
     vec![remote("fork", "https://gitlab.example.com/team/app.git"), remote("other", "git@x.org:a/b.git")],
-    Some(("https://gitlab.example.com/team/app", Forge::GitLab))
+    Some(("https://gitlab.example.com/team/app", ForgeKind::GitLab))
 )]
 #[case::github_ssh(
     vec![remote("origin", "git@github.com:owner/repo.git")],
-    Some(("https://github.com/owner/repo", Forge::GitHub))
+    Some(("https://github.com/owner/repo", ForgeKind::GitHub))
 )]
 #[case::github_https_with_user(
     vec![remote("origin", "https://user@GitHub.com/owner/repo")],
-    Some(("https://GitHub.com/owner/repo", Forge::GitHub))
+    Some(("https://GitHub.com/owner/repo", ForgeKind::GitHub))
 )]
 #[case::ssh_scheme_with_port(
     vec![remote("origin", "ssh://git@gitlab.example.com:2222/group/sub/app.git")],
-    Some(("https://gitlab.example.com/group/sub/app", Forge::GitLab))
+    Some(("https://gitlab.example.com/group/sub/app", ForgeKind::GitLab))
 )]
 #[case::local_path(vec![remote("origin", "/srv/repos/app.git")], None)]
 #[case::none(vec![], None)]
 fn project_web_from_the_remotes(
     #[case] remotes: Vec<Remote>,
-    #[case] expected: Option<(&str, Forge)>,
+    #[case] expected: Option<(&str, ForgeKind)>,
 ) {
     let expected = expected.map(|(base, forge)| ProjectWeb {
         base: base.to_string(),
@@ -80,27 +96,32 @@ fn project_web_from_the_remotes(
 
 #[rstest]
 #[case::gitlab(
-    Forge::GitLab,
+    ForgeKind::GitLab,
     "src/main.rs",
     Some(12),
     "https://h/g/p/-/blob/abc/src/main.rs#L12"
 )]
 #[case::github(
-    Forge::GitHub,
+    ForgeKind::GitHub,
     "src/main.rs",
     Some(3),
     "https://h/g/p/blob/abc/src/main.rs#L3"
 )]
-#[case::no_line(Forge::GitLab, "README.md", None, "https://h/g/p/-/blob/abc/README.md")]
+#[case::no_line(
+    ForgeKind::GitLab,
+    "README.md",
+    None,
+    "https://h/g/p/-/blob/abc/README.md"
+)]
 #[case::escaped(
-    Forge::GitLab,
+    ForgeKind::GitLab,
     "docs/a b#1?.md",
     None,
     "https://h/g/p/-/blob/abc/docs/a%20b%231%3F.md"
 )]
-#[case::unicode(Forge::GitHub, "ü.txt", None, "https://h/g/p/blob/abc/%C3%BC.txt")]
+#[case::unicode(ForgeKind::GitHub, "ü.txt", None, "https://h/g/p/blob/abc/%C3%BC.txt")]
 fn blob_urls(
-    #[case] forge: Forge,
+    #[case] forge: ForgeKind,
     #[case] path: &str,
     #[case] line: Option<u32>,
     #[case] expected: &str,

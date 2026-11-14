@@ -7,8 +7,8 @@ finding the repositories inside a folder. Local operations are blocking and neve
 network; network operations are `async` on `tokio::process` and run on `net_runtime`.
 GPUI-free.
 
-Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API calls
-(`gitlab`), deciding which branches to show or when to pull (the app).
+Not here: patch parsing into hunks and the file tree (`review_core`), GitLab / GitHub API calls
+(`forge`), deciding which branches to show or when to pull (the app).
 
 ## Files
 

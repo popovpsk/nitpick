@@ -1,3 +1,4 @@
+use forge::ForgeKind;
 use git_repo::{Branch, BranchKind, Repo};
 use gpui::{
     AppContext as _, Context, ElementId, Entity, EventEmitter, InteractiveElement as _,
@@ -47,7 +48,7 @@ pub struct StartView {
     source: BranchField,
     mr_input: Entity<InputState>,
     filter: Entity<InputState>,
-    gitlab_project: Option<String>,
+    forge_project: Option<(ForgeKind, String)>,
     merge_requests: Vec<MrRow>,
     filter_text: String,
     mr_state: MrListState,
@@ -66,28 +67,33 @@ struct MrRow {
 }
 
 impl MrRow {
-    fn new(mr: &gitlab::MergeRequest, project: &str) -> Self {
+    fn new(request: &forge::Request, project: &str) -> Self {
         let subtitle = format!(
-            "!{} · {} · {} → {}",
-            mr.iid, mr.author.name, mr.source_branch, mr.target_branch
+            "{} · {} · {} → {}",
+            request.reference(),
+            request.author.name,
+            request.source_branch,
+            request.target_branch
         );
-        let key = format!("{} {} {}", mr.title, subtitle, mr.author.username).to_lowercase();
+        let key =
+            format!("{} {} {}", request.title, subtitle, request.author.username).to_lowercase();
         Self {
-            iid: mr.iid,
-            title: mr.title.clone().into(),
+            iid: request.number,
+            title: request.title.clone().into(),
             subtitle: subtitle.into(),
             key,
-            draft: mr.draft,
+            draft: request.draft,
             source: ReviewSource::MergeRequest {
+                forge: request.kind,
                 project: project.to_string(),
-                iid: mr.iid,
+                number: request.number,
             },
         }
     }
 }
 
 enum MrListState {
-    Unconfigured,
+    Unconfigured(ForgeKind),
     NoRemote,
     Loading,
     Loaded,
@@ -154,10 +160,10 @@ impl StartView {
             },
             mr_input,
             filter,
-            gitlab_project: None,
+            forge_project: None,
             merge_requests: Vec::new(),
             filter_text: String::new(),
-            mr_state: MrListState::Unconfigured,
+            mr_state: MrListState::Loading,
             _branches_task: Task::ready(()),
             _mrs_task: Task::ready(()),
             _subscriptions: subscriptions,
@@ -281,52 +287,74 @@ impl StartView {
     }
 
     fn load_merge_requests(&mut self, cx: &mut Context<Self>) {
-        let Some(client) = settings(cx).gitlab_client() else {
-            self.mr_state = MrListState::Unconfigured;
-            self._mrs_task = Task::ready(());
-            return;
-        };
+        let forges = settings(cx).forge_hosts();
+        let connected: Vec<(ForgeKind, String)> = forges
+            .iter()
+            .filter(|(kind, _)| settings(cx).forge_configured(*kind))
+            .cloned()
+            .collect();
+        let gitlab_ready = settings(cx).forge_configured(ForgeKind::GitLab);
         self.mr_state = MrListState::Loading;
         let repo = self.repo.clone();
         let task = cx.spawn(async move |this, cx| {
-            let base_url = client.base_url().to_string();
-            let project = cx
+            let found = cx
                 .background_spawn(async move {
-                    crate::review::model::gitlab_remote(&repo, &base_url, None)
+                    crate::review::model::forge_remote(&repo, &connected, None)
+                        .or_else(|| crate::review::model::forge_remote(&repo, &forges, None))
                 })
-                .await
-                .map(|(_, path)| path);
-            let Some(project) = project else {
+                .await;
+            let Some(found) = found else {
                 let _ = this.update(cx, |this, cx| {
-                    this.mr_state = MrListState::NoRemote;
+                    this.forge_project = None;
+                    this.mr_state = if gitlab_ready {
+                        MrListState::NoRemote
+                    } else {
+                        MrListState::Unconfigured(ForgeKind::GitLab)
+                    };
                     cx.notify();
                 });
                 return;
             };
+            let client = this
+                .update(cx, |this, cx| {
+                    this.forge_project = Some((found.kind, found.project.clone()));
+                    let client = settings(cx).forge_client(found.kind);
+                    if client.is_none() {
+                        this.mr_state = MrListState::Unconfigured(found.kind);
+                    }
+                    cx.notify();
+                    client
+                })
+                .ok()
+                .flatten();
+            let Some(client) = client else {
+                return;
+            };
+            let project = found.project;
             let query_project = project.clone();
-            let result = net_runtime::spawn(async move {
-                client
-                    .merge_requests(
-                        &gitlab::ProjectRef::Path(query_project),
-                        &gitlab::MrQuery::default(),
-                    )
-                    .await
-            })
-            .await;
+            let result =
+                net_runtime::spawn(async move { client.open_requests(&query_project).await }).await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(list) => {
-                        this.merge_requests =
-                            list.iter().map(|mr| MrRow::new(mr, &project)).collect();
+                        this.merge_requests = list
+                            .iter()
+                            .map(|request| MrRow::new(request, &project))
+                            .collect();
                         this.mr_state = MrListState::Loaded;
                     }
                     Err(err) => this.mr_state = MrListState::Failed(err.to_string().into()),
                 }
-                this.gitlab_project = Some(project);
                 cx.notify();
             });
         });
         self._mrs_task = task;
+    }
+
+    fn forge_kind(&self) -> ForgeKind {
+        self.forge_project
+            .as_ref()
+            .map_or(ForgeKind::GitLab, |(kind, _)| *kind)
     }
 
     fn compare(&mut self, cx: &mut Context<Self>) {
@@ -350,19 +378,21 @@ impl StartView {
         if text.is_empty() {
             return;
         }
-        let base = settings(cx).gitlab_url.trim().to_string();
-        if let Some(url) = gitlab::parse_mr_url_with_base(&text, &base) {
+        let gitlab_base = settings(cx).forge_url(ForgeKind::GitLab).to_string();
+        let github_base = settings(cx).forge_url(ForgeKind::GitHub).to_string();
+        if let Some(url) = forge::parse_request_url(&text, &gitlab_base, &github_base) {
             cx.emit(StartEvent::Open(ReviewSource::MergeRequest {
-                project: url.project_path,
-                iid: url.iid,
+                forge: url.kind,
+                project: url.project,
+                number: url.number,
             }));
-        } else if let (Some(iid), Some(project)) = (
-            gitlab::parse_mr_reference(&text),
-            self.gitlab_project.clone(),
-        ) {
+        } else if let (Some(number), Some((forge, project))) =
+            (forge::parse_reference(&text), self.forge_project.clone())
+        {
             cx.emit(StartEvent::Open(ReviewSource::MergeRequest {
+                forge,
                 project,
-                iid,
+                number,
             }));
         }
     }
@@ -371,14 +401,17 @@ impl StartView {
         let s = tr();
         let theme = cx.theme();
         let body = match &self.mr_state {
-            MrListState::Unconfigured => v_flex()
+            MrListState::Unconfigured(kind) => v_flex()
                 .gap_2()
                 .items_start()
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child(s.gitlab_not_configured.clone()),
+                        .child(match kind {
+                            ForgeKind::GitLab => s.gitlab_not_configured.clone(),
+                            ForgeKind::GitHub => s.github_not_configured.clone(),
+                        }),
                 )
                 .child(
                     Button::new("open-settings")
@@ -392,7 +425,7 @@ impl StartView {
             MrListState::NoRemote => div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(s.no_gitlab_remote.clone())
+                .child(s.no_forge_remote.clone())
                 .into_any_element(),
             MrListState::Loading => h_flex()
                 .gap_2()
@@ -459,12 +492,12 @@ impl StartView {
                     );
                 }
                 if shown == 0 {
-                    list = list.child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(s.no_mrs.clone()),
-                    );
+                    list = list.child(div().text_sm().text_color(theme.muted_foreground).child(
+                        match self.forge_kind() {
+                            ForgeKind::GitLab => s.no_mrs.clone(),
+                            ForgeKind::GitHub => s.no_prs.clone(),
+                        },
+                    ));
                 }
                 list.into_any_element()
             }
@@ -651,7 +684,11 @@ impl Render for StartView {
                         cx.emit(StartEvent::Open(ReviewSource::WorkingTree))
                     })),
             );
-        let mrs = card(s.merge_requests.clone(), Icon::new(Icons::GitPullRequest)).child(mr_list);
+        let requests_title = match self.forge_kind() {
+            ForgeKind::GitLab => s.merge_requests.clone(),
+            ForgeKind::GitHub => s.pull_requests.clone(),
+        };
+        let mrs = card(requests_title, Icon::new(Icons::GitPullRequest)).child(mr_list);
         div()
             .id("start-scroll")
             .size_full()

@@ -15,8 +15,9 @@ window options and opening windows (`main.rs`).
   review button, the settings button.
 - `window_tabs.rs` — the strip of native window tabs, and next/previous tab.
 - `start.rs` — `StartView`: target/source branch pickers (fuzzy `Picker`s) for a
-  comparison, the uncommitted-changes review, and the GitLab merge requests of the
-  repository's GitLab remote (list, filter, URL or `!iid`).
+  comparison, the uncommitted-changes review, and the open merge requests (GitLab) or pull
+  requests (GitHub) of the repository's remote on a configured host (list, filter, URL,
+  `!123` or `#123`).
 
 ## Spec
 
@@ -53,9 +54,17 @@ window options and opening windows (`main.rs`).
   branch as the source, and keeps the previous picks across a refresh. Opening a branch
   review from anywhere (including the review header's branch pickers) moves the start
   screen's picks to it. The merge-base explanation is the Compare button's tooltip.
-- The merge request list needs a GitLab URL and token in settings and a remote whose host
-  matches that URL; the project path comes from the remote URL. Branch and MR loads each keep
-  one task, so a refresh cancels the previous load instead of racing it. MR rows (title,
-  subtitle, lowercase filter key) are built once per load, not per frame.
+- The request list picks the host from the remotes (`review::model::forge_remote` over
+  `Settings::forge_hosts`: the GitLab URL when set, the GitHub URL or github.com): a remote
+  on a connected host (URL and token) wins, else any matching remote, so a github.com
+  `origin` does not hide a connected GitLab remote; within that, the `origin` remote, else
+  the first. The project path comes from the remote URL. No match says GitLab is not
+  connected (no GitLab token) or that no remote points to a configured server; a match on a
+  host without a token says that host is not connected. The card title and the empty-list
+  text follow the host ("merge requests" / "pull requests"). The input takes a GitLab or
+  GitHub request URL (`forge::parse_request_url`, the host from the URL) or `!123` / `#123` /
+  `123` for the listed host. Branch and request loads each keep one task, so a refresh
+  cancels the previous load instead of racing it. Rows (title, subtitle with the host's
+  reference, lowercase filter key) are built once per load, not per frame.
 - Closing a window tab: the current window closes through the click's own `window`, since
   `WindowHandle::update` on the window being dispatched fails.

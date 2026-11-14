@@ -2,10 +2,11 @@
 
 The application binary: startup (logging, secrets, settings, themes, language, updater), the
 app menu, one window per repository, settings, and the glue that runs `git_repo` on GPUI's
-background executor and `gitlab` / network git on `net_runtime`. Folder modules hold the
+background executor and the `forge` clients / network git on `net_runtime`. Folder modules hold the
 window (`workspace/`) and the review itself (`review/`); this file covers the crate-root files.
 
-Not here: git (`git_repo`), the GitLab client (`gitlab`), the tree / viewed / line-map model
+Not here: git (`git_repo`), the host clients (`forge` over `gitlab` and `github`; the app
+uses only `forge`), the tree / viewed / line-map model
 (`review_core`), token sealing (`secret_store`), icons and strings (`ui_resources`),
 packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 
@@ -14,8 +15,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `main.rs` — `main`, `build_window_options` (with the macOS `tabbing_identifier`),
   `open_window`, restoring the windows open at the last quit, app-level action handlers.
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
-- `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab
-  token sealed by `secret_store`), the `SettingsStore` global, `update_settings`,
+- `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
+  GitHub tokens sealed by `secret_store`; `forge_url` (an empty GitHub URL is github.com),
+  `forge_configured`, `forge_hosts`, `forge_client`), the `SettingsStore` global, `update_settings`,
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
@@ -23,7 +25,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   `WrapLines`); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower).
-- `settings_store_tests.rs` — `settings.json` without the newer fields still loads; syntax
+- `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub included)
+  still loads; the GitHub host default and override; syntax
   palettes per appearance; fitting the split ratio to a width.
 - `settings_view.rs` — the settings screen, three pages: Settings, Hidden files and
   Shortcuts (the shortcut groups stay out of the general page). `reveal` opens a page by
@@ -35,8 +38,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   after typing stops by a detached task, and reloads when the saved value differs from the
   one it last loaded or saved and the field is not focused), hidden-file patterns (all
   repositories, and the window's repository when it has one; saved 400 ms after typing
-  stops by a detached task, invalid lines named under the field), GitLab URL + token with a
-  connection check. A save applies the difference between the list the field was loaded
+  stops by a detached task, invalid lines named under the field), GitLab and GitHub groups
+  (`ForgeForm`: URL + token, "Save and check" saves both fields and shows "Connected as
+  @user" or the error). A save applies the difference between the list the field was loaded
   from and what was typed (`review_core::hidden::merge_patterns`), so a pattern added from a
   tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
   settings change, and `set_repository` reloads both each time the screen opens.
@@ -52,7 +56,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
 - `recent.rs` — `RecentRepos` global (`recent.json` in the data dir): every known
   repository (opened or added from a folder) with the last review of each, and the
   repositories of the windows open at quit.
-- `recent_tests.rs` — ordering, bulk add, and the stored format on a `TempDir`.
+- `recent_tests.rs` — ordering, bulk add, and the stored format on a `TempDir`; a stored
+  merge request without `forge` is GitLab, a GitHub one round-trips.
 - `picker.rs` — `Picker`: the fuzzy picker every repository, branch and commit chooser uses, a
   `Popover` around gpui-component's searchable `List` with a `PickerDelegate`;
   `PickerEntry`, `branch_entries`, `PickerEvent` (`Open`, `Confirm { entry, secondary }`).
@@ -120,7 +125,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   `opened_at` newest first, then never-opened ones (`opened_at` 0, from "Add Repositories
   from Folder…") by folder name, case-insensitively. Opening sets `opened_at` to
   `max(now, newest + 1)`, so opens within one second still order. The format is the old
-  one (`repos`, `open_windows`, same fields), so older files load unchanged.
+  one (`repos`, `open_windows`, same fields), so older files load unchanged. A stored
+  merge request is `{"kind":"merge_request","project":..,"iid":..}` plus `"forge":"github"`
+  for GitHub; a missing `forge` means GitLab and GitLab's is never written, so GitLab entries
+  keep the old shape.
 - `AddRepositories` and `OpenRepository` with no window open just open a welcome window.
 - Picker: the owner keeps one `Picker` entity per chooser and renders
   `picker.popover(id, trigger, cx)`; the open state lives in the `Picker` (the popover is
