@@ -72,6 +72,7 @@ impl Picker {
         let delegate = PickerDelegate {
             icon: icon.into(),
             entries: Arc::default(),
+            shown: Arc::default(),
             rows: Vec::new(),
             query: String::new(),
             checked: None,
@@ -228,6 +229,7 @@ struct PickerRow {
 pub struct PickerDelegate {
     icon: Icon,
     entries: Arc<Vec<PickerEntry>>,
+    shown: Arc<Vec<PickerEntry>>,
     rows: Vec<PickerRow>,
     query: String,
     checked: Option<usize>,
@@ -249,6 +251,10 @@ impl PickerDelegate {
         Some(checked_row.unwrap_or(0))
     }
 
+    fn is_current(&self) -> bool {
+        Arc::ptr_eq(&self.shown, &self.entries)
+    }
+
     fn start_search(
         &mut self,
         query: String,
@@ -259,10 +265,14 @@ impl PickerDelegate {
         let entries = self.entries.clone();
         self.search = cx.spawn_in(window, async move |list, cx| {
             let rows = cx
-                .background_spawn(async move { rank_rows(&query, &entries) })
+                .background_spawn({
+                    let entries = entries.clone();
+                    async move { rank_rows(&query, &entries) }
+                })
                 .await;
             let _ = list.update_in(cx, |list, window, cx| {
                 let delegate = list.delegate_mut();
+                delegate.shown = entries;
                 delegate.rows = rows;
                 let row = delegate.initial_row().map(IndexPath::new);
                 list.set_selected_index(row, window, cx);
@@ -319,7 +329,7 @@ impl ListDelegate for PickerDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let row = self.rows.get(ix.row)?;
-        let entry = self.entries.get(row.entry)?;
+        let entry = self.shown.get(row.entry)?;
         let theme = cx.theme();
         let highlight = HighlightStyle {
             color: Some(theme.blue),
@@ -333,7 +343,7 @@ impl ListDelegate for PickerDelegate {
             ListItem::new(("picker-row", ix.row))
                 .px_2()
                 .check_icon(IconName::Check)
-                .confirmed(self.checked == Some(row.entry))
+                .confirmed(self.is_current() && self.checked == Some(row.entry))
                 .child(
                     h_flex()
                         .w_full()
@@ -402,6 +412,7 @@ impl ListDelegate for PickerDelegate {
     fn confirm(&mut self, secondary: bool, _: &mut Window, _: &mut Context<ListState<Self>>) {
         self.confirmed = self
             .selected
+            .filter(|_| self.is_current())
             .and_then(|row| self.rows.get(row))
             .map(|row| (row.entry, secondary));
     }
