@@ -1,3 +1,4 @@
+mod blame;
 mod branch_picker;
 mod comments;
 mod diff_panel;
@@ -32,6 +33,7 @@ use crate::localization::tr;
 use crate::settings_store::{
     DiffLayout, SettingsStore, TREE_WIDTH_RANGE, settings, update_settings,
 };
+pub use blame::ToggleBlame;
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
 pub use viewed::flush_all as flush_viewed;
@@ -232,6 +234,7 @@ pub struct ReviewView {
     busy: Option<Busy>,
     _tree_close: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
+    blame: blame::BlameState,
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -312,6 +315,7 @@ impl ReviewView {
             busy: None,
             _tree_close: Task::ready(()),
             branch_pickers,
+            blame: blame::BlameState::new(cx),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
             _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
@@ -461,6 +465,7 @@ impl ReviewView {
                             })
                     });
                 if unchanged {
+                    self.retry_failed_blame(cx);
                     cx.notify();
                     return;
                 }
@@ -509,6 +514,7 @@ impl ReviewView {
                 if self.mr.is_some() {
                     self.load_discussions(cx);
                 }
+                self.request_blame(cx);
             }
             Err(err) => {
                 log::warn!("review load failed: {err:#}");
@@ -686,6 +692,7 @@ impl ReviewView {
             self.sync_diff_mode(cx);
             self.diff
                 .update(cx, |state, cx| state.set_files([diff_file], cx));
+            self.request_blame(cx);
         }
         if let Some(node) = self.tree.file_node(ix) {
             let mut changed = false;

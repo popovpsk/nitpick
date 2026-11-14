@@ -67,6 +67,79 @@ impl LineMap {
         self.old_to_new.is_empty() && self.new_to_old.is_empty()
     }
 
+    pub fn shown_block_starts(
+        &self,
+        side: Side,
+        context: Option<usize>,
+        min_folded: usize,
+    ) -> Vec<u32> {
+        let (own, other) = match side {
+            Side::Old => (&self.old_to_new, &self.new_to_old),
+            Side::New => (&self.new_to_old, &self.old_to_new),
+        };
+        let count = own.len();
+        let mut shown: Vec<bool> = match context {
+            None => own.iter().map(|value| *value != ABSENT).collect(),
+            Some(context) => {
+                let mut bounds = vec![0isize; count + 1];
+                let mut window = |start: usize, end: usize| {
+                    let start = start.saturating_sub(context);
+                    let end = end.saturating_add(context).min(count);
+                    if start < end {
+                        bounds[start] += 1;
+                        bounds[end] -= 1;
+                    }
+                };
+                let mut ix = 0;
+                while ix < count {
+                    if own[ix] != CHANGED {
+                        ix += 1;
+                        continue;
+                    }
+                    let start = ix;
+                    while ix < count && own[ix] == CHANGED {
+                        ix += 1;
+                    }
+                    window(start, ix);
+                }
+                let mut next = 0;
+                for value in other {
+                    match *value {
+                        ABSENT => {}
+                        CHANGED => window(next, next),
+                        line => next = line as usize,
+                    }
+                }
+                let mut active = 0;
+                own.iter()
+                    .zip(&bounds)
+                    .map(|(value, bound)| {
+                        active += bound;
+                        active > 0 && *value != ABSENT
+                    })
+                    .collect()
+            }
+        };
+        let mut ix = 0;
+        while ix < count {
+            if shown[ix] || own[ix] == ABSENT {
+                ix += 1;
+                continue;
+            }
+            let start = ix;
+            while ix < count && !shown[ix] && own[ix] != ABSENT {
+                ix += 1;
+            }
+            if ix - start < min_folded {
+                shown[start..ix].fill(true);
+            }
+        }
+        (0..count)
+            .filter(|&ix| shown[ix] && (ix == 0 || !shown[ix - 1]))
+            .map(|ix| ix as u32 + 1)
+            .collect()
+    }
+
     fn set(map: &mut Vec<u32>, line: u32, value: u32) {
         let ix = line.saturating_sub(1) as usize;
         if map.len() <= ix {

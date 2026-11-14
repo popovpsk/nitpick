@@ -23,7 +23,7 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`lgtm-ish/s
   re-import keeps its names; a non-theme file writes nothing.
 - `themes/` — one JSON per theme family.
 - `i18n/mod.rs` — the `Strings` schema, `lang!` / `languages!`, `Lang`, the active-language
-  atomic (`set_active`, `active`, `strings`), interpolation accessors.
+  atomic (`set_active`, `active`, `strings`), interpolation accessors, `relative_time`.
 - `i18n/en.rs`, `i18n/ru.rs` — one `static` table per language.
 - `../build.rs` — reruns the build when any file under `assets/` changes, so `rust-embed`
   picks up new icons.
@@ -52,4 +52,8 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`lgtm-ish/s
 - Interpolated strings keep a `{}` template in a `*_t` field and are read only through an
   accessor on `impl Strings`; a test checks each template's placeholder count, since `fill`
   silently drops mismatched arguments.
+- Plural templates (`*_ago_t`) hold `|`-separated forms, each with one `{}`: two forms use
+  the English rule (one / other), three the Russian one (1, 21 / 2–4, 22–24 / the rest);
+  a test checks the form counts. `relative_time` picks minutes, hours, days, 30-day months
+  or 365-day years, and "just now" under a minute (or for a time in the future).
 - `Lang::from_locale` matches the language prefix of an OS locale and falls back to English.

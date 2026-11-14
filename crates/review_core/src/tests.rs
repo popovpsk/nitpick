@@ -276,6 +276,69 @@ fn changes_are_runs_of_changed_lines_with_context_above_as_anchor() {
     );
 }
 
+fn whole_file_patch(ops: &str) -> String {
+    let old = ops.chars().filter(|op| *op != '+').count();
+    let new = ops.chars().filter(|op| *op != '-').count();
+    let mut patch = format!("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,{old} +1,{new} @@\n");
+    for (ix, op) in ops.chars().enumerate() {
+        let prefix = if op == '.' { ' ' } else { op };
+        patch.push_str(&format!("{prefix}line {ix}\n"));
+    }
+    patch
+}
+
+#[rstest]
+#[case::added_line(".........+..........", Side::New, Some(3), &[7])]
+#[case::added_line_old_side(".........+..........", Side::Old, Some(3), &[7])]
+#[case::removed_line(".........-..........", Side::New, Some(3), &[7])]
+#[case::removed_line_old_side(".........-..........", Side::Old, Some(3), &[7])]
+#[case::short_fold_stays_open("......+.......+......", Side::New, Some(3), &[4])]
+#[case::two_line_fold_folds("......+........+......", Side::New, Some(3), &[4, 13])]
+#[case::change_at_the_top("+..........", Side::New, Some(3), &[1])]
+#[case::short_fold_at_the_top("..+..........", Side::New, Some(3), &[1])]
+#[case::replaced_block("......--+.........", Side::New, Some(3), &[4])]
+#[case::no_folding("......+........+......", Side::New, None, &[1])]
+#[case::no_changes("......", Side::New, Some(3), &[])]
+fn shown_block_starts_follow_the_folding(
+    #[case] ops: &str,
+    #[case] side: Side,
+    #[case] context: Option<usize>,
+    #[case] expected: &[u32],
+) {
+    let map = &line_maps(&whole_file_patch(ops))[0];
+    assert_eq!(map.shown_block_starts(side, context, 2), expected);
+}
+
+#[test]
+fn shown_block_starts_begin_each_hunk_of_a_short_patch() {
+    let patch = "\
+diff --git a/f b/f
+--- a/f
++++ b/f
+@@ -1,7 +1,7 @@
+ a
+ b
+ c
+-d
++D
+ e
+ f
+ g
+@@ -20,7 +20,7 @@
+ t
+ u
+ v
+-w
++W
+ x
+ y
+ z
+";
+    let map = &line_maps(patch)[0];
+    assert_eq!(map.shown_block_starts(Side::New, Some(3), 2), vec![1, 20]);
+    assert_eq!(map.shown_block_starts(Side::Old, None, 2), vec![1, 20]);
+}
+
 #[test]
 fn a_filtered_tree_leaves_hidden_files_out_and_keeps_indices() {
     let files = [

@@ -162,6 +162,12 @@ pub struct Strings {
     pub installed_in_zed: SharedString,
     pub choose_file: SharedString,
     pub zed_theme_prompt: SharedString,
+    pub toggle_blame: SharedString,
+    pub cmd_toggle_blame: SharedString,
+    pub blame_you: SharedString,
+    pub blame_uncommitted: SharedString,
+    pub blame_failed: SharedString,
+    pub just_now: SharedString,
 
     pub add_repositories_ellipsis: SharedString,
     pub switch_repository_tooltip: SharedString,
@@ -194,6 +200,11 @@ pub struct Strings {
     pub hide_everywhere_t: SharedString,
     pub hidden_files_repo_t: SharedString,
     pub hidden_files_invalid_t: SharedString,
+    pub minutes_ago_t: SharedString,
+    pub hours_ago_t: SharedString,
+    pub days_ago_t: SharedString,
+    pub months_ago_t: SharedString,
+    pub years_ago_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -288,6 +299,50 @@ impl Strings {
     pub fn zed_import_failed(&self, err: &str) -> String {
         fill(&self.zed_import_failed_t, &[err])
     }
+
+    pub fn relative_time(&self, seconds: i64) -> String {
+        const MINUTE: i64 = 60;
+        const HOUR: i64 = 60 * MINUTE;
+        const DAY: i64 = 24 * HOUR;
+        const MONTH: i64 = 30 * DAY;
+        const YEAR: i64 = 365 * DAY;
+        let (template, unit) = if seconds < MINUTE {
+            return self.just_now.to_string();
+        } else if seconds < HOUR {
+            (&self.minutes_ago_t, MINUTE)
+        } else if seconds < DAY {
+            (&self.hours_ago_t, HOUR)
+        } else if seconds < MONTH {
+            (&self.days_ago_t, DAY)
+        } else if seconds < YEAR {
+            (&self.months_ago_t, MONTH)
+        } else {
+            (&self.years_ago_t, YEAR)
+        };
+        let count = seconds / unit;
+        plural(template, count.unsigned_abs())
+    }
+}
+
+fn plural(template: &str, count: u64) -> String {
+    let forms: Vec<&str> = template.split('|').collect();
+    let form = if forms.len() == 3 {
+        match (count % 10, count % 100) {
+            (1, rest) if rest != 11 => 0,
+            (2..=4, rest) if !(12..=14).contains(&rest) => 1,
+            _ => 2,
+        }
+    } else {
+        usize::from(count != 1)
+    };
+    fill(
+        forms
+            .get(form)
+            .or(forms.last())
+            .copied()
+            .unwrap_or_default(),
+        &[&count.to_string()],
+    )
 }
 
 #[macro_export]
@@ -406,6 +461,26 @@ mod tests {
     }
 
     #[test]
+    fn relative_time_picks_the_unit_and_plural_form() {
+        let en = Lang::En.strings();
+        let ru = Lang::Ru.strings();
+        let day = 24 * 3600;
+        assert_eq!(en.relative_time(5), "just now");
+        assert_eq!(en.relative_time(-30), "just now");
+        assert_eq!(en.relative_time(60), "1 minute ago");
+        assert_eq!(en.relative_time(3 * 3600 + 5), "3 hours ago");
+        assert_eq!(en.relative_time(day), "1 day ago");
+        assert_eq!(en.relative_time(45 * day), "1 month ago");
+        assert_eq!(en.relative_time(800 * day), "2 years ago");
+        assert_eq!(ru.relative_time(21 * 60), "21 минуту назад");
+        assert_eq!(ru.relative_time(3 * 3600), "3 часа назад");
+        assert_eq!(ru.relative_time(12 * 3600), "12 часов назад");
+        assert_eq!(ru.relative_time(22 * day), "22 дня назад");
+        assert_eq!(ru.relative_time(11 * 30 * day), "11 месяцев назад");
+        assert_eq!(ru.relative_time(5 * 365 * day), "5 лет назад");
+    }
+
+    #[test]
     fn interpolated_templates_have_one_placeholder() {
         for &lang in Lang::all() {
             let s = lang.strings();
@@ -431,6 +506,19 @@ mod tests {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }
             assert_eq!(s.merge_base_t.matches("{}").count(), 2, "{lang:?}");
+            for template in [
+                &s.minutes_ago_t,
+                &s.hours_ago_t,
+                &s.days_ago_t,
+                &s.months_ago_t,
+                &s.years_ago_t,
+            ] {
+                let forms: Vec<&str> = template.split('|').collect();
+                assert!(matches!(forms.len(), 2 | 3), "{lang:?}: {template}");
+                for form in forms {
+                    assert_eq!(form.matches("{}").count(), 1, "{lang:?}: {template}");
+                }
+            }
             assert_eq!(s.viewed_progress_t.matches("{}").count(), 2, "{lang:?}");
         }
     }

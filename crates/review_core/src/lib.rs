@@ -1,3 +1,4 @@
+pub mod blame;
 pub mod fuzzy;
 pub mod hidden;
 pub mod language;
@@ -12,6 +13,8 @@ pub use line_map::{Change, LineKind, LineMap, Side, line_maps};
 pub use tree::{FileStatus, FileTree, Node, NodeKind, Progress, Row, TreeFile};
 pub use viewed::{ViewedStore, fingerprint, write_atomic};
 
+#[cfg(test)]
+mod blame_tests;
 #[cfg(test)]
 mod fuzzy_tests;
 #[cfg(test)]

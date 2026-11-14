@@ -39,6 +39,7 @@ gpui_kit_assets::icon_assets!(
         FilePen,
         EyeOff,
         CircleX,
+        GitCommitHorizontal,
     ]
 );
 

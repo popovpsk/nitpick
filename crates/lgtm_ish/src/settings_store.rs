@@ -98,6 +98,8 @@ pub struct Settings {
     pub gitlab_token: String,
     #[serde(default)]
     pub syntax_colors: SyntaxPalettes,
+    #[serde(default)]
+    pub show_blame: bool,
 }
 
 fn default_true() -> bool {
@@ -127,6 +129,7 @@ impl Default for Settings {
             gitlab_url: String::new(),
             gitlab_token: String::new(),
             syntax_colors: SyntaxPalettes::default(),
+            show_blame: false,
         }
     }
 }

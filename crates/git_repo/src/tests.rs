@@ -3,15 +3,17 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rstest::rstest;
 use tempfile::TempDir;
 
+use crate::blame::parse_porcelain;
 use crate::diff::parse_raw_numstat;
 use crate::{
-    Branch, BranchKind, ChangeStatus, ChangedFile, DiffOptions, GitError, PullOutcome, Remote,
-    RemoteLocation, Repo, parse_remote_url,
+    BlameLine, Branch, BranchKind, ChangeStatus, ChangedFile, DiffOptions, GitError, PullOutcome,
+    Remote, RemoteLocation, Repo, parse_remote_url,
 };
 
 type Change<'a> = (&'a str, Option<(&'a str, &'a [u8])>);
@@ -1283,4 +1285,199 @@ fn untracked_paths_keep_non_ascii_control_characters_raw() {
         .working_tree_diff(&head, &DiffOptions::default())
         .unwrap();
     assert!(patch.contains("diff --git a/odd\u{85}name.txt b/odd\u{85}name.txt\n"));
+}
+
+fn blame_ids(lines: &[BlameLine]) -> Vec<&str> {
+    lines.iter().map(|line| line.commit.id.as_str()).collect()
+}
+
+#[test]
+fn blame_follows_every_commit_and_shares_commit_details() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let one = fixture.commit(&path, &[("f.txt", "a\nb\nc\nd\n")], "one");
+    fixture.write(&path, "f.txt", "a\nB\nc\nd\ne\n");
+    fixture.run(
+        &path,
+        &["commit", "-q", "-am", "two: \u{e9}dit"],
+        &[("GIT_AUTHOR_NAME", OsStr::new("Bob Builder"))],
+        None,
+    );
+    let two = fixture.rev(&path, "HEAD");
+    let three = fixture.commit(&path, &[("f.txt", "a\nB\nC\nd\ne\n")], "three");
+    let repo = Repo::open(&path).unwrap();
+
+    let lines = repo.blame(Some(&three), "f.txt").unwrap();
+    assert_eq!(
+        blame_ids(&lines),
+        vec![
+            one.as_str(),
+            two.as_str(),
+            three.as_str(),
+            one.as_str(),
+            two.as_str()
+        ]
+    );
+    let second = &lines[1].commit;
+    assert_eq!(second.author, "Bob Builder");
+    assert_eq!(second.summary, "two: \u{e9}dit");
+    assert!(second.author_time > lines[0].commit.author_time);
+    assert!(!second.is_uncommitted());
+    assert!(Arc::ptr_eq(&lines[0].commit, &lines[3].commit));
+    assert!(Arc::ptr_eq(&lines[1].commit, &lines[4].commit));
+    assert_eq!(blame_ids(&repo.blame(Some(&two), "f.txt").unwrap())[2], one);
+}
+
+#[test]
+fn blame_follows_a_renamed_file() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let first = fixture.commit(&path, &[("old name.txt", "keep\nme\n")], "first");
+    fixture.git(&path, &["mv", "old name.txt", "new name.txt"]);
+    fixture.write(&path, "new name.txt", "keep\nme\nmore\n");
+    fixture.git(&path, &["add", "-A"]);
+    fixture.git(&path, &["commit", "-q", "-m", "rename"]);
+    let renamed = fixture.rev(&path, "HEAD");
+    let repo = Repo::open(&path).unwrap();
+
+    let lines = repo.blame(Some("HEAD"), "new name.txt").unwrap();
+    assert_eq!(
+        blame_ids(&lines),
+        vec![first.as_str(), first.as_str(), renamed.as_str()]
+    );
+    assert!(
+        repo.blame(Some(&renamed), "old name.txt")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn blame_of_the_work_tree_marks_uncommitted_lines() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(&path, &[("f.txt", "a\nb\nc\n")], "one");
+    fixture.write(&path, "f.txt", "a\nchanged\nc\nadded");
+    let repo = Repo::open(&path).unwrap();
+
+    let lines = repo.blame(None, "f.txt").unwrap();
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0].commit.id, head);
+    assert_eq!(lines[2].commit.id, head);
+    let pending = &lines[1].commit;
+    assert!(pending.is_uncommitted());
+    assert_eq!(pending.id, "0".repeat(40));
+    assert_eq!(pending.author, "Not Committed Yet");
+    assert!(Arc::ptr_eq(pending, &lines[3].commit));
+    assert_eq!(
+        blame_ids(&repo.blame(Some("HEAD"), "f.txt").unwrap()),
+        vec![head.as_str(); 3]
+    );
+}
+
+#[test]
+fn blame_of_a_new_file_in_the_work_tree_is_all_uncommitted() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    fixture.write(&path, "first.txt", "one\n");
+    let repo = Repo::open(&path).unwrap();
+    let unborn = repo.blame(None, "first.txt").unwrap();
+    assert_eq!(unborn.len(), 1);
+    assert!(unborn[0].commit.is_uncommitted());
+
+    fixture.commit(&path, &[], "initial");
+    fixture.write(&path, "untracked.txt", "x\ny\nz");
+    fixture.write(&path, "staged.txt", "s\n");
+    fixture.git(&path, &["add", "staged.txt"]);
+    let untracked = repo.blame(None, "untracked.txt").unwrap();
+    assert_eq!(untracked.len(), 3);
+    assert!(untracked.iter().all(|line| line.commit.is_uncommitted()));
+    assert!(Arc::ptr_eq(&untracked[0].commit, &untracked[2].commit));
+    let staged = repo.blame(None, "staged.txt").unwrap();
+    assert_eq!(staged.len(), 1);
+    assert!(staged[0].commit.is_uncommitted());
+    fixture.write(&path, "empty.txt", "");
+    assert!(repo.blame(None, "empty.txt").unwrap().is_empty());
+}
+
+#[rstest]
+#[case::missing_at_a_commit(Some("HEAD"), "nope.txt")]
+#[case::missing_in_the_work_tree(None, "nope.txt")]
+#[case::added_after_the_commit(Some("HEAD~1"), "later.txt")]
+#[case::deleted_from_disk(None, "gone.txt")]
+#[case::folder_at_a_commit(Some("HEAD"), "src")]
+#[case::folder_in_the_work_tree(None, "src")]
+#[case::option_like_path(Some("HEAD"), "-n")]
+fn blame_of_a_path_that_is_not_a_file_there_is_empty(
+    #[case] rev: Option<&str>,
+    #[case] file: &str,
+) {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    fixture.commit(&path, &[("gone.txt", "g\n"), ("src/a.rs", "a\n")], "one");
+    fixture.commit(&path, &[("later.txt", "l\n")], "two");
+    std::fs::remove_file(path.join("gone.txt")).unwrap();
+    let repo = Repo::open(&path).unwrap();
+    assert_eq!(repo.blame(rev, file).unwrap(), Vec::new());
+}
+
+#[test]
+fn blame_ignores_textconv_and_a_missing_ignore_revs_file() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(
+        &path,
+        &[
+            (".gitattributes", "*.txt diff=broken\n"),
+            ("f.txt", "a\nb\n"),
+        ],
+        "one",
+    );
+    fixture.git(&path, &["config", "diff.broken.textconv", "false"]);
+    fixture.git(&path, &["config", "blame.ignoreRevsFile", "no-such-file"]);
+    let repo = Repo::open(&path).unwrap();
+
+    assert_eq!(
+        blame_ids(&repo.blame(Some("HEAD"), "f.txt").unwrap()),
+        vec![head.as_str(); 2]
+    );
+    fixture.write(&path, "f.txt", "a\nb\nc\n");
+    let lines = repo.blame(None, "f.txt").unwrap();
+    assert_eq!(lines.len(), 3);
+    assert!(lines[2].commit.is_uncommitted());
+}
+
+#[test]
+fn blame_rejects_bad_revisions_and_paths() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    fixture.commit(&path, &[("f.txt", "a\n")], "one");
+    let repo = Repo::open(&path).unwrap();
+    assert!(matches!(
+        repo.blame(Some("--output=x"), "f.txt"),
+        Err(GitError::Parse(_))
+    ));
+    assert!(matches!(
+        repo.blame(Some("HEAD"), ""),
+        Err(GitError::Parse(_))
+    ));
+    assert!(matches!(
+        repo.blame(Some("no-such-branch"), "f.txt"),
+        Err(GitError::Command { .. })
+    ));
+}
+
+#[test]
+fn blame_porcelain_parsing_rejects_broken_output() {
+    let id = "1".repeat(40);
+    let full =
+        format!("{id} 1 1 2\nauthor A\nauthor-time 5\nsummary s\nfilename f\n\tx\n{id} 2 2\n\ty\n");
+    let lines = parse_porcelain(full.as_bytes()).unwrap();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[1].commit.author_time, 5);
+    assert!(parse_porcelain(b"\tcontent without a header\n").is_err());
+    assert!(parse_porcelain(format!("{id} 1 1 1\nauthor A\n").as_bytes()).is_err());
+    assert!(parse_porcelain(format!("{id} 1 2 1\nsummary s\n\tx\n").as_bytes()).is_err());
+    assert!(parse_porcelain(b"not a header\n\tx\n").is_err());
+    assert!(parse_porcelain(b"").unwrap().is_empty());
 }

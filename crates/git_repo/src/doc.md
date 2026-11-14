@@ -2,7 +2,7 @@
 
 Everything the app needs from git, through the `git` CLI: opening a work tree, branches and
 remotes, the merge-base comparison a merge request shows, the changed-file list and the
-patch, the commits of a range, the network operations (`fetch`, the per-branch `pull`), and
+patch, the commits of a range, the blame of a file, the network operations (`fetch`, the per-branch `pull`), and
 finding the repositories inside a folder. Local operations are blocking and never touch the
 network; network operations are `async` on `tokio::process` and run on `net_runtime`.
 GPUI-free.
@@ -13,7 +13,7 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 ## Files
 
 - `lib.rs` — `GitError` and the plain data types (`Branch`, `Comparison`, `DiffOptions`,
-  `ChangedFile`, `Commit`, `Remote`, `PullOutcome`).
+  `ChangedFile`, `Commit`, `BlameCommit`, `BlameLine`, `Remote`, `PullOutcome`).
 - `command.rs` — building and running every `git` process, blocking and async, with the
   fixed config/env; NUL-record splitting; `NETWORK_TIMEOUT`.
 - `repo.rs` — `Repo`: open, branches, current branch, default target, resolve, `compare`,
@@ -21,6 +21,8 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
 - `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
   `working_tree_diff`), untracked files included, and `head_or_empty_tree`.
+- `blame.rs` — `blame(rev, path)`: one `blame --porcelain` run parsed into a `BlameLine` per
+  line of the file at a commit or in the work tree.
 - `pull.rs` — `fetch` and the fast-forward-only `pull`.
 - `remote_url.rs` — `parse_remote_url`: host, project path and web base of a remote URL.
 - `scan.rs` — `find_repositories(folder)`: the work trees under a folder, by file system
@@ -95,6 +97,29 @@ local target whose upstream the source has already merged does not drag upstream
 into the diff. An extra that is the source ref itself is skipped, so comparing `main`
 against `origin/main` still shows what upstream brings. `merge_base_refs` lists the refs
 used. No common history is `NoMergeBase`.
+
+## Blame rule
+
+`blame(rev, path)` returns one `BlameLine` per line of `path` at `rev` (`None`: the file on
+disk), in line order:
+
+- Lines of one commit share one `Arc<BlameCommit>` (id, author, author time, summary), as
+  porcelain prints a commit's details once; a big file never repeats them per line.
+- Uncommitted lines carry git's pseudo-commit (all-zero id, "Not Committed Yet");
+  `is_uncommitted` checks the zeros, so SHA-256 repositories work too.
+- The path goes after `--` and is literal (blame takes no pathspec magic); `rev` is checked.
+  `--no-textconv`, as for patches, so line numbers are the file's own.
+- A `blame.ignoreRevsFile` from the user's config is honoured; when blame of a real file
+  fails anyway (typically that file is missing in this repository), it runs once more with
+  `--no-ignore-revs-file`.
+- A path that is not a file there (missing, a folder, a submodule) is an empty result,
+  decided only after blame fails (`cat-file -t <rev>:<path>`, or the file system for the
+  work tree), so the common case stays one process. A `rev` that is not a commit stays an
+  error.
+- A work-tree file git cannot blame because it is not in `HEAD` (untracked, or no `HEAD`
+  yet) is all uncommitted, one line per line on disk as the work-tree patch counts them
+  (a symlink is one line); blame itself already handles a staged new file.
+- Rename detection is git's default: lines keep the commit that wrote them across a rename.
 
 ## Pull rule
 
