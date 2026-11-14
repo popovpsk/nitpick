@@ -75,6 +75,46 @@ impl Repo {
     }
 }
 
+impl Repo {
+    pub fn diff_blobs(
+        &self,
+        old: &str,
+        new: &str,
+        path: &str,
+        opts: &DiffOptions,
+    ) -> Result<String, GitError> {
+        let mut args: Vec<String> = DIFF_CONFIG.iter().map(|arg| arg.to_string()).collect();
+        args.push("diff".to_string());
+        args.push(format!("-U{}", opts.context_lines));
+        args.extend(
+            PATCH_FLAGS
+                .into_iter()
+                .chain(["--full-index"])
+                .map(str::to_string),
+        );
+        if opts.ignore_whitespace {
+            args.push("-w".to_string());
+        }
+        args.push(checked_arg(old)?.to_string());
+        args.push(checked_arg(new)?.to_string());
+        let out = self.git(&args)?;
+        let text = match String::from_utf8(out) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        };
+        let mut patch = format!(
+            "diff --git a/{path} b/{path}\nindex {old}..{new}\n--- a/{path}\n+++ b/{path}\n"
+        );
+        let body = text
+            .find("\n@@ ")
+            .map(|start| &text[start + 1..])
+            .or_else(|| text.starts_with("@@ ").then_some(text.as_str()))
+            .unwrap_or("");
+        patch.push_str(body);
+        Ok(patch)
+    }
+}
+
 fn status_of(letter: char) -> ChangeStatus {
     match letter {
         'A' => ChangeStatus::Added,

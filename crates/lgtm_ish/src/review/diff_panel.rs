@@ -395,6 +395,7 @@ impl ReviewView {
             });
         let position = self.file_label.as_ref().map(|label| label.position.clone());
         let file_label = self.render_file_label(cx);
+        let since_toggle = self.render_since_toggle(cx);
         let current_viewed = self
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
@@ -472,6 +473,7 @@ impl ReviewView {
                     .gap_2()
                     .items_center()
                     .children(file_label)
+                    .children(since_toggle)
                     .children(self.cross_hint.map(|hint| {
                         div()
                             .flex_none()
@@ -576,6 +578,9 @@ impl ReviewView {
         if self.nav_order.is_empty() && self.current_file.is_none() {
             return empty_state(tr().all_files_hidden.clone(), cx);
         }
+        if self.interdiff.as_ref().is_some_and(|d| d.is_empty()) {
+            return empty_state(tr().no_changes_since_viewed.clone(), cx);
+        }
         let wrap = match settings(cx).wrap_lines {
             WrapLines::SplitOnly => settings(cx).diff_layout == DiffLayout::Split,
             WrapLines::Always => true,
@@ -587,15 +592,18 @@ impl ReviewView {
         let annotation_view = view.clone();
         let add_view = view.clone();
         let measure_view = view.clone();
-        let can_comment = self.mr.is_some() && review.comments_aligned && review.commit.is_none();
+        let can_comment = self.mr.is_some()
+            && review.comments_aligned
+            && review.commit.is_none()
+            && self.interdiff.is_none();
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
         let shown = self.current_file.and_then(|f| review.files.get(f));
-        let whole_file =
-            shown.is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
+        let whole_file = self.interdiff.is_none()
+            && shown.is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
         let body_width = self.split_width - 2. * DIFF_BORDER;
         let ratio = if self.split_width > 0. {
             fit_split_ratio(self.split_ratio, body_width)
@@ -610,7 +618,11 @@ impl ReviewView {
         let divider_center = DIFF_BORDER + body_width * ratio - 0.5;
         let grip = theme.drag_border;
         let dragging = self.split_drag.is_some() && cx.has_active_drag();
-        let blame = self.blame_marks();
+        let blame = if self.interdiff.is_some() {
+            None
+        } else {
+            self.blame_marks()
+        };
         let find_decorations = self.find.as_ref().map(|find| find.decorations());
         let find_bar = self.render_find_bar(cx);
         let preview = self.render_image_preview(shown, cx);

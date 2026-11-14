@@ -7,6 +7,7 @@ mod file_search;
 mod find_bar;
 mod image_preview;
 pub mod model;
+mod since_viewed;
 mod tree_panel;
 mod viewed;
 
@@ -90,6 +91,7 @@ pub struct TreeRow {
     pub status: FileStatus,
     pub progress: Progress,
     pub comments: usize,
+    pub seen_before: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -259,6 +261,13 @@ pub struct ReviewView {
     file_label: Option<diff_panel::FileLabel>,
     file_search: Option<file_search::FileSearch>,
     find: Option<find_bar::FindBar>,
+    seen_before: Vec<Option<String>>,
+    since_mode: bool,
+    interdiff: Option<model::Interdiff>,
+    interdiff_loading: Option<String>,
+    interdiff_failed: HashSet<String>,
+    pending_jump: Option<bool>,
+    _interdiff: Task<()>,
     search_opens: usize,
     busy: Option<Busy>,
     _tree_close: Task<()>,
@@ -362,6 +371,13 @@ impl ReviewView {
             file_label: None,
             file_search: None,
             find: None,
+            seen_before: Vec::new(),
+            since_mode: false,
+            interdiff: None,
+            interdiff_loading: None,
+            interdiff_failed: HashSet::new(),
+            pending_jump: None,
+            _interdiff: Task::ready(()),
             search_opens: 0,
             busy: None,
             _tree_close: Task::ready(()),
@@ -595,6 +611,7 @@ impl ReviewView {
                 self.commit_picker.set_review(&review);
                 let review = Rc::new(review);
                 self.review = Some(review.clone());
+                self.refresh_seen_before(cx);
                 self.apply_hide_rules(cx);
                 self.installed_whitespace = whitespace;
                 self.mr = mr;
@@ -608,6 +625,10 @@ impl ReviewView {
                 if let Some(ix) = same_file {
                     self.current_file = Some(ix);
                     self.selected_row = self.rows.iter().position(|r| r.file == Some(ix));
+                    if let Some(interdiff) = self.interdiff.as_mut() {
+                        interdiff.file = ix;
+                    }
+                    self.sync_since_viewed(cx);
                     self.rebuild_annotations();
                 } else {
                     let target = kept_path
@@ -665,9 +686,11 @@ impl ReviewView {
             .iter()
             .map(|f| store.is_viewed(&f.path, &f.fingerprint))
             .collect();
-        if viewed != self.viewed {
+        let seen_changed = self.refresh_seen_before(cx);
+        if viewed != self.viewed || seen_changed {
             self.viewed = viewed;
             self.rebuild_rows();
+            self.sync_since_viewed(cx);
             cx.emit(ReviewEvent::Changed);
             cx.notify();
         }
@@ -677,7 +700,11 @@ impl ReviewView {
         let whole_file = self
             .current_file
             .and_then(|f| self.review.as_ref()?.files.get(f))
-            .is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
+            .is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted))
+            && self
+                .current_file
+                .and_then(|f| self.interdiff_key(f))
+                .is_none();
         match settings(cx).diff_layout {
             DiffLayout::Split if !whole_file => DiffMode::Split,
             _ => DiffMode::Unified,
@@ -792,6 +819,9 @@ impl ReviewView {
                     comments: file
                         .and_then(|f| self.by_file.get(&review.files[f].path))
                         .map_or(0, Vec::len),
+                    seen_before: file.is_some_and(|f| {
+                        !self.viewed.get(f).copied().unwrap_or(false) && self.seen_before(f)
+                    }),
                 }
             })
             .collect();
@@ -813,9 +843,9 @@ impl ReviewView {
         let Some(review) = self.review.clone() else {
             return;
         };
-        let Some(file) = review.files.get(ix) else {
+        if ix >= review.files.len() {
             return;
-        };
+        }
         if self.current_file != Some(ix) {
             if let Some(left) = self.current_file
                 && settings(cx).auto_mark_viewed
@@ -841,10 +871,8 @@ impl ReviewView {
             self.change_scrolled = false;
             self.cross_hint = None;
             self.current_file = Some(ix);
-            let diff_file = file.diff.clone();
-            self.sync_diff_mode(cx);
-            self.diff
-                .update(cx, |state, cx| state.set_files([diff_file], cx));
+            self.pending_jump = None;
+            self.install_content(ix, cx);
             self.request_blame(cx);
             self.sync_find(cx);
             self.request_image_preview(cx);
@@ -869,14 +897,17 @@ impl ReviewView {
     }
 
     pub fn step_change(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
+        if self.review.is_none() {
             return;
-        };
+        }
         let Some(current) = self.current_file else {
             self.step_file(if forward { 1 } else { -1 }, cx);
             return;
         };
-        let count = review.files[current].changes.len();
+        if self.content_pending() {
+            return;
+        }
+        let count = self.shown_changes(current).len();
         let target = if forward {
             Some(self.change_cursor.map_or(0, |k| k + 1)).filter(|&k| k < count)
         } else if self.change_scrolled {
@@ -891,9 +922,9 @@ impl ReviewView {
     }
 
     fn cross_file(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(review) = self.review.clone() else {
+        if self.review.is_none() {
             return;
-        };
+        }
         let Some(current) = self.current_file else {
             return;
         };
@@ -918,7 +949,11 @@ impl ReviewView {
             return;
         }
         self.show_file(next, cx);
-        let count = review.files[next].changes.len();
+        if self.content_pending() {
+            self.pending_jump = Some(forward);
+            return;
+        }
+        let count = self.shown_changes(next).len();
         if count > 0 {
             self.scroll_to_change(next, if forward { 0 } else { count - 1 }, cx);
         }
@@ -928,7 +963,7 @@ impl ReviewView {
         let Some(review) = self.review.clone() else {
             return;
         };
-        let Some(target) = review.files.get(file).and_then(|f| f.changes.get(change)) else {
+        let Some(target) = self.shown_changes(file).get(change).copied() else {
             return;
         };
         let (side, line) = match target.anchor {
@@ -1290,7 +1325,10 @@ impl ReviewView {
 
     fn rebuild_annotations(&mut self) {
         let mut annotations = Vec::new();
-        if let (Some(review), Some(file)) = (self.review.as_ref(), self.current_file) {
+        let other_content = self.interdiff.is_some() || self.interdiff_loading.is_some();
+        if let (Some(review), Some(file), false) =
+            (self.review.as_ref(), self.current_file, other_content)
+        {
             let path = review.files[file].path.clone();
             if let Some(list) = self.by_file.get(&path) {
                 for &ix in list {

@@ -602,6 +602,27 @@ fn diff_with_huge_context_returns_the_whole_file() {
 }
 
 #[test]
+fn diff_of_two_blobs_is_named_after_the_file() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let base = fixture.commit(&path, &[("src/a.txt", "one\ntwo\nthree\n")], "initial");
+    let head = fixture.commit(&path, &[("src/a.txt", "one\n2\nthree\n")], "change");
+    let repo = Repo::open(&path).unwrap();
+    let old = fixture.rev(&path, &format!("{base}:src/a.txt"));
+    let new = fixture.rev(&path, &format!("{head}:src/a.txt"));
+    let full = DiffOptions {
+        context_lines: 1_000_000,
+        ..DiffOptions::default()
+    };
+    let patch = repo.diff_blobs(&old, &new, "src/a.txt", &full).unwrap();
+    assert!(patch.starts_with("diff --git a/src/a.txt b/src/a.txt\n"));
+    assert!(patch.contains("+++ b/src/a.txt\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three\n"));
+    let same = repo.diff_blobs(&new, &new, "src/a.txt", &full).unwrap();
+    assert!(!same.contains("@@"));
+    assert!(repo.diff_blobs("--output=x", &new, "a", &full).is_err());
+}
+
+#[test]
 fn branches_are_sorted_local_first_by_recency() {
     let fixture = Fixture::new();
     let (_, work, _) = fixture.with_origin();

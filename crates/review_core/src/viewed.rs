@@ -27,6 +27,10 @@ pub fn fingerprint(old_blob: &str, new_blob: &str) -> String {
     format!("{old_blob}..{new_blob}")
 }
 
+pub fn fingerprint_blobs(fingerprint: &str) -> Option<(&str, &str)> {
+    fingerprint.split_once("..")
+}
+
 impl ViewedStore {
     pub fn in_memory() -> Self {
         Self {
@@ -93,6 +97,16 @@ impl ViewedStore {
             .viewed
             .get(path)
             .is_some_and(|marks| marks.contains_key(fingerprint))
+    }
+
+    pub fn last_viewed_except(&self, path: &str, fingerprint: &str) -> Option<&str> {
+        self.data
+            .viewed
+            .get(path)?
+            .iter()
+            .filter(|(mark, _)| mark.as_str() != fingerprint)
+            .max_by_key(|(_, at)| **at)
+            .map(|(mark, _)| mark.as_str())
     }
 
     pub fn set_viewed(&mut self, path: &str, fingerprint: &str, viewed: bool, now: i64) {

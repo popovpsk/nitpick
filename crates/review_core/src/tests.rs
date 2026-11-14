@@ -102,6 +102,23 @@ fn viewed_marks_follow_the_fingerprint() {
 }
 
 #[test]
+fn the_last_viewed_version_other_than_the_current_one_is_found() {
+    let mut store = ViewedStore::in_memory();
+    let (a, b, c) = (
+        fingerprint("o", "a"),
+        fingerprint("o", "b"),
+        fingerprint("o", "c"),
+    );
+    assert_eq!(store.last_viewed_except("f", &c), None);
+    store.set_viewed("f", &a, true, 10);
+    store.set_viewed("f", &b, true, 20);
+    store.set_viewed("g", &c, true, 30);
+    assert_eq!(store.last_viewed_except("f", &c), Some(b.as_str()));
+    assert_eq!(store.last_viewed_except("f", &b), Some(a.as_str()));
+    assert_eq!(fingerprint_blobs(&b), Some(("o", "b")));
+}
+
+#[test]
 fn old_viewed_marks_expire_and_unmarking_removes() {
     let dir = tempfile::tempdir().unwrap();
     let repo = std::path::Path::new("/r");

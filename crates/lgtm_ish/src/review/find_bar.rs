@@ -16,12 +16,12 @@ use gpui_component::{
 };
 use review_core::{LineKind, LineMap, Side};
 
+use super::since_viewed::is_blob;
 use super::{FindInFile, ReviewSource, ReviewView};
 use crate::localization::tr;
 
 const TEXT_LIMIT: usize = 16 * 1024 * 1024;
 const LEAD_ROWS: usize = 3;
-const NULL_BLOB: &str = "0000000";
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum TextSource {
@@ -118,15 +118,11 @@ impl FindBar {
 }
 
 pub(super) fn text_side(blob: &str) -> TextSource {
-    if blob.is_empty() || blob.trim_start_matches('0').is_empty() || !is_hex(blob) {
-        TextSource::None
-    } else {
+    if is_blob(blob) {
         TextSource::Blob(blob.to_string())
+    } else {
+        TextSource::None
     }
-}
-
-fn is_hex(id: &str) -> bool {
-    id.len() >= NULL_BLOB.len() && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn position(path: &SharedString, row: LineKind) -> DiffLinePosition {
@@ -172,6 +168,12 @@ fn push_lines(
 
 impl ReviewView {
     pub(super) fn find_source(&self) -> Option<FindSource> {
+        if let Some(source) = self.since_viewed_find_source() {
+            return Some(source);
+        }
+        if self.content_pending() {
+            return None;
+        }
         let review = self.review.as_ref()?;
         let file = review.files.get(self.current_file?)?;
         if file.binary {

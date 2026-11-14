@@ -524,6 +524,9 @@ impl ReviewView {
                     .text_color(theme.muted_foreground)
                     .child(detail)
             }))
+            .when(row.seen_before, |el| {
+                el.child(self.render_seen_badge(ix, cx))
+            })
             .children(comments)
             .children(mark)
             .child(

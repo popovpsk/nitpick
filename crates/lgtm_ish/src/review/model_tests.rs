@@ -7,7 +7,7 @@ use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use review_core::{Change, FileStatus, LineKind, Side};
 use rstest::rstest;
 
-use super::{build, build_working_tree, gitlab_remote};
+use super::{build, build_working_tree, gitlab_remote, interdiff};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -354,4 +354,58 @@ fn review_languages_highlight(#[case] path: &str, #[case] source: &str) {
         styles.iter().any(|(_, style)| style.color.is_some()),
         "{path} ({language}) has no syntax colors"
     );
+}
+
+#[test]
+fn interdiff_shows_what_changed_since_the_viewed_version() {
+    let (dir, repo) = fixture();
+    let first = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
+    let viewed = first.files[first.file_index("src/a.rs").unwrap()]
+        .new_blob
+        .clone();
+    git(dir.path(), &["checkout", "-q", "feature"]);
+    let mut text = numbered(40, Some(20));
+    text = text.replace("line 35\n", "line 35 again\n");
+    write(dir.path(), "src/a.rs", &text);
+    git(dir.path(), &["commit", "-qam", "more"]);
+    let second = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
+    let file = second.file_index("src/a.rs").unwrap();
+    let current = second.files[file].new_blob.clone();
+    let diff = interdiff(
+        &repo,
+        file,
+        "k".into(),
+        "src/a.rs",
+        &viewed,
+        &current,
+        false,
+    )
+    .unwrap();
+    assert_eq!(diff.file, file);
+    assert_eq!(diff.previous, viewed);
+    assert_eq!(diff.changes.len(), 1);
+    assert_eq!(
+        diff.map.locate(Side::New, 35),
+        Some(LineKind::Added { new: 35 })
+    );
+    assert_eq!(
+        diff.map.locate(Side::New, 20),
+        Some(LineKind::Context { old: 20, new: 20 })
+    );
+    assert_eq!(
+        diff.diff.as_ref().map(|d| d.path().to_string()),
+        Some("src/a.rs".to_string())
+    );
+    let same = interdiff(
+        &repo,
+        file,
+        "k".into(),
+        "src/a.rs",
+        &current,
+        &current,
+        false,
+    )
+    .unwrap();
+    assert!(same.is_empty());
+    assert!(same.changes.is_empty());
 }

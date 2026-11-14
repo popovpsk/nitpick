@@ -42,6 +42,7 @@ gpui_kit_assets::icon_assets!(
         CircleX,
         GitCommitHorizontal,
         RotateCcw,
+        FileClock,
     ]
 );
 

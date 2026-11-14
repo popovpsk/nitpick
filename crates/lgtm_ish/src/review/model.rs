@@ -278,6 +278,62 @@ fn build_range(
     })
 }
 
+pub struct Interdiff {
+    pub file: usize,
+    pub key: String,
+    pub previous: String,
+    pub diff: Option<DiffFile>,
+    pub map: LineMap,
+    pub changes: Vec<Change>,
+}
+
+impl Interdiff {
+    pub fn is_empty(&self) -> bool {
+        self.diff.is_none()
+    }
+}
+
+pub fn interdiff(
+    repo: &Repo,
+    file: usize,
+    key: String,
+    path: &str,
+    previous: &str,
+    current: &str,
+    ignore_whitespace: bool,
+) -> anyhow::Result<Interdiff> {
+    let options = DiffOptions {
+        context_lines: FULL_CONTEXT,
+        find_renames: false,
+        ignore_whitespace,
+    };
+    let patch = repo
+        .diff_blobs(previous, current, path, &options)
+        .context("comparing with the version viewed before")?;
+    let diff = if patch.contains("\n@@ ") {
+        Some(
+            parse(&patch)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("comparing with the version viewed before: no file"))?,
+        )
+    } else {
+        None
+    };
+    let map = review_core::line_maps(&patch)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    Ok(Interdiff {
+        file,
+        key,
+        previous: previous.to_string(),
+        changes: map.changes().to_vec(),
+        diff,
+        map,
+    })
+}
+
 fn parse(patch: &str) -> anyhow::Result<Vec<DiffFile>> {
     grammars::register_highlight_queries();
     let files = DiffFile::parse_with(patch, DiffParseOptions::new().truncated_hunks(true))
