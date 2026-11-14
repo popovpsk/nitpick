@@ -1,12 +1,13 @@
 # review_core
 
 The review model the UI draws: the changed-file tree with folder compression and viewed
-roll-up, the per-repository store of "viewed" marks, and the map from a diff line to the
-old/new line pair GitLab positions need. GPUI-free and git-free; only the store does file
-I/O.
+roll-up, the per-repository store of "viewed" marks, the map from a diff line to the
+old/new line pair GitLab positions need, and the fuzzy matcher every picker filters with.
+GPUI-free and git-free; only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
-drawing the tree or deciding when to save (`slopcop/src/review/doc.md`).
+drawing the tree or deciding when to save (`slopcop/src/review/doc.md`), the picker UI
+(`slopcop/src/picker.rs`).
 
 ## Files
 
@@ -16,8 +17,11 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`).
   `fingerprint`, `write_atomic`.
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed).
+- `fuzzy.rs` — `fuzzy_match(query, text)` → score and matched byte offsets; `rank` over
+  `(label, optional detail)` items; `highlight_ranges` (offsets → byte ranges of whole chars).
 - `tests.rs` — tree shape and order, collapse, roll-up, store round trip and expiry,
   line-map cases including a removed line that looks like a `---` header.
+- `fuzzy_tests.rs` — match positions, ranking order, highlight ranges.
 
 ## Spec
 
@@ -38,6 +42,17 @@ drawing the tree or deciding when to save (`slopcop/src/review/doc.md`).
   `+++ y` is never taken for a file header. The result is index-aligned with
   gpui-component's `DiffFile::parse` of the same patch, which also yields one file per
   `diff --git` header; the caller checks the counts match.
+
+- Fuzzy matching: the query's characters (whitespace dropped, case folded per char) must
+  appear in order. Among all alignments the best score wins (a DP, fzf-style), not the
+  greedy first one: each matched char scores, a char after `/` or `\` or at the start gets
+  the biggest bonus, then after other separators (`-_.` and spaces), then camelCase humps
+  and letter→digit; the first query char's bonus counts double; a run of consecutive
+  matches carries its first char's bonus; gaps cost a start penalty plus one per skipped
+  char. Positions are byte offsets so the UI can highlight with them directly.
+- `rank`: an item matches on its label, or on its detail when it has one; a label match
+  gets a fixed bonus so a name beats a path, and the better of the two is kept. Ties go to
+  the shorter label, then to the given order, so an empty query keeps the caller's order.
 
 ## Decisions
 
