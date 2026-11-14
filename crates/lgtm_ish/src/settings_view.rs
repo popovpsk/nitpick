@@ -38,6 +38,7 @@ use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 actions!(settings_view, [CloseSettings]);
 
 const HIDDEN_SAVE_DELAY: Duration = Duration::from_millis(400);
+const EDITOR_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
     let (_, errors) = review_core::HideRules::new(patterns, &[]);
@@ -228,6 +229,10 @@ pub struct SettingsView {
     revealed: Option<SelectIndex>,
     gitlab_url: Entity<InputState>,
     gitlab_token: Entity<InputState>,
+    editor_command: Entity<InputState>,
+    editor_generation: Rc<Cell<u64>>,
+    editor_baseline: String,
+    _editor_subscription: Subscription,
     hidden_global: HiddenRules,
     hidden_repo: HiddenRules,
     repo: Option<(PathBuf, SharedString)>,
@@ -254,6 +259,17 @@ impl SettingsView {
                 .masked(true)
                 .default_value(current.gitlab_token.clone())
         });
+        let editor_command = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("code -g {file}:{line}")
+                .default_value(current.editor_command.clone())
+        });
+        let editor_subscription =
+            cx.subscribe(&editor_command, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_editor_save(cx);
+                }
+            });
         let zed_discovery = cx.spawn(async move |this, cx| {
             let files = cx
                 .background_spawn(async { ui_resources::themes::zed_theme_files() })
@@ -290,6 +306,10 @@ impl SettingsView {
             revealed: None,
             gitlab_url,
             gitlab_token,
+            editor_command,
+            editor_generation: Rc::default(),
+            editor_baseline: current.editor_command.clone(),
+            _editor_subscription: editor_subscription,
             hidden_global: HiddenRules::new(global_input),
             hidden_repo: HiddenRules::new(repo_input),
             repo: None,
@@ -306,6 +326,7 @@ impl SettingsView {
             window,
             |this, window, cx| {
                 this.reload_hidden(false, window, cx);
+                this.reload_editor_command(window, cx);
                 cx.notify();
             },
         ));
@@ -351,6 +372,42 @@ impl SettingsView {
             .map(|(root, _)| current.repo_hidden(root).to_vec())
             .unwrap_or_default();
         self.hidden_repo.load(&repo, force, window, cx);
+    }
+
+    fn reload_editor_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let saved = settings(cx).editor_command.clone();
+        let focused = self
+            .editor_command
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        if focused || self.editor_baseline == saved {
+            return;
+        }
+        self.editor_baseline = saved.clone();
+        self.editor_command
+            .update(cx, |state, cx| state.set_value(saved, window, cx));
+    }
+
+    fn schedule_editor_save(&mut self, cx: &mut Context<Self>) {
+        let typed = self.editor_command.read(cx).value().trim().to_string();
+        let generation = self.editor_generation.get() + 1;
+        self.editor_generation.set(generation);
+        let counter = self.editor_generation.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(EDITOR_SAVE_DELAY).await;
+            if counter.get() != generation {
+                return;
+            }
+            let baseline = typed.clone();
+            let _ = this.update(cx, |this, _| this.editor_baseline = baseline);
+            cx.update(|cx| {
+                if settings(cx).editor_command != typed {
+                    update_settings(cx, move |s| s.editor_command = typed);
+                }
+            });
+        })
+        .detach();
     }
 
     fn schedule_hidden_save(&mut self, repository: bool, cx: &mut Context<Self>) {
@@ -777,6 +834,7 @@ impl Render for SettingsView {
             s.syntax_colors_light_desc.clone()
         };
         let import_view = view.clone();
+        let editor_view = view.clone();
         let appearance = SettingGroup::new()
             .title(s.appearance.clone())
             .item(
@@ -914,6 +972,17 @@ impl Render for SettingsView {
                     ),
                 )
                 .description(s.auto_mark_viewed_desc.clone()),
+            )
+            .item(
+                SettingItem::new(
+                    s.editor_command.clone(),
+                    SettingField::render(move |_, _, cx| {
+                        div()
+                            .w(px(320.))
+                            .child(Input::new(&editor_view.read(cx).editor_command).small())
+                    }),
+                )
+                .description(s.editor_command_desc.clone()),
             );
         let url_view = view.clone();
         let token_view = view.clone();

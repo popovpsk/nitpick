@@ -20,7 +20,7 @@ use ui_resources::Icons;
 
 use super::{
     CollapseSelected, ExpandSelected, FindFile, HiddenFile, NextFile, OpenSelected, PreviousFile,
-    ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow,
+    ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow, file_actions,
 };
 use crate::localization::tr;
 use crate::settings_store::{
@@ -198,6 +198,7 @@ fn hide_menu(
     node: usize,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
+    let menu = file_actions::row_menu(menu, view, node, cx);
     let s = tr();
     let review = view.read(cx);
     let root = review.repo_root().to_path_buf();
