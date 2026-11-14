@@ -56,21 +56,19 @@ fn view_options_panel(
     v_flex()
         .w(px(340.))
         .gap_2()
-        .child(
+        .child(option(
+            s.tree_view_label.clone(),
             ButtonGroup::new("tree-mode")
                 .small()
                 .outline()
-                .w_full()
                 .child(
                     Button::new("tree-mode-tree")
-                        .flex_1()
                         .icon(Icon::new(Icons::ListTree))
                         .label(s.tree_mode_tree.clone())
                         .selected(!flat),
                 )
                 .child(
                     Button::new("tree-mode-list")
-                        .flex_1()
                         .icon(IconName::Menu)
                         .label(s.tree_mode_list.clone())
                         .selected(flat),
@@ -82,8 +80,9 @@ fn view_options_panel(
                         TreeMode::Tree
                     };
                     update_settings(cx, |s| s.tree_mode = mode);
-                }),
-        )
+                })
+                .into_any_element(),
+        ))
         .child(div().h(px(1.)).w_full().bg(theme.border))
         .child(option(
             s.compact_folders.clone(),

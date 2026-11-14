@@ -89,6 +89,7 @@ pub struct Strings {
     pub advance_on_viewed: SharedString,
     pub advance_on_viewed_desc: SharedString,
     pub auto_mark_viewed: SharedString,
+    pub tree_view_label: SharedString,
     pub cmd_zoom_in: SharedString,
     pub cmd_zoom_out: SharedString,
     pub cmd_zoom_reset: SharedString,

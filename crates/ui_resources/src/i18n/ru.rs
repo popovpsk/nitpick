@@ -85,6 +85,7 @@ pub static RU: Strings = lang! {
     advance_on_viewed: "Переходить к следующему файлу после отметки",
     advance_on_viewed_desc: "Открывает следующий ещё не просмотренный файл",
     auto_mark_viewed: "Отмечать файл просмотренным при уходе с него",
+    tree_view_label: "Вид",
     cmd_zoom_in: "Крупнее текст кода",
     cmd_zoom_out: "Мельче текст кода",
     cmd_zoom_reset: "Сбросить размер текста кода",

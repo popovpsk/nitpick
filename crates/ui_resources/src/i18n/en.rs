@@ -85,6 +85,7 @@ pub static EN: Strings = lang! {
     advance_on_viewed: "Go to the next file when marked viewed",
     advance_on_viewed_desc: "Jumps to the next file that is not viewed yet",
     auto_mark_viewed: "Mark files viewed when leaving them",
+    tree_view_label: "View",
     cmd_zoom_in: "Bigger code text",
     cmd_zoom_out: "Smaller code text",
     cmd_zoom_reset: "Reset code text size",
