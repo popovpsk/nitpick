@@ -3,11 +3,11 @@
 Auto-update from GitHub Releases, modelled on Zed's `auto_update`, for macOS (dmg), Windows
 (NSIS installer) and Linux (AppImage): polls the latest release, downloads the asset for this
 OS and arch, stages it, applies it on the user's click or, on Windows, at quit. The
-`AutoUpdater` entity, polling, toasts and install live here; `sloptaster` only calls in.
+`AutoUpdater` entity, polling, toasts and install live here; `slopcop` only calls in.
 
-Not here: the app-menu item (`sloptaster`: `app_menu.rs`, gated on `is_supported()`); toast
+Not here: the app-menu item (`slopcop`: `app_menu.rs`, gated on `is_supported()`); toast
 strings (`ui_resources/src/doc.md`, read at toast time — this crate's only use of it). There is
-no Settings switch yet: `sloptaster` calls `init` with auto-update on.
+no Settings switch yet: `slopcop` calls `init` with auto-update on.
 
 ## Files
 
@@ -24,7 +24,7 @@ no Settings switch yet: `sloptaster` calls `init` with auto-update on.
 ## Behavior
 
 - Network: `fetch_latest` and `download_and_stage` are async (`reqwest` from
-  `http_client::builder`, `https_only`, gzip off, User-Agent `sloptaster-updater`), awaited
+  `http_client::builder`, `https_only`, gzip off, User-Agent `slopcop-updater`), awaited
   from GPUI through `net_runtime::spawn`. Blocking steps inside them (temp dir, `hdiutil`,
   `rsync`) go through `net_runtime::unblock`, never on a runtime worker. Redirects are not
   host-restricted: release assets redirect from `github.com` to a CDN host, and no secret is
@@ -32,7 +32,7 @@ no Settings switch yet: `sloptaster` calls `init` with auto-update on.
 - `check_now` works with auto-update off and, unlike automatic polls, toasts "up to date" and
   errors. Once `Ready`, polls do nothing; a manual check re-shows the toast.
 - Toasts go to the window the app's `ToastWindow` global picks, or to the active window when
-  it sets none (`sloptaster` sets none).
+  it sets none (`slopcop` sets none).
 - The "ready" toast is persistent, so it is not missed while the app sits in the background,
   and clicking it is the apply: it calls `apply_and_restart`. `has_staged_update` is there for
   a future header button.
@@ -53,7 +53,7 @@ no Settings switch yet: `sloptaster` calls `init` with auto-update on.
 
 What the code and `release.yml` both rely on.
 
-- The current version is what `sloptaster` passes to `init` (`CARGO_PKG_VERSION`); the workflow
+- The current version is what `slopcop` passes to `init` (`CARGO_PKG_VERSION`); the workflow
   stamps the crate version to the tag (`scripts/stamp_version.py`), otherwise every check
   sees a newer build. `/releases/latest` ignores drafts and prereleases.
 - The asset rules are per-OS functions taking the arch, compiled under `cfg(any(<os>, test))`
@@ -72,13 +72,13 @@ What the code and `release.yml` both rely on.
 ## Build variants
 
 - The Windows portable zip is built with `--no-default-features` in its own `portable` job.
-  `sloptaster`'s `self-update` feature forwards to `updater/self-update`; off, `disabled/` replaces
+  `slopcop`'s `self-update` feature forwards to `updater/self-update`; off, `disabled/` replaces
   `github.rs` and `install/`, `is_supported()` is a compile-time `false`, and the optional
-  network, hashing and file dependencies are not linked. `crates/sloptaster` has no `#[cfg]` for it.
+  network, hashing and file dependencies are not linked. `crates/slopcop` has no `#[cfg]` for it.
 - In this crate the feature appears in three places: the `mod github` / `mod install`
   declarations in `lib.rs`, the outer split in `is_supported()`, the gate on `managed_by_am`.
   Check all three when changing one.
-- `release.yml` scans every built binary for the `sloptaster-updater` user agent: required in
+- `release.yml` scans every built binary for the `slopcop-updater` user agent: required in
   installer builds, forbidden in the portable one. Keep that string in the crate. The scan is
   `LC_ALL=C tr -c '[:print:]' '\n' | grep -c`, not `findstr` (exits 2 on the long lines of a
   binary, which a found-or-not guard reads as a pass) and not `grep -a` (misses strings). `ci.yml` also compiles the portable configuration (`disabled/doc.md`).
@@ -88,7 +88,7 @@ What the code and `release.yml` both rely on.
 Owner's calls; ask before changing.
 
 - Portable is a separate compilation, not a runtime flag or marker file. A `portable.txt`
-  next to the exe was dropped as fail-open: deleting it, or copying just `sloptaster.exe` out of
+  next to the exe was dropped as fail-open: deleting it, or copying just `slopcop.exe` out of
   the zip, re-enabled updating, and running the NSIS installer from an unpacked folder installs
   a second copy into `%LOCALAPPDATA%` while the portable one keeps finding the same update.
   Code that is not compiled in cannot be switched on from outside.

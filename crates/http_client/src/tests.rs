@@ -5,14 +5,14 @@ use super::{builder, redirect_allowed, same_host_redirects};
 
 #[test]
 fn client_builds_with_the_shared_tls_setup() {
-    let client = builder("sloptaster-test").unwrap().https_only(true).build();
+    let client = builder("slopcop-test").unwrap().https_only(true).build();
     assert!(client.is_ok(), "{client:?}");
 }
 
 #[test]
 fn client_builds_with_the_same_host_policy() {
     let origin = Url::parse("https://gitlab.example.com").unwrap();
-    let client = builder("sloptaster-test")
+    let client = builder("slopcop-test")
         .unwrap()
         .redirect(same_host_redirects(&origin))
         .build();

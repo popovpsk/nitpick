@@ -5,12 +5,12 @@ use std::process::Command;
 pub async fn download(url: &str, digest: Option<&str>) -> Result<PathBuf> {
     let dir = dirs::cache_dir()
         .context("no cache directory")?
-        .join("sloptaster")
+        .join("slopcop")
         .join("updates");
     tokio::fs::create_dir_all(&dir)
         .await
         .context("creating updates directory")?;
-    let dest = dir.join("Sloptaster-setup.exe");
+    let dest = dir.join("Slopcop-setup.exe");
     super::download_file(url, &dest, digest).await?;
     Ok(dest)
 }

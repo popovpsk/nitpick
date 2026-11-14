@@ -386,12 +386,10 @@ impl Render for SettingsView {
             )
             .child(
                 div().flex_1().min_h_0().child(
-                    Settings::new("sloptaster-settings").pages([SettingPage::new(
-                        s.settings.clone(),
-                    )
-                    .group(appearance)
-                    .group(review)
-                    .group(gitlab)]),
+                    Settings::new("slopcop-settings").pages([SettingPage::new(s.settings.clone())
+                        .group(appearance)
+                        .group(review)
+                        .group(gitlab)]),
                 ),
             )
     }

@@ -1,4 +1,4 @@
-# sloptaster
+# slopcop
 
 Tasting the slop so you don't have to merge it blind.
 
@@ -38,7 +38,7 @@ On Windows and Linux use `Ctrl` for `⌘`.
 ## Build
 
 ```bash
-cargo run --release            # default member is crates/sloptaster
+cargo run --release            # default member is crates/slopcop
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
@@ -53,7 +53,7 @@ sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build
 
 | Crate | What |
 | --- | --- |
-| `crates/sloptaster` | The app binary: windows, title bar, review screen, settings, packaging metadata |
+| `crates/slopcop` | The app binary: windows, title bar, review screen, settings, packaging metadata |
 | `crates/git_repo` | Everything that talks to `git` (CLI): merge-base comparisons, patches, pull, fetch |
 | `crates/gitlab` | Async GitLab REST client: merge requests, discussions, comments |
 | `crates/review_core` | File tree, viewed-progress store, diff line → GitLab position mapping |
@@ -72,13 +72,13 @@ sudo apt-get install libfontconfig-dev libwayland-dev libxkbcommon-x11-dev build
 - Windows x64 / arm64 NSIS installers and portable zips (portable builds have the updater compiled out)
 - Linux x86_64 / arm64 AppImage, `.deb` and pacman archive
 
-Publishing the release triggers `aur.yml` (`sloptaster-bin`) and `flatpak.yml` (signed repo on GitHub Pages).
+Publishing the release triggers `aur.yml` (`slopcop-bin`) and `flatpak.yml` (signed repo on GitHub Pages).
 
 Repository secrets: `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` (optional macOS self-signed identity, see `scripts/macos/create-signing-cert.sh`), `AUR_SSH_PRIVATE_KEY` (optional), `FLATPAK_GPG_PRIVATE_KEY` (required by the Flatpak workflow).
 
 Maintenance scripts:
 
-- `scripts/gen-icons.sh` — regenerate all app icons from `crates/ui_resources/assets/sloptaster.svg`
+- `scripts/gen-icons.sh` — regenerate all app icons from `crates/ui_resources/assets/slopcop.svg`
 - `scripts/gen_flatpak_cargo_sources.py` — regenerate `packaging/flatpak/cargo-sources.json` after any `Cargo.lock` change (CI checks it)
 
 ## License

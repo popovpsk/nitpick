@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/sloptaster",
+    "crates/slopcop",
     "crates/ui_resources",
     "crates/net_runtime",
     "crates/diagnostics",
@@ -13,7 +13,7 @@ members = [
     "crates/secret_store",
 ]
 
-default-members = ["crates/sloptaster"]
+default-members = ["crates/slopcop"]
 
 
 [workspace.package]

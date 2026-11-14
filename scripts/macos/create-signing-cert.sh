@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IDENTITY="Sloptaster Self Signed"
-OUT="${1:-$HOME/.sloptaster-signing}"
+IDENTITY="Slopcop Self Signed"
+OUT="${1:-$HOME/.slopcop-signing}"
 PASSWORD="${2:-}"
 
 if [ -z "$PASSWORD" ]; then
@@ -15,8 +15,8 @@ mkdir -p "$OUT"
 chmod 700 "$OUT"
 KEY="$OUT/key.pem"
 CERT="$OUT/cert.pem"
-P12="$OUT/sloptaster-signing.p12"
-B64="$OUT/sloptaster-signing.p12.base64"
+P12="$OUT/slopcop-signing.p12"
+B64="$OUT/slopcop-signing.p12.base64"
 
 if [ -f "$P12" ]; then
   echo "Refusing to overwrite existing cert at $P12"

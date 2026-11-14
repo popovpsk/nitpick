@@ -1,4 +1,4 @@
-# sloptaster
+# slopcop
 
 The application binary: startup (logging, secrets, settings, themes, language, updater), the
 app menu, one window per repository, settings, and the glue that runs `git_repo` on GPUI's

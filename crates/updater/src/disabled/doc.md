@@ -2,7 +2,7 @@
 
 Stand-ins for `github.rs` and `install/`, compiled in their place (`#[path]` in `lib.rs`)
 when `self-update` is off (the Windows portable build), so that neither the crate nor
-`crates/sloptaster` needs a `#[cfg]` for a binary without an updater. Why the portable build is a
+`crates/slopcop` needs a `#[cfg]` for a binary without an updater. Why the portable build is a
 separate compilation: `../doc.md`, "Decisions".
 
 ## Files

@@ -52,7 +52,7 @@ static LINE_TX: OnceLock<flume::Sender<String>> = OnceLock::new();
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn init(config: Config) -> flume::Receiver<Notice> {
-    let path = config.log_dir.join("sloptaster.log");
+    let path = config.log_dir.join("slopcop.log");
     let _ = LOG_PATH.set(path.clone());
 
     let (line_tx, line_rx) = flume::unbounded::<String>();
@@ -169,7 +169,7 @@ impl Log for FileLogger {
 
 fn spawn_writer(path: PathBuf, max_bytes: u64, also_stderr: bool, rx: flume::Receiver<String>) {
     thread::Builder::new()
-        .name("sloptaster-diagnostics".to_string())
+        .name("slopcop-diagnostics".to_string())
         .spawn(move || {
             let mut writer = open_log(&path);
             let mut size = current_size(&path);
@@ -290,8 +290,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("sloptaster-diag-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("slopcop-diag-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -337,7 +336,7 @@ mod tests {
 
     #[test]
     fn writes_line_to_file() {
-        let path = unique_dir().join("sloptaster.log");
+        let path = unique_dir().join("slopcop.log");
         let mut writer = open_log(&path);
         let mut size = current_size(&path);
         write_line(
@@ -354,7 +353,7 @@ mod tests {
 
     #[test]
     fn rotates_past_max_bytes() {
-        let path = unique_dir().join("sloptaster.log");
+        let path = unique_dir().join("slopcop.log");
         let mut writer = open_log(&path);
         let mut size = current_size(&path);
         for i in 0..50 {

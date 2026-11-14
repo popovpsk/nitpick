@@ -104,8 +104,7 @@ pub struct SettingsStore {
 impl Global for SettingsStore {}
 
 pub fn app_dir(base: Option<PathBuf>) -> PathBuf {
-    base.unwrap_or_else(|| PathBuf::from("."))
-        .join("sloptaster")
+    base.unwrap_or_else(|| PathBuf::from(".")).join("slopcop")
 }
 
 impl SettingsStore {

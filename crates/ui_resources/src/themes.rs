@@ -36,7 +36,7 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
 fn stage_bundled_themes() -> anyhow::Result<PathBuf> {
     let dir = dirs::data_dir()
         .ok_or_else(|| anyhow::anyhow!("data dir unavailable"))?
-        .join("sloptaster")
+        .join("slopcop")
         .join("themes");
     std::fs::create_dir_all(&dir)?;
     for (name, body) in BUNDLED_THEMES {

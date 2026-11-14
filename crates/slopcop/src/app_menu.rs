@@ -4,7 +4,7 @@ use crate::localization::tr;
 use crate::workspace::{CloseWindow, NewReview, NewWindow, OpenRepository, ShowSettings};
 
 actions!(
-    sloptaster,
+    slopcop,
     [
         Quit,
         Hide,
@@ -16,7 +16,7 @@ actions!(
     ]
 );
 
-pub(crate) const REPOSITORY_URL: &str = "https://github.com/popovpsk/sloptaster/";
+pub(crate) const REPOSITORY_URL: &str = "https://github.com/popovpsk/slopcop/";
 
 pub fn app_menus() -> Vec<Menu> {
     let s = tr();
@@ -45,7 +45,7 @@ pub fn app_menus() -> Vec<Menu> {
     app_items.push(MenuItem::action(s.quit_app.clone(), Quit));
     vec![
         Menu {
-            name: "Sloptaster".into(),
+            name: "Slopcop".into(),
             items: app_items,
             disabled: false,
         },

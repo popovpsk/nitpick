@@ -30,7 +30,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - What a branch review shows is `git_repo::Repo::compare`: the merge base of the source with
   the target and the target's upstream, so commits the target gained since never show up.
   A merge request shows GitLab's own `diff_refs` (`base_sha`..`head_sha`); when either commit
-  is missing locally, `refs/merge-requests/<iid>/head` is fetched into `refs/sloptaster/mr/<iid>`
+  is missing locally, `refs/merge-requests/<iid>/head` is fetched into `refs/slopcop/mr/<iid>`
   (hidden from branch lists) from the remote whose URL path is the MR's project, else
   `origin`, else any remote on the GitLab host.
 - The patch is requested with full-file context so the diff can expand folded lines; over

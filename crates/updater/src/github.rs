@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use crate::version;
 
-const REPO: &str = "popovpsk/sloptaster";
-const USER_AGENT: &str = "sloptaster-updater";
+const REPO: &str = "popovpsk/slopcop";
+const USER_AGENT: &str = "slopcop-updater";
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
@@ -120,19 +120,19 @@ mod tests {
     use super::*;
 
     const RELEASE_ASSETS: &[&str] = &[
-        "sloptaster_1.0.0_aarch64-pacman.tar.gz",
-        "sloptaster_1.0.0_aarch64.AppImage",
-        "sloptaster_1.0.0_aarch64.AppImage.zsync",
-        "Sloptaster_1.0.0_aarch64.dmg",
-        "sloptaster_1.0.0_amd64.deb",
-        "sloptaster_1.0.0_arm64-installer.exe",
-        "sloptaster_1.0.0_arm64-portable.zip",
-        "sloptaster_1.0.0_arm64.deb",
-        "sloptaster_1.0.0_x64-portable.zip",
-        "sloptaster_1.0.0_x64-setup.exe",
-        "sloptaster_1.0.0_x86_64-pacman.tar.gz",
-        "sloptaster_1.0.0_x86_64.AppImage",
-        "sloptaster_1.0.0_x86_64.AppImage.zsync",
+        "slopcop_1.0.0_aarch64-pacman.tar.gz",
+        "slopcop_1.0.0_aarch64.AppImage",
+        "slopcop_1.0.0_aarch64.AppImage.zsync",
+        "Slopcop_1.0.0_aarch64.dmg",
+        "slopcop_1.0.0_amd64.deb",
+        "slopcop_1.0.0_arm64-installer.exe",
+        "slopcop_1.0.0_arm64-portable.zip",
+        "slopcop_1.0.0_arm64.deb",
+        "slopcop_1.0.0_x64-portable.zip",
+        "slopcop_1.0.0_x64-setup.exe",
+        "slopcop_1.0.0_x86_64-pacman.tar.gz",
+        "slopcop_1.0.0_x86_64.AppImage",
+        "slopcop_1.0.0_x86_64.AppImage.zsync",
     ];
 
     fn assets() -> Vec<Asset> {
@@ -152,7 +152,7 @@ mod tests {
             .iter()
             .filter(|name| name.ends_with("-setup.exe"))
             .collect();
-        assert_eq!(setups, vec![&"sloptaster_1.0.0_x64-setup.exe"]);
+        assert_eq!(setups, vec![&"slopcop_1.0.0_x64-setup.exe"]);
     }
 
     fn only_match(rule: impl Fn(&str) -> bool) -> &'static str {
@@ -165,7 +165,7 @@ mod tests {
     fn windows_x86_64_never_picks_the_arm64_installer() {
         assert_eq!(
             only_match(|name| windows_asset(name, "x86_64")),
-            "sloptaster_1.0.0_x64-setup.exe"
+            "slopcop_1.0.0_x64-setup.exe"
         );
     }
 
@@ -173,24 +173,24 @@ mod tests {
     fn windows_aarch64_picks_the_arm64_installer() {
         assert_eq!(
             only_match(|name| windows_asset(name, "aarch64")),
-            "sloptaster_1.0.0_arm64-installer.exe"
+            "slopcop_1.0.0_arm64-installer.exe"
         );
     }
 
     #[test]
     fn macos_picks_the_only_dmg() {
-        assert_eq!(only_match(macos_asset), "Sloptaster_1.0.0_aarch64.dmg");
+        assert_eq!(only_match(macos_asset), "Slopcop_1.0.0_aarch64.dmg");
     }
 
     #[test]
     fn linux_picks_the_appimage_for_its_arch() {
         assert_eq!(
             only_match(|name| linux_asset(name, "x86_64")),
-            "sloptaster_1.0.0_x86_64.AppImage"
+            "slopcop_1.0.0_x86_64.AppImage"
         );
         assert_eq!(
             only_match(|name| linux_asset(name, "aarch64")),
-            "sloptaster_1.0.0_aarch64.AppImage"
+            "slopcop_1.0.0_aarch64.AppImage"
         );
     }
 

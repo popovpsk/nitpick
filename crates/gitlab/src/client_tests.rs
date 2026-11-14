@@ -89,7 +89,7 @@ async fn current_user_sends_token_and_user_agent() {
     Mock::given(method("GET"))
         .and(path("/api/v4/user"))
         .and(header("PRIVATE-TOKEN", TOKEN))
-        .and(header("user-agent", "sloptaster"))
+        .and(header("user-agent", "slopcop"))
         .respond_with(json_response(200, USER))
         .expect(1)
         .mount(&server)

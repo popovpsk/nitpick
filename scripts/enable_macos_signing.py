@@ -2,7 +2,7 @@ import re
 import sys
 from pathlib import Path
 
-MANIFEST = Path(__file__).resolve().parent.parent / "crates" / "sloptaster" / "Cargo.toml"
+MANIFEST = Path(__file__).resolve().parent.parent / "crates" / "slopcop" / "Cargo.toml"
 SECTION = "[package.metadata.packager.macos]"
 
 

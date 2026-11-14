@@ -6,7 +6,7 @@ old/new line pair GitLab positions need. GPUI-free and git-free; only the store 
 I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab (`gitlab`),
-drawing the tree or deciding when to save (`sloptaster/src/review/doc.md`).
+drawing the tree or deciding when to save (`slopcop/src/review/doc.md`).
 
 ## Files
 

@@ -31,7 +31,7 @@ async fn download_streams_the_body_to_disk_and_checks_the_digest() {
     let dir = tempfile::tempdir().unwrap();
     let dest = dir.path().join("asset.bin");
     let digest = format!("sha256:{}", sha256_hex(&body));
-    let client = http_client::builder("sloptaster-test")
+    let client = http_client::builder("slopcop-test")
         .unwrap()
         .build()
         .unwrap();

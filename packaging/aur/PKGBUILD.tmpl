@@ -1,18 +1,18 @@
 # Maintainer: Aleksandr Popov <popov.psk@gmail.com>
-pkgname=sloptaster-bin
+pkgname=slopcop-bin
 pkgver=__VERSION__
 pkgrel=1
 pkgdesc="A side-by-side diff reviewer for huge merge requests"
 arch=('x86_64' 'aarch64')
-url="https://github.com/popovpsk/sloptaster"
+url="https://github.com/popovpsk/slopcop"
 license=('MIT')
 depends=('dbus' 'fontconfig' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
-provides=('sloptaster')
-conflicts=('sloptaster')
+provides=('slopcop')
+conflicts=('slopcop')
 options=('!strip')
-source_x86_64=("sloptaster-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/sloptaster_${pkgver}_${CARCH}-pacman.tar.gz")
+source_x86_64=("slopcop-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/slopcop_${pkgver}_${CARCH}-pacman.tar.gz")
 sha256sums_x86_64=('__SHA256_X86_64__')
-source_aarch64=("sloptaster-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/sloptaster_${pkgver}_${CARCH}-pacman.tar.gz")
+source_aarch64=("slopcop-${pkgver}-${CARCH}.tar.gz::${url}/releases/download/v${pkgver}/slopcop_${pkgver}_${CARCH}-pacman.tar.gz")
 sha256sums_aarch64=('__SHA256_AARCH64__')
 
 package() {
