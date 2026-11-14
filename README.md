@@ -1,13 +1,15 @@
 # slopcop
 
-Tasting the slop so you don't have to merge it blind.
+Policing the slop so you don't have to merge it blind.
 
 A side-by-side diff reviewer for huge vibe-coded merge requests, with per-file "viewed" progress.
 
 - Shows only what a merge request brings, like GitLab: the diff from the merge base (also
   against the target's upstream), so commits the target branch gained since never leak in.
 - File tree on the left or right with compressed folders, collapse/expand all, and "viewed"
-  marks that roll up to folders and reset when a file changes again.
+  marks that roll up to folders and reset when a file changes again; optionally a file is
+  marked viewed as soon as you move on from it.
+- Review your own uncommitted changes (staged, unstaged and untracked) before you commit.
 - Syntax highlighting (tree-sitter: Go, Rust, TypeScript/TSX, JavaScript, Python, YAML, TOML,
   Markdown, Bash, Protobuf, CSS, HTML, Make), split or unified layout, expandable context.
 - One fast-forward-only "pull" button per branch to bring in fresh changes.
@@ -26,6 +28,7 @@ Native desktop app for macOS, Windows and Linux, written in Rust on [GPUI](https
 | File tree | `←`/`→`, `h`/`l` | Collapse / expand the folder |
 | File tree | `space`, `v` | Toggle viewed (a folder toggles every file in it) |
 | File tree | `n` / `p` | Next / previous file |
+| Review | `space` | Toggle viewed for the current file |
 | Review | `⌥↓` / `⌥↑` | Next / previous file |
 | Review | `⌘B` | Show / hide the file tree |
 | Review | `⌘1` / `⌘2` | Focus the tree / the diff |
