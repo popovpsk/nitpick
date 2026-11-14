@@ -250,6 +250,16 @@ pub struct Strings {
     pub search_commits: SharedString,
     pub pick_commit: SharedString,
     pub commits_count_t: SharedString,
+    pub copy_path: SharedString,
+    pub open_in_editor: SharedString,
+    pub open_in_gitlab: SharedString,
+    pub open_on_github: SharedString,
+    pub cmd_copy_path: SharedString,
+    pub cmd_open_in_editor: SharedString,
+    pub editor_command: SharedString,
+    pub editor_command_desc: SharedString,
+    pub editor_failed: SharedString,
+    pub file_not_on_disk_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -284,6 +294,10 @@ impl Strings {
 
     pub fn merge_base(&self, base: &str, commits: usize) -> String {
         fill(&self.merge_base_t, &[base, &commits.to_string()])
+    }
+
+    pub fn file_not_on_disk(&self, path: &str) -> String {
+        fill(&self.file_not_on_disk_t, &[path])
     }
 
     pub fn pull_branch(&self, branch: &str) -> String {
@@ -565,6 +579,7 @@ mod tests {
                 &s.hidden_files_invalid_t,
                 &s.renamed_from_t,
                 &s.reset_progress_desc_t,
+                &s.file_not_on_disk_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

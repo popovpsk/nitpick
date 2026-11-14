@@ -14,7 +14,7 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _},
     diff::{Diff, DiffChangeIndicator, DiffHoverHighlight, DiffMode},
     h_flex,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     progress::Progress as ProgressBar,
     spinner::Spinner,
     tooltip::Tooltip,
@@ -26,7 +26,7 @@ use ui_resources::Icons;
 use super::{
     Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview,
     NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
-    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comments,
+    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comments, file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -327,6 +327,7 @@ impl ReviewView {
         });
         let full_path = label.path.clone();
         let renamed_from = label.renamed_from.clone();
+        let view = cx.entity();
         Some(
             h_flex()
                 .min_w_0()
@@ -346,6 +347,9 @@ impl ReviewView {
                         .child(StyledText::new(label.path.clone()).with_highlights(dir))
                         .tooltip(move |window, cx| {
                             Tooltip::new(full_path.clone()).build(window, cx)
+                        })
+                        .context_menu(move |menu, _, cx| {
+                            file_actions::shown_file_menu(menu, &view, cx)
                         }),
                 )
                 .children(label.additions.clone().map(|text| {
@@ -1031,7 +1035,23 @@ impl Render for ReviewView {
                 } else {
                     this.toggle_blame(cx);
                 }
-            }));
+            }))
+            .on_action(cx.listener(|this, _: &file_actions::CopyPath, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.copy_shown_path(cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &file_actions::OpenInEditor, window, cx| {
+                    if window.has_focused_input(cx) {
+                        cx.propagate();
+                    } else {
+                        this.open_shown_in_editor(cx);
+                    }
+                }),
+            );
         match &self.load_state {
             LoadState::Loading => {
                 return root

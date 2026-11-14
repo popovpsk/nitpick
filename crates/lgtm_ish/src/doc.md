@@ -30,7 +30,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`, `packaging/`).
   selection lives in keyed state and only a fresh state takes `default_selected_index`. Back and Escape emit
   `SettingsEvent::Close` to the window rather than dispatching an action, so they work
   wherever focus is; the screen takes focus when it opens. Settings page: theme and syntax colors (hover
-  previews), Zed theme import, language, review options, hidden-file patterns (all
+  previews), Zed theme import, language, review options (the editor command is saved 400 ms
+  after typing stops by a detached task, and reloads when the saved value differs from the
+  one it last loaded or saved and the field is not focused), hidden-file patterns (all
   repositories, and the window's repository when it has one; saved 400 ms after typing
   stops by a detached task, invalid lines named under the field), GitLab URL + token with a
   connection check. A save applies the difference between the list the field was loaded

@@ -3,6 +3,7 @@ mod branch_picker;
 mod comments;
 mod commit_picker;
 mod diff_panel;
+mod file_actions;
 mod file_search;
 mod find_bar;
 mod image_preview;
@@ -39,6 +40,7 @@ use crate::settings_store::{
     update_settings,
 };
 pub use blame::ToggleBlame;
+pub use file_actions::{CopyPath, OpenInEditor};
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
 pub use viewed::flush_all as flush_viewed;
@@ -267,6 +269,7 @@ pub struct ReviewView {
     commit_picker: commit_picker::CommitPicker,
     blame: blame::BlameState,
     image_preview: image_preview::ImagePreview,
+    web: file_actions::WebLink,
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -370,6 +373,7 @@ impl ReviewView {
             commit_picker,
             blame: blame::BlameState::new(cx),
             image_preview: image_preview::ImagePreview::new(cx),
+            web: file_actions::WebLink::default(),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
             _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
@@ -598,6 +602,7 @@ impl ReviewView {
                 self.apply_hide_rules(cx);
                 self.installed_whitespace = whitespace;
                 self.mr = mr;
+                self.refresh_web(cx);
                 self.load_state = LoadState::Ready;
                 self.index_discussions();
                 self.rebuild_rows();

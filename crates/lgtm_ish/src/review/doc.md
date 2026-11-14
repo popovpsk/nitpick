@@ -40,6 +40,14 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
+- `file_actions.rs` — `CopyPath`, `OpenInEditor`: the file items of the tree row menu and the
+  toolbar path menu (copy path, open in editor, open in GitLab / on GitHub), the editor
+  launch, the project's web address (`WebLink`), and their pure parts (`editor_invocation`,
+  `substitute_shell`, `find_program`, `project_web_from_mr`, `project_web_from_remotes`,
+  `blob_url`, `change_line`, `pick_line`).
+- `file_actions_tests.rs` — the pure parts, the `PATHEXT` lookup on a `TempDir`, and real
+  `/bin/sh` runs (`HOME` in the temp dir) that get an awkward file name through every
+  quoting context unmangled.
 - `image_preview.rs` — `ImagePreview`: the before/after panes shown in place of the `Diff`
   for a binary image, their off-thread loading and decoding, and their rendering.
 
@@ -117,7 +125,7 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   `n/p` for the next/previous file); anywhere in the review (context `Review`) they are
   `space` (viewed) and modifier or function keys (`alt-up/down` and `f7`/`shift-f7` for the
   next/previous change, `alt-left/right` for the previous/next file, `cmd-b`, `cmd-r`,
-  `cmd-1/2`). `space` and the `alt-` arrows pass through (`cx.propagate`) while an input has
+  `cmd-1/2`, `cmd-shift-c` copy path, `f4` open in editor). `space` and the `alt-` arrows pass through (`cx.propagate`) while an input has
   focus, so typing a comment never marks, switches files or eats a word jump. No
   `alt-<letter>` binding: on macOS bindings match before text input, so it would eat the
   character the layout types. Toolbar tooltips name their key through `tooltip_with_action`,
@@ -261,6 +269,45 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   merge base, since in commit mode a grown range keeps the same pair and files.
 - The review header shows viewed progress before the refresh button (`viewed/total` and a
   thin bar, the count in the tooltip), read from `progress()`; the title bar does not.
+- File actions: the tree row menu starts with Copy path, Open in editor, Open in GitLab (or
+  on GitHub), then a separator and the hide items; a folder gets only Copy path. Right-click
+  on the toolbar's path opens the same items for the shown file, with their keys. Copy path
+  writes the repository-relative path (the new one; the old one of a deleted file) and says
+  nothing. Open in editor is not offered for a deleted file; the file is
+  `root/new_path` in the work tree, checked on the background executor, and a missing one
+  is an error notification, not a launch. Its line: for the shown file the change cursor's
+  change, or the end of the diff's selection on the new side when the user scrolled or
+  clicked since the jump (or there is no cursor), then the first change, then 1; any other
+  file its first change. A change's line is its first added line, or for a pure removal the
+  new line in its place (`anchor.new` plus the context lines between them), never the
+  anchor itself, which sits up to two lines above the change.
+- Editor launch (`settings.editor_command`): empty runs the OS opener (`open`, `xdg-open`,
+  `explorer.exe`, whose exit code is ignored since it is 1 on success), which cannot jump to
+  a line. Otherwise on macOS/Linux the template runs as `$SHELL -lc` (a login shell, so the
+  PATH from the profile files, not the interactive rc files, reaches a GUI app; `/bin/sh`
+  when `$SHELL` is not an sh-family shell or fish). `{file}`/`{line}` become references to
+  `LGTM_ISH_FILE`/`LGTM_ISH_LINE`, passed in the environment, so the path never goes
+  through quoting; the reference depends on the quoting around the placeholder
+  (`substitute_shell`): `"$VAR"` outside quotes, `$VAR` inside `"…"`, `'"$VAR"'` inside
+  `'…'`, so `{file}`, `"{file}:{line}"` and `'{file}'` all pass the path as one word. A
+  template without `{file}` gets the file appended. On Windows the template is split on
+  whitespace (double quotes group a word, so a quoted `Program Files` path works) and the
+  values substituted per word; nothing goes through `cmd`, which would re-parse `&` or `|`
+  in a file name: a bare program name is looked up on `PATH` with `PATHEXT`, so a
+  `code.cmd` shim is spawned directly and Rust escapes its arguments. Spawned with null
+  stdio on the background executor; the app never waits for the editor: it polls the child
+  for `FAILURE_WINDOW` (5 s), reports a spawn error or a non-zero exit in that time as an
+  error notification naming the command, then only reaps it. stderr is not captured, since
+  a pipe dropped while the editor lives on would break its writes.
+- Open in browser: the file at the review's head commit, `{project}/-/blob/{sha}/{path}#L{line}`
+  (GitLab, and any host other than github.com) or `{project}/blob/{sha}/{path}#L{line}`
+  (github.com), the path percent-encoded,
+  the line as for the editor; a deleted file links its old path at `base_sha`, without a
+  line. The project address is `WebLink`, set in `install` (never in render): an MR's
+  `web_url` without `/-/merge_requests/<iid>`; for a branch review the `origin` remote, else
+  the first one, through `git_repo::parse_remote_url` (`https_base/path`, read off the UI
+  thread). None for the uncommitted-changes review or when nothing parses, and then the item
+  is not offered. The MR header's own open-in-browser button stays.
 - Highlight queries are registered once, by the first `parse`, through gpui-component's
   `LanguageRegistry::register` (same grammar, new query); every highlighter is built after
   that, since files reach the `DiffState` only from a parsed review. The proto and GraphQL
@@ -284,4 +331,6 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   review kind; it is never persisted and disables line comments.
 - Blame is compact: one initials chip per run of a commit in the marker lane, details in the
   tooltip; not Zed's per-line author and date column.
+- Copy path, open in editor and open in browser live in context menus and key bindings, not
+  in toolbar buttons.
 - Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.
