@@ -94,6 +94,8 @@ pub struct Settings {
     pub auto_mark_viewed: bool,
     #[serde(default = "default_tree_width")]
     pub tree_width: f32,
+    #[serde(default = "default_split_ratio")]
+    pub split_ratio: f32,
     #[serde(default)]
     pub hidden_files: Vec<String>,
     #[serde(default)]
@@ -136,6 +138,25 @@ fn default_tree_width() -> f32 {
     300.
 }
 
+fn default_split_ratio() -> f32 {
+    0.5
+}
+
+pub const SPLIT_RATIO_RANGE: (f32, f32) = (0.1, 0.9);
+
+pub const SPLIT_MIN_COLUMN: f32 = 160.;
+
+pub fn fit_split_ratio(ratio: f32, width: f32) -> f32 {
+    if !ratio.is_finite() || !width.is_finite() || width < 2. * SPLIT_MIN_COLUMN {
+        return 0.5;
+    }
+    let edge = SPLIT_MIN_COLUMN / width;
+    ratio.clamp(
+        edge.max(SPLIT_RATIO_RANGE.0),
+        (1. - edge).min(SPLIT_RATIO_RANGE.1),
+    )
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -147,6 +168,7 @@ impl Default for Settings {
             advance_on_viewed: true,
             auto_mark_viewed: false,
             tree_width: default_tree_width(),
+            split_ratio: default_split_ratio(),
             hidden_files: Vec::new(),
             repo_hidden_files: BTreeMap::new(),
             keybindings: BTreeMap::new(),

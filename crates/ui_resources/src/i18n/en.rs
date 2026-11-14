@@ -149,6 +149,9 @@ pub static EN: Strings = lang! {
     press_again_previous_file: "First change · press again for the previous file",
     no_next_change: "Last change of the last file",
     no_previous_change: "First change of the first file",
+    file_added_tag: "new file",
+    file_deleted_tag: "deleted",
+    file_renamed_tag: "renamed",
     auto_mark_viewed_desc: "Switching to another file marks the one you leave as viewed, unless you unmarked it by hand",
     auto_mark_on: "On: moving to another file marks the one you leave as viewed",
     auto_mark_off: "Off: click to mark files viewed as you move on from them",
@@ -199,4 +202,5 @@ pub static EN: Strings = lang! {
     hide_everywhere_t: "Hide {} in all repositories",
     hidden_files_repo_t: "Only {}",
     hidden_files_invalid_t: "Ignored, not a valid pattern: {}",
+    renamed_from_t: "Renamed from {}",
 };

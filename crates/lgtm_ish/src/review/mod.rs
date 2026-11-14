@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use git_repo::{PullOutcome, Repo};
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, Context, ElementId, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, SharedString, Subscription, Task,
+    EventEmitter, FocusHandle, Focusable, Pixels, SharedString, Subscription, Task,
     UniformListScrollHandle, Window, actions,
 };
 use gpui_component::{
@@ -30,7 +30,8 @@ use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side, Tre
 
 use crate::localization::tr;
 use crate::settings_store::{
-    DiffLayout, SettingsStore, TREE_WIDTH_RANGE, TreeMode, settings, update_settings,
+    DiffLayout, SPLIT_RATIO_RANGE, SettingsStore, TREE_WIDTH_RANGE, TreeMode, settings,
+    update_settings,
 };
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
@@ -60,10 +61,12 @@ actions!(
 
 const TREE_SLIDE: Duration = Duration::from_millis(200);
 const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
+const SPLIT_RATIO_SAVE_DELAY: Duration = Duration::from_millis(400);
 const AUTO_MARK_DWELL: Duration = Duration::from_millis(500);
 const CROSS_HINT_TIMEOUT: Duration = Duration::from_millis(3000);
 
 static TREE_WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
+static SPLIT_RATIO_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct TreeRow {
@@ -241,6 +244,10 @@ pub struct ReviewView {
     tree_closing: bool,
     tree_toggles: usize,
     tree_width: f32,
+    split_ratio: f32,
+    split_width: f32,
+    split_drag: Option<(Pixels, f32)>,
+    file_label: Option<diff_panel::FileLabel>,
     busy: Option<Busy>,
     _tree_close: Task<()>,
     branch_pickers: branch_picker::BranchPickers,
@@ -324,6 +331,12 @@ impl ReviewView {
             tree_width: settings(cx)
                 .tree_width
                 .clamp(TREE_WIDTH_RANGE.0, TREE_WIDTH_RANGE.1),
+            split_ratio: settings(cx)
+                .split_ratio
+                .clamp(SPLIT_RATIO_RANGE.0, SPLIT_RATIO_RANGE.1),
+            split_width: 0.,
+            split_drag: None,
+            file_label: None,
             busy: None,
             _tree_close: Task::ready(()),
             branch_pickers,
@@ -1399,6 +1412,24 @@ impl ReviewView {
         } else {
             Task::ready(())
         };
+        cx.notify();
+    }
+
+    pub fn resize_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
+        let (min, max) = SPLIT_RATIO_RANGE;
+        let ratio = (ratio.clamp(min, max) * 1000.).round() / 1000.;
+        if (ratio - self.split_ratio).abs() < 0.001 {
+            return;
+        }
+        self.split_ratio = ratio;
+        let generation = SPLIT_RATIO_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+        cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(SPLIT_RATIO_SAVE_DELAY).await;
+            if SPLIT_RATIO_GENERATION.load(Ordering::Relaxed) == generation {
+                cx.update(|cx| update_settings(cx, |s| s.split_ratio = ratio));
+            }
+        })
+        .detach();
         cx.notify();
     }
 

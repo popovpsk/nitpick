@@ -1,30 +1,37 @@
+use std::rc::Rc;
+use std::sync::Arc;
+
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle, DragMoveEvent,
-    ElementId, Empty, Entity, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, ease_out_quint, prelude::FluentBuilder as _, px,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context,
+    CursorStyle, DragMoveEvent, ElementId, Empty, Entity, HighlightStyle, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    StyledText, Window, canvas, div, ease_out_quint, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
-    diff::{Diff, DiffHoverHighlight},
+    diff::{Diff, DiffChangeIndicator, DiffHoverHighlight, DiffMode},
     h_flex,
     progress::Progress as ProgressBar,
     spinner::Spinner,
     tooltip::Tooltip,
     v_flex,
 };
+use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    Busy, CrossHint, FocusDiff, FocusTree, LoadState, NextChange, NextFile, PreviousChange,
-    PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleTree,
-    ToggleViewed, comments,
+    Busy, CrossHint, FocusDiff, FocusTree, LoadState, LoadedReview, NextChange, NextFile,
+    PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
+    ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
-use crate::settings_store::{DiffLayout, TreeSide, settings};
+use crate::settings_store::{
+    DiffLayout, SPLIT_MIN_COLUMN, SPLIT_RATIO_RANGE, TreeSide, fit_split_ratio, settings,
+};
 
 impl ReviewView {
     fn render_header(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -214,29 +221,141 @@ impl ReviewView {
             .into_any_element()
     }
 
-    fn render_file_toolbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn refresh_file_label(&mut self) {
+        let (Some(review), Some(file)) = (&self.review, self.current_file) else {
+            self.file_label = None;
+            return;
+        };
+        if self.file_label.as_ref().is_some_and(|label| {
+            label.file == file
+                && Rc::ptr_eq(&label.review, review)
+                && Arc::ptr_eq(&label.tree, &self.tree)
+        }) {
+            return;
+        }
+        let Some(shown) = review.files.get(file) else {
+            self.file_label = None;
+            return;
+        };
+        let order = &self.nav_order;
+        let position = order.iter().position(|&f| f == file).map_or(0, |p| p + 1);
+        let name_start = shown.path.rfind('/').map_or(0, |slash| slash + 1);
+        self.file_label = Some(FileLabel {
+            review: review.clone(),
+            tree: self.tree.clone(),
+            file,
+            path: shown.path.clone(),
+            name_start,
+            status: shown.status,
+            additions: (shown.additions > 0).then(|| format!("+{}", shown.additions).into()),
+            deletions: (shown.deletions > 0).then(|| format!("\u{2212}{}", shown.deletions).into()),
+            position: format!("{position} / {}", order.len()).into(),
+            renamed_from: (shown.status == FileStatus::Renamed && shown.old_path != shown.path)
+                .then(|| shown.old_path.clone()),
+            has_previous: self.visible_neighbour(file, false).is_some(),
+            has_next: self.visible_neighbour(file, true).is_some(),
+        });
+    }
+
+    fn render_file_label(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let label = self.file_label.as_ref()?;
         let s = tr();
         let theme = cx.theme();
-        let layout = settings(cx).diff_layout;
-        let (position, count) = match (&self.review, self.current_file) {
-            (Some(_), Some(current)) => {
-                let order = &self.nav_order;
-                (
-                    order
-                        .iter()
-                        .position(|&f| f == current)
-                        .map_or(0, |p| p + 1),
-                    order.len(),
-                )
-            }
-            (Some(_), None) => (0, self.nav_order.len()),
-            _ => (0, 0),
+        let (icon, color) = status_icon(label.status, cx);
+        let tag = match label.status {
+            FileStatus::Added => Some((s.file_added_tag.clone(), theme.green)),
+            FileStatus::Deleted => Some((s.file_deleted_tag.clone(), theme.red)),
+            FileStatus::Renamed => label
+                .renamed_from
+                .as_ref()
+                .map(|_| (s.file_renamed_tag.clone(), theme.blue)),
+            FileStatus::Modified => None,
         };
+        let dir = (label.name_start > 0).then(|| {
+            (
+                0..label.name_start,
+                HighlightStyle {
+                    color: Some(theme.muted_foreground),
+                    ..Default::default()
+                },
+            )
+        });
+        let full_path = label.path.clone();
+        let renamed_from = label.renamed_from.clone();
+        Some(
+            h_flex()
+                .min_w_0()
+                .gap_1p5()
+                .items_center()
+                .child(Icon::new(icon).small().text_color(color))
+                .child(
+                    div()
+                        .id("file-path")
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_start()
+                        .text_sm()
+                        .font_medium()
+                        .text_color(theme.foreground)
+                        .child(StyledText::new(label.path.clone()).with_highlights(dir))
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(full_path.clone()).build(window, cx)
+                        }),
+                )
+                .children(label.additions.clone().map(|text| {
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme.success)
+                        .child(text)
+                }))
+                .children(label.deletions.clone().map(|text| {
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(text)
+                }))
+                .children(tag.map(|(text, color)| {
+                    div()
+                        .id("file-tag")
+                        .flex_none()
+                        .px_1()
+                        .rounded(theme.radius)
+                        .bg(color.opacity(0.12))
+                        .text_xs()
+                        .text_color(color)
+                        .child(text)
+                        .when_some(renamed_from, |el, from| {
+                            el.tooltip(move |window, cx| {
+                                Tooltip::new(tr().renamed_from(&from)).build(window, cx)
+                            })
+                        })
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn render_file_toolbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.refresh_file_label();
+        let s = tr();
+        let layout = settings(cx).diff_layout;
+        let any_file = !self.nav_order.is_empty();
+        let (has_previous, has_next) = self
+            .file_label
+            .as_ref()
+            .map_or((any_file, any_file), |label| {
+                (label.has_previous, label.has_next)
+            });
+        let position = self.file_label.as_ref().map(|label| label.position.clone());
+        let file_label = self.render_file_label(cx);
         let current_viewed = self
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
         let auto_mark = settings(cx).auto_mark_viewed;
+        let theme = cx.theme();
         h_flex()
             .flex_none()
             .h(px(34.))
@@ -275,27 +394,57 @@ impl ReviewView {
                     .on_click(cx.listener(|this, _, _, cx| this.step_change(true, cx))),
             )
             .child(
+                Button::new("prev-file")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::ArrowLeft)
+                    .disabled(!has_previous)
+                    .tooltip_with_action(s.cmd_previous_file.clone(), &PreviousFile, Some("Review"))
+                    .on_click(cx.listener(|this, _, _, cx| this.step_file(-1, cx))),
+            )
+            .child(
+                Button::new("next-file")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::ArrowRight)
+                    .disabled(!has_next)
+                    .tooltip_with_action(s.cmd_next_file.clone(), &NextFile, Some("Review"))
+                    .on_click(cx.listener(|this, _, _, cx| this.step_file(1, cx))),
+            )
+            .children(position.map(|position| {
                 div()
+                    .flex_none()
+                    .px_1()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(format!("{position} / {count}")),
-            )
-            .children(self.cross_hint.map(|hint| {
-                div()
-                    .ml_2()
-                    .px_1p5()
-                    .rounded(theme.radius)
-                    .bg(theme.accent)
-                    .text_xs()
-                    .text_color(theme.accent_foreground)
-                    .child(match hint {
-                        CrossHint::PressForNextFile => s.press_again_next_file.clone(),
-                        CrossHint::PressForPreviousFile => s.press_again_previous_file.clone(),
-                        CrossHint::NoNextFile => s.no_next_change.clone(),
-                        CrossHint::NoPreviousFile => s.no_previous_change.clone(),
-                    })
+                    .child(position)
             }))
-            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .ml_1()
+                    .gap_2()
+                    .items_center()
+                    .children(file_label)
+                    .children(self.cross_hint.map(|hint| {
+                        div()
+                            .flex_none()
+                            .px_1p5()
+                            .rounded(theme.radius)
+                            .bg(theme.accent)
+                            .text_xs()
+                            .text_color(theme.accent_foreground)
+                            .child(match hint {
+                                CrossHint::PressForNextFile => s.press_again_next_file.clone(),
+                                CrossHint::PressForPreviousFile => {
+                                    s.press_again_previous_file.clone()
+                                }
+                                CrossHint::NoNextFile => s.no_next_change.clone(),
+                                CrossHint::NoPreviousFile => s.no_previous_change.clone(),
+                            })
+                    })),
+            )
             .child(
                 Button::new("auto-mark")
                     .ghost()
@@ -387,14 +536,33 @@ impl ReviewView {
         let annotations = self.annotations.clone();
         let annotation_view = view.clone();
         let add_view = view.clone();
+        let measure_view = view.clone();
         let can_comment = self.mr.is_some() && review.comments_aligned;
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
+        let shown = self.current_file.and_then(|f| review.files.get(f));
+        let whole_file =
+            shown.is_some_and(|f| matches!(f.status, FileStatus::Added | FileStatus::Deleted));
+        let body_width = self.split_width - 2. * DIFF_BORDER;
+        let ratio = if self.split_width > 0. {
+            fit_split_ratio(self.split_ratio, body_width)
+        } else {
+            self.split_ratio
+                .clamp(SPLIT_RATIO_RANGE.0, SPLIT_RATIO_RANGE.1)
+        };
+        let split_mode = self.diff.read(cx).mode() == DiffMode::Split;
+        let resizable = split_mode
+            && shown.is_some_and(|f| !f.binary && f.additions + f.deletions > 0)
+            && body_width >= 2. * SPLIT_MIN_COLUMN;
+        let divider_center = DIFF_BORDER + body_width * ratio - 0.5;
+        let grip = theme.drag_border;
+        let dragging = self.split_drag.is_some() && cx.has_active_drag();
         div()
             .id("diff-area")
+            .relative()
             .flex_1()
             .min_h_0()
             .when(current_viewed, |el| el.bg(viewed_bg))
@@ -415,10 +583,38 @@ impl ReviewView {
                     this.note_manual_scroll(cx);
                 }
             }))
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<SplitResize>, _, cx| {
+                    let Some((start_x, start_ratio)) = this.split_drag else {
+                        return;
+                    };
+                    let width = f32::from(event.bounds.size.width) - 2. * DIFF_BORDER;
+                    if width < 2. * SPLIT_MIN_COLUMN {
+                        return;
+                    }
+                    let moved = f32::from(event.event.position.x - start_x);
+                    let ratio = fit_split_ratio((width * start_ratio + moved) / width, width);
+                    this.resize_split(ratio, cx);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_split_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_split_drag(cx)),
+            )
             .child(
                 Diff::new(&self.diff)
+                    .header_visible(false)
                     .hover_highlight(DiffHoverHighlight::LineNumber)
                     .soft_wrap(split)
+                    .when(split_mode, |diff| diff.split_ratio(ratio))
+                    .change_background(!whole_file)
+                    .when(whole_file, |diff| {
+                        diff.change_indicator(DiffChangeIndicator::Bars)
+                    })
                     .annotations(annotations.iter().cloned())
                     .render_annotation(move |annotation, window, cx| {
                         comments::render_annotation(&annotation_view, annotation, window, cx)
@@ -430,7 +626,106 @@ impl ReviewView {
                         })
                     }),
             )
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let width = f32::from(bounds.size.width);
+                        measure_view.update(cx, |this, cx| {
+                            if (this.split_width - width).abs() >= 0.5 {
+                                this.split_width = width;
+                                cx.notify();
+                            }
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .when(resizable, |el| {
+                el.child(
+                    div()
+                        .id("split-resize")
+                        .group("split-resize")
+                        .absolute()
+                        .top_0()
+                        .h_full()
+                        .left(px(divider_center - SPLIT_HANDLE / 2.))
+                        .w(px(SPLIT_HANDLE))
+                        .flex()
+                        .justify_center()
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .block_mouse_except_scroll()
+                        .child(
+                            div()
+                                .w(px(SPLIT_GRIP))
+                                .h_full()
+                                .when(dragging, |el| el.bg(grip))
+                                .group_hover("split-resize", move |style| style.bg(grip)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.split_drag = Some((event.position.x, ratio));
+                                cx.notify();
+                            }),
+                        )
+                        .on_drag(SplitResize, |drag, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| drag.clone())
+                        })
+                        .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                            if event.click_count() == 2 {
+                                this.resize_split(0.5, cx);
+                            }
+                        })),
+                )
+            })
             .into_any_element()
+    }
+
+    fn end_split_drag(&mut self, cx: &mut Context<Self>) {
+        if self.split_drag.take().is_some() {
+            cx.notify();
+        }
+    }
+}
+
+const DIFF_BORDER: f32 = 1.;
+const SPLIT_HANDLE: f32 = 8.;
+const SPLIT_GRIP: f32 = 2.;
+
+pub(super) struct FileLabel {
+    review: Rc<LoadedReview>,
+    tree: Arc<FileTree>,
+    file: usize,
+    path: SharedString,
+    name_start: usize,
+    status: FileStatus,
+    additions: Option<SharedString>,
+    deletions: Option<SharedString>,
+    position: SharedString,
+    renamed_from: Option<SharedString>,
+    has_previous: bool,
+    has_next: bool,
+}
+
+fn status_icon(status: FileStatus, cx: &App) -> (Icons, Hsla) {
+    let theme = cx.theme();
+    match status {
+        FileStatus::Added => (Icons::FilePlus, theme.green),
+        FileStatus::Deleted => (Icons::FileMinus, theme.red),
+        FileStatus::Renamed => (Icons::FileDiff, theme.blue),
+        FileStatus::Modified => (Icons::FileDiff, theme.yellow),
+    }
+}
+
+#[derive(Clone)]
+struct SplitResize;
+
+impl Render for SplitResize {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
     }
 }
 

@@ -26,8 +26,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
 - `diff_panel.rs` — the review header (branch pickers with pull buttons, the MR, or the work
-  tree; viewed progress), the file toolbar and the `Diff` element; the sliding, resizable tree
-  panel; `Render for ReviewView`.
+  tree; viewed progress), the file toolbar (change and file navigation, the shown file's
+  label as a cached `FileLabel`, viewed and layout controls) and the `Diff` element with its
+  movable split divider; the sliding, resizable tree panel; `Render for ReviewView`.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
@@ -48,7 +49,26 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - The patch is requested with full-file context so the diff can expand folded lines; over
   48 MB it is recomputed with 3 lines and the header says so.
 - Exactly one file is in the `DiffState` at a time; selecting a file replaces it. This bounds
-  highlighting work on huge reviews and keeps the file header a stable scope.
+  highlighting work on huge reviews, and is why the `Diff` draws no file header
+  (`header_visible(false)`): the toolbar names the file instead. File-level annotations
+  still render, since the component keeps them when the header is hidden.
+- The file toolbar, left to right: tree toggle, previous/next change, previous/next file
+  (`PreviousFile`/`NextFile`, disabled without a visible neighbour), `n / m` in tree order,
+  then the file: status icon in the tree's colors, the path with the directory muted and the
+  name in the foreground color, ellipsized from the start so the name stays, `+a`/`−d` when
+  non-zero, and a "new file" / "deleted" / "renamed" tag (the renamed tag's tooltip names the
+  old path); the cross-file hint follows it. Viewed and layout controls sit on the right.
+  The whole path has one font weight and the name stands out by color only: GPUI measures
+  truncation with the base font, so a bolder run would be clipped and a lighter one would
+  leave a gap before the counts.
+- `FileLabel` holds the toolbar's strings (path, counts, position, neighbours). It is rebuilt
+  at the start of the toolbar render only when the review `Rc`, the tree `Arc` or the shown
+  file changed, so a steady frame formats nothing; it keeps no translated text, so a
+  language switch needs no rebuild.
+- Added and deleted files (one column) are drawn without the change background
+  (`change_background(false)`) and with `DiffChangeIndicator::Bars`, a thin line beside the
+  code: the tag already says the whole file is new or gone, and a solid fill would drown the
+  syntax colors. Modified and renamed files keep the fill and the `+`/`−` signs.
 - `LoadedReview::files` is in patch order; the tree's `file_order` is the navigation order.
   `line_maps` and the parsed files are index-aligned; if the counts ever differ the review
   still loads but diff comments are disabled (`comments_aligned`).
@@ -131,11 +151,29 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   layout. `sync_diff_mode` applies it before a new file goes in (`show_file`) and when the
   layout changes (`apply_settings`, `set_layout`), never from `render`.
 - With the Split setting the `Diff` soft-wraps, whole-file views included: the component
-  splits its content width in half and wrapping pins that width to the viewport, so both
-  sides are always exactly half. With Unified, long lines scroll horizontally, whole files
-  too. Wrapping follows the setting rather than the mode shown, so a file looks the same as
-  its neighbours under one setting, and the header's right-hand label stays in view. The
-  file header's "Added file" / "Deleted file" label is gpui-component's own.
+  splits its content width at the split ratio and wrapping pins that width to the viewport,
+  so the two columns always share exactly the viewport. With Unified, long lines scroll
+  horizontally, whole files too. Wrapping follows the setting rather than the mode shown, so
+  a file looks the same as its neighbours under one setting.
+- The split divider: the app draws the handle and passes `Diff::split_ratio`. The boundary
+  is the original column's right border, at `viewport · ratio` from the body's left edge;
+  the body sits inside the `Diff`'s 1 px border, so with `W` = area width − 2 the line covers
+  `[W·ratio, W·ratio + 1)` in `diff-area` coordinates and the handle is centred there
+  (`DIFF_BORDER`). `W` comes from a `canvas` in `diff-area` that stores its width
+  (`split_width`) after layout, the same one-frame lag as the component's own viewport. The
+  handle shows only when the file is in two columns (mode Split, text with changes) and `W`
+  fits two `SPLIT_MIN_COLUMN`s (160 px). The ratio shown is `fit_split_ratio`: each column at
+  least 160 px and within the component's 0.1–0.9, 50/50 when narrower; the saved
+  preference is not rewritten by that fit. The ratio goes to the `Diff` only in Split mode:
+  it is part of the component's layout key, and without soft wrap every change re-measures
+  the whole file, which a width-dependent fit would trigger on every frame of a resize. A
+  drag is relative to its start: mouse down stores the start x and the ratio shown
+  (`split_drag`), each move sets `(W·start + dx) / W`, so the boundary never jumps under the
+  cursor; mouse up anywhere clears it through `diff-area`, which outlives a handle that
+  disappears mid-drag. The handle blocks
+  mouse input to the code under it (not scrolling), shows a `drag_border` line on hover and
+  while dragging, and a double-click resets to 0.5. `resize_split` saves the ratio 400 ms
+  after the last move, detached, like the tree width.
 - With "ignore whitespace", line maps come from a second patch without `-w`, matched by path,
   so comment positions follow GitLab's real diff rather than the whitespace-blind one.
 - A discussion whose position has no line (file or image comments) goes to the sheet.
@@ -159,7 +197,10 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - Viewed progress is local; GitLab has no API for its "viewed" checkboxes.
 - The uncommitted-changes review compares with `HEAD`, not with a target branch.
 - Pull is fast-forward only and only from the branch chips of a branch review.
-- Added and deleted files show as one whole file, never as a split with an empty side.
-- The split divider is fixed in the middle: gpui-component's `Diff` has no API for a column
-  ratio, and a draggable divider would mean forking it.
-- "Viewed" has one control, the toolbar button; the file header has none.
+- Added and deleted files show as one whole file, never as a split with an empty side, and
+  as plain highlighted code: no change fill, a thin colored bar instead.
+- No file header row above the code; the toolbar carries the file, as in IntelliJ's diff
+  viewer.
+- The split divider is movable; its ratio is one app-wide setting, not per file or
+  repository.
+- "Viewed" has one control, the toolbar button.
