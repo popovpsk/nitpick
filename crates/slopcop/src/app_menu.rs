@@ -1,7 +1,9 @@
 use gpui::{App, Menu, MenuItem, actions};
 
 use crate::localization::tr;
-use crate::workspace::{CloseWindow, NewReview, NewWindow, OpenRepository, ShowSettings};
+use crate::workspace::{
+    AddRepositories, CloseWindow, NewReview, NewWindow, OpenRepository, ShowSettings,
+};
 
 actions!(
     slopcop,
@@ -53,6 +55,7 @@ pub fn app_menus() -> Vec<Menu> {
             name: s.menu_file.clone(),
             items: vec![
                 MenuItem::action(s.open_repository_ellipsis.clone(), OpenRepository),
+                MenuItem::action(s.add_repositories_ellipsis.clone(), AddRepositories),
                 MenuItem::action(s.new_review.clone(), NewReview),
                 MenuItem::separator(),
                 MenuItem::action(s.new_window.clone(), NewWindow),

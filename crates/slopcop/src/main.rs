@@ -9,6 +9,7 @@ use crate::workspace::Workspace;
 
 pub mod app_menu;
 pub mod localization;
+pub mod picker;
 pub mod recent;
 pub mod review;
 pub mod settings_store;
@@ -145,6 +146,7 @@ fn main() {
         });
         cx.on_action(|_: &workspace::NewWindow, cx| open_window(None, cx));
         cx.on_action(|_: &workspace::OpenRepository, cx| open_window(None, cx));
+        cx.on_action(|_: &workspace::AddRepositories, cx| open_window(None, cx));
         cx.on_action(|_: &updater::CheckForUpdates, cx| updater::check_now(cx));
 
         cx.activate(true);

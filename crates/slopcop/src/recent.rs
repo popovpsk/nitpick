@@ -1,11 +1,11 @@
+use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 
 use crate::review::ReviewSource;
-
-const LIMIT: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -70,9 +70,11 @@ impl RecentRepos {
     pub fn load(path: PathBuf) -> Self {
         let data = std::fs::read(&path)
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<RecentFile>(&bytes).ok())
             .unwrap_or_default();
-        Self { path, data }
+        let mut this = Self { path, data };
+        sort(&mut this.data.repos);
+        this
     }
 
     pub fn repos(&self) -> &[RecentRepo] {
@@ -102,23 +104,43 @@ impl RecentRepos {
     }
 
     pub fn touch(&mut self, repo: &Path, now: i64) {
-        let last_review = self
+        let opened_at = self
             .data
             .repos
             .iter()
-            .find(|r| r.path == repo)
-            .and_then(|r| r.last_review.clone());
-        self.data.repos.retain(|r| r.path != repo);
-        self.data.repos.insert(
-            0,
-            RecentRepo {
+            .map(|r| r.opened_at)
+            .max()
+            .map_or(now, |latest| now.max(latest + 1));
+        match self.data.repos.iter_mut().find(|r| r.path == repo) {
+            Some(entry) => entry.opened_at = opened_at,
+            None => self.data.repos.push(RecentRepo {
                 path: repo.to_path_buf(),
-                opened_at: now,
-                last_review,
-            },
-        );
-        self.data.repos.truncate(LIMIT);
+                opened_at,
+                last_review: None,
+            }),
+        }
+        sort(&mut self.data.repos);
         self.save();
+    }
+
+    pub fn add(&mut self, repos: &[PathBuf]) -> usize {
+        let mut known: HashSet<PathBuf> = self.data.repos.iter().map(|r| r.path.clone()).collect();
+        let before = self.data.repos.len();
+        for path in repos {
+            if known.insert(path.clone()) {
+                self.data.repos.push(RecentRepo {
+                    path: path.clone(),
+                    opened_at: 0,
+                    last_review: None,
+                });
+            }
+        }
+        let added = self.data.repos.len() - before;
+        if added > 0 {
+            sort(&mut self.data.repos);
+            self.save();
+        }
+        added
     }
 
     pub fn set_open_windows(&mut self, repos: Vec<PathBuf>) {
@@ -140,6 +162,17 @@ impl RecentRepos {
     }
 }
 
+fn sort(repos: &mut [RecentRepo]) {
+    repos.sort_by_cached_key(|r| {
+        let name = r
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        (Reverse(r.opened_at), name, r.path.clone())
+    });
+}
+
 pub fn recent(cx: &App) -> &RecentRepos {
     cx.global::<RecentRepos>()
 }
@@ -150,3 +183,7 @@ pub fn now() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "recent_tests.rs"]
+mod tests;

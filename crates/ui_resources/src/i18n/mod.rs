@@ -27,17 +27,13 @@ pub struct Strings {
     pub new_review: SharedString,
     pub new_window: SharedString,
     pub close_window: SharedString,
-    pub recent_repositories: SharedString,
-    pub recent_repositories_hint: SharedString,
     pub welcome_hint: SharedString,
     pub choose_review: SharedString,
     pub choose_review_tooltip: SharedString,
     pub compare_branches: SharedString,
-    pub compare_hint: SharedString,
     pub target_branch: SharedString,
     pub source_branch: SharedString,
     pub choose_branch: SharedString,
-    pub search: SharedString,
     pub swap: SharedString,
     pub compare: SharedString,
     pub merge_requests: SharedString,
@@ -102,6 +98,17 @@ pub struct Strings {
     pub save_and_check: SharedString,
     pub checking: SharedString,
 
+    pub add_repositories_ellipsis: SharedString,
+    pub switch_repository_tooltip: SharedString,
+    pub search_repositories: SharedString,
+    pub search_branches: SharedString,
+    pub no_matches: SharedString,
+    pub no_new_repositories: SharedString,
+    pub scan_failed: SharedString,
+    pub change_target_branch: SharedString,
+    pub change_source_branch: SharedString,
+    pub compare_tooltip: SharedString,
+
     pub update_ready_t: SharedString,
     pub update_check_failed_t: SharedString,
     pub settings_save_failed_t: SharedString,
@@ -111,6 +118,9 @@ pub struct Strings {
     pub pull_failed_t: SharedString,
     pub pull_up_to_date_t: SharedString,
     pub pull_updated_t: SharedString,
+
+    pub repositories_added_t: SharedString,
+    pub viewed_progress_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -161,6 +171,17 @@ impl Strings {
 
     pub fn pull_updated(&self, branch: &str) -> String {
         fill(&self.pull_updated_t, &[branch])
+    }
+
+    pub fn repositories_added(&self, count: usize) -> String {
+        fill(&self.repositories_added_t, &[&count.to_string()])
+    }
+
+    pub fn viewed_progress(&self, viewed: usize, total: usize) -> String {
+        fill(
+            &self.viewed_progress_t,
+            &[&viewed.to_string(), &total.to_string()],
+        )
     }
 }
 
@@ -292,10 +313,12 @@ mod tests {
                 &s.pull_failed_t,
                 &s.pull_up_to_date_t,
                 &s.pull_updated_t,
+                &s.repositories_added_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }
             assert_eq!(s.merge_base_t.matches("{}").count(), 2, "{lang:?}");
+            assert_eq!(s.viewed_progress_t.matches("{}").count(), 2, "{lang:?}");
         }
     }
 }
