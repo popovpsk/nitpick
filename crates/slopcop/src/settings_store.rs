@@ -53,6 +53,10 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub advance_on_viewed: bool,
     #[serde(default)]
+    pub auto_mark_viewed: bool,
+    #[serde(default = "default_tree_width")]
+    pub tree_width: f32,
+    #[serde(default)]
     pub gitlab_url: String,
     #[serde(default, with = "secret_store::serde_string")]
     pub gitlab_token: String,
@@ -60,6 +64,12 @@ pub struct Settings {
 
 fn default_true() -> bool {
     true
+}
+
+pub const TREE_WIDTH_RANGE: (f32, f32) = (160., 720.);
+
+fn default_tree_width() -> f32 {
+    300.
 }
 
 impl Default for Settings {
@@ -71,6 +81,8 @@ impl Default for Settings {
             diff_layout: DiffLayout::default(),
             ignore_whitespace: false,
             advance_on_viewed: true,
+            auto_mark_viewed: false,
+            tree_width: default_tree_width(),
             gitlab_url: String::new(),
             gitlab_token: String::new(),
         }

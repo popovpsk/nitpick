@@ -14,6 +14,7 @@ const FULL_CONTEXT_PATCH_LIMIT: usize = 48 * 1024 * 1024;
 pub enum ReviewSource {
     Branches { target: String, source: String },
     MergeRequest { project: String, iid: u64 },
+    WorkingTree,
 }
 
 impl ReviewSource {
@@ -21,6 +22,39 @@ impl ReviewSource {
         match self {
             ReviewSource::Branches { target, source } => format!("{target} ← {source}").into(),
             ReviewSource::MergeRequest { iid, .. } => format!("!{iid}").into(),
+            ReviewSource::WorkingTree => crate::localization::tr().uncommitted_changes.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Head<'a> {
+    Commit(&'a str),
+    WorkingTree,
+}
+
+impl Head<'_> {
+    fn changed_files(
+        self,
+        repo: &Repo,
+        base: &str,
+        options: &DiffOptions,
+    ) -> Result<Vec<ChangedFile>, git_repo::GitError> {
+        match self {
+            Head::Commit(head) => repo.changed_files(base, head, options),
+            Head::WorkingTree => repo.working_tree_changes(base, options),
+        }
+    }
+
+    fn diff(
+        self,
+        repo: &Repo,
+        base: &str,
+        options: &DiffOptions,
+    ) -> Result<String, git_repo::GitError> {
+        match self {
+            Head::Commit(head) => repo.diff(base, head, options),
+            Head::WorkingTree => repo.working_tree_diff(base, options),
         }
     }
 }
@@ -71,6 +105,34 @@ pub fn build(
     comparison: Comparison,
     ignore_whitespace: bool,
 ) -> anyhow::Result<LoadedReview> {
+    let head = comparison.head_sha.clone();
+    build_range(repo, comparison, Head::Commit(&head), ignore_whitespace)
+}
+
+pub fn build_working_tree(repo: &Repo, ignore_whitespace: bool) -> anyhow::Result<LoadedReview> {
+    let base = repo.head_or_empty_tree().context("resolving HEAD")?;
+    let branch = repo
+        .current_branch()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "HEAD".to_string());
+    let comparison = Comparison {
+        base_sha: base.clone(),
+        head_sha: String::new(),
+        target: branch,
+        source: String::new(),
+        target_sha: base,
+        merge_base_refs: Vec::new(),
+    };
+    build_range(repo, comparison, Head::WorkingTree, ignore_whitespace)
+}
+
+fn build_range(
+    repo: &Repo,
+    comparison: Comparison,
+    range_head: Head<'_>,
+    ignore_whitespace: bool,
+) -> anyhow::Result<LoadedReview> {
     let base = comparison.base_sha.clone();
     let head = comparison.head_sha.clone();
     let mut options = DiffOptions {
@@ -78,18 +140,18 @@ pub fn build(
         find_renames: true,
         ignore_whitespace,
     };
-    let changed = repo
-        .changed_files(&base, &head, &options)
+    let changed = range_head
+        .changed_files(repo, &base, &options)
         .context("listing changed files")?;
     options.context_lines = FULL_CONTEXT;
-    let mut patch = repo
-        .diff(&base, &head, &options)
+    let mut patch = range_head
+        .diff(repo, &base, &options)
         .context("computing the diff")?;
     let mut context_limited = false;
     if patch.len() > FULL_CONTEXT_PATCH_LIMIT {
         options.context_lines = SHORT_CONTEXT;
-        patch = repo
-            .diff(&base, &head, &options)
+        patch = range_head
+            .diff(repo, &base, &options)
             .context("computing the diff")?;
         context_limited = true;
     }
@@ -97,8 +159,8 @@ pub fn build(
     let (maps, comments_aligned) = if ignore_whitespace {
         options.ignore_whitespace = false;
         drop(patch);
-        let exact = repo
-            .diff(&base, &head, &options)
+        let exact = range_head
+            .diff(repo, &base, &options)
             .context("computing the diff")?;
         let exact_files = parse(&exact)?;
         let (exact_maps, aligned) = aligned_maps(&exact, exact_files.len());
@@ -135,10 +197,13 @@ pub fn build(
             })
             .collect::<Vec<_>>(),
     );
-    let commits = repo.commits(&base, &head).unwrap_or_else(|err| {
-        log::warn!("commits {base}..{head}: {err}");
-        Vec::new()
-    });
+    let commits = match range_head {
+        Head::Commit(head) => repo.commits(&base, head).unwrap_or_else(|err| {
+            log::warn!("commits {base}..{head}: {err}");
+            Vec::new()
+        }),
+        Head::WorkingTree => Vec::new(),
+    };
     Ok(LoadedReview {
         base_sha: base,
         head_sha: head,

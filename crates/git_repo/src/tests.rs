@@ -1091,3 +1091,121 @@ fn errors_read_well() {
         "`git fetch origin` failed (exit code 128): fatal: could not read from remote repository"
     );
 }
+
+#[test]
+fn working_tree_changes_cover_staged_unstaged_and_untracked_files() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(
+        &path,
+        &[
+            ("staged.txt", "one\n"),
+            ("edited.txt", "a\nb\n"),
+            ("gone.txt", "bye\n"),
+            (".gitignore", "ignored.log\n"),
+        ],
+        "initial",
+    );
+    fixture.write(&path, "staged.txt", "one\ntwo\n");
+    fixture.git(&path, &["add", "staged.txt"]);
+    fixture.write(&path, "edited.txt", "a\nB\n");
+    std::fs::remove_file(path.join("gone.txt")).unwrap();
+    fixture.write(&path, "new dir/fresh.txt", "x\ny\nz");
+    fixture.write(&path, "ignored.log", "noise\n");
+    std::fs::write(path.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+    let repo = Repo::open(&path).unwrap();
+
+    assert_eq!(repo.head_or_empty_tree().unwrap(), head);
+    let files = repo
+        .working_tree_changes(&head, &DiffOptions::default())
+        .unwrap();
+    let mut seen: Vec<(&str, ChangeStatus, Option<u32>, Option<u32>)> = files
+        .iter()
+        .map(|f| (f.path.as_str(), f.status, f.additions, f.deletions))
+        .collect();
+    seen.sort_by(|a, b| a.0.cmp(b.0));
+    assert_eq!(
+        seen,
+        vec![
+            ("blob.bin", ChangeStatus::Added, None, None),
+            ("edited.txt", ChangeStatus::Modified, Some(1), Some(1)),
+            ("gone.txt", ChangeStatus::Deleted, Some(0), Some(1)),
+            ("new dir/fresh.txt", ChangeStatus::Added, Some(3), Some(0)),
+            ("staged.txt", ChangeStatus::Modified, Some(1), Some(0)),
+        ]
+    );
+    let blob = |p: &str| files.iter().find(|f| f.path == p).unwrap().new_blob.clone();
+    assert_eq!(
+        blob("edited.txt"),
+        fixture.git(&path, &["hash-object", "edited.txt"])
+    );
+    assert_eq!(
+        blob("new dir/fresh.txt"),
+        fixture.git(&path, &["hash-object", "new dir/fresh.txt"])
+    );
+    assert_eq!(blob("gone.txt"), "0".repeat(40));
+    assert_eq!(
+        fixture
+            .git(&path, &["status", "--porcelain"])
+            .lines()
+            .count(),
+        5
+    );
+    assert!(
+        fixture
+            .git(&path, &["status", "--porcelain"])
+            .contains("?? blob.bin")
+    );
+}
+
+#[test]
+fn working_tree_diff_appends_untracked_files_as_new_files() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(&path, &[("kept.txt", "a\nb\n")], "initial");
+    fixture.write(&path, "kept.txt", "a\nc\n");
+    fixture.write(&path, "fresh.rs", "fn main() {}\nlet x = 1;");
+    fixture.write(&path, "empty.txt", "");
+    fixture.write(&path, "tab\there.txt", "t\n");
+    std::fs::write(path.join("blob.bin"), [0u8, 1, 2]).unwrap();
+    let repo = Repo::open(&path).unwrap();
+
+    let patch = repo
+        .working_tree_diff(&head, &DiffOptions::default())
+        .unwrap();
+    assert!(patch.contains("diff --git a/kept.txt b/kept.txt\n"));
+    assert!(patch.contains("\n-b\n+c\n"));
+    let fresh_hash = fixture.git(&path, &["hash-object", "fresh.rs"]);
+    assert!(patch.contains(&format!(
+        "diff --git a/fresh.rs b/fresh.rs\nnew file mode 100644\nindex {}..{fresh_hash}\n--- /dev/null\n+++ b/fresh.rs\n@@ -0,0 +1,2 @@\n+fn main() {{}}\n+let x = 1;\n\\ No newline at end of file\n",
+        "0".repeat(40)
+    )));
+    assert!(patch.contains("diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex "));
+    assert!(patch.contains("Binary files /dev/null and b/blob.bin differ\n"));
+    assert!(patch.contains("diff --git \"a/tab\\there.txt\" \"b/tab\\there.txt\"\n"));
+    assert!(
+        fixture
+            .git(&path, &["status", "--porcelain"])
+            .contains("?? fresh.rs")
+    );
+}
+
+#[test]
+fn an_unborn_repository_diffs_against_the_empty_tree() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    fixture.write(&path, "first.txt", "hello\n");
+    let repo = Repo::open(&path).unwrap();
+
+    let base = repo.head_or_empty_tree().unwrap();
+    assert_eq!(base, "4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+    let files = repo
+        .working_tree_changes(&base, &DiffOptions::default())
+        .unwrap();
+    assert_eq!(paths(&files), vec!["first.txt"]);
+    assert_eq!(files[0].status, ChangeStatus::Added);
+    let patch = repo
+        .working_tree_diff(&base, &DiffOptions::default())
+        .unwrap();
+    assert!(patch.contains("+++ b/first.txt\n@@ -0,0 +1 @@\n+hello\n"));
+}

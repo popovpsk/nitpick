@@ -1,6 +1,8 @@
 use gpui::{
-    AnyElement, Context, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    Animation, AnimationExt as _, AnyElement, AppContext as _, Context, CursorStyle, DragMoveEvent,
+    ElementId, Empty, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, ease_out_quint,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -8,15 +10,15 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
     diff::{Diff, DiffHoverHighlight},
-    h_flex, h_resizable, resizable_panel,
+    h_flex,
     spinner::Spinner,
     v_flex,
 };
 use ui_resources::Icons;
 
 use super::{
-    Busy, ComposerTarget, FocusDiff, FocusTree, LoadState, NextFile, PreviousFile, PullSide,
-    Refresh, ReviewSource, ReviewView, ToggleTree, ToggleViewed, comments,
+    Busy, FocusDiff, FocusTree, LoadState, NextFile, PreviousFile, PullSide, Refresh, ReviewSource,
+    ReviewView, TREE_SLIDE, ToggleTree, ToggleViewed, comments,
 };
 use crate::localization::tr;
 use crate::settings_store::{DiffLayout, TreeSide, settings};
@@ -30,7 +32,7 @@ impl ReviewView {
                 branch_chip("target", target.clone(), PullSide::Target, busy, cx),
                 branch_chip("source", source.clone(), PullSide::Source, busy, cx),
             )),
-            ReviewSource::MergeRequest { .. } => None,
+            ReviewSource::MergeRequest { .. } | ReviewSource::WorkingTree => None,
         };
         let theme = cx.theme();
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
@@ -91,6 +93,24 @@ impl ReviewView {
                             .text_xs()
                             .text_color(theme.muted_foreground)
                             .child(s.merge_base(&base, review.commits.len())),
+                    );
+                }
+            }
+            (ReviewSource::WorkingTree, None) => {
+                left = left
+                    .child(Icon::new(Icons::FilePen).small().text_color(theme.primary))
+                    .child(div().font_semibold().child(s.uncommitted_changes.clone()));
+                if let Some(review) = &self.review {
+                    left = left.child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!(
+                                "{} · {}",
+                                review.target,
+                                short_sha(&review.base_sha)
+                            )),
                     );
                 }
             }
@@ -169,6 +189,7 @@ impl ReviewView {
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
+        let auto_mark = settings(cx).auto_mark_viewed;
         h_flex()
             .flex_none()
             .h(px(34.))
@@ -187,7 +208,7 @@ impl ReviewView {
                         IconName::PanelRight
                     })
                     .selected(self.tree_visible)
-                    .tooltip(s.toggle_tree.clone())
+                    .tooltip_with_action(s.toggle_tree.clone(), &ToggleTree, Some("Review"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_tree(cx))),
             )
             .child(
@@ -195,7 +216,7 @@ impl ReviewView {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronUp)
-                    .tooltip(s.previous_file.clone())
+                    .tooltip_with_action(s.previous_file.clone(), &PreviousFile, Some("Review"))
                     .on_click(cx.listener(|this, _, _, cx| this.step_file(-1, cx))),
             )
             .child(
@@ -203,7 +224,7 @@ impl ReviewView {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronDown)
-                    .tooltip(s.next_file.clone())
+                    .tooltip_with_action(s.next_file.clone(), &NextFile, Some("Review"))
                     .on_click(cx.listener(|this, _, _, cx| this.step_file(1, cx))),
             )
             .child(
@@ -213,6 +234,21 @@ impl ReviewView {
                     .child(format!("{position} / {count}")),
             )
             .child(div().flex_1())
+            .child(
+                Button::new("auto-mark")
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(Icons::CheckCheck))
+                    .selected(auto_mark)
+                    .tooltip(if auto_mark {
+                        s.auto_mark_on.clone()
+                    } else {
+                        s.auto_mark_off.clone()
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_auto_mark(!auto_mark, cx)),
+                    ),
+            )
             .child(
                 Button::new("mark-viewed")
                     .small()
@@ -229,6 +265,15 @@ impl ReviewView {
                         s.mark_viewed.clone()
                     })
                     .disabled(self.current_file.is_none())
+                    .tooltip_with_action(
+                        if current_viewed {
+                            s.mark_unviewed.clone()
+                        } else {
+                            s.mark_viewed.clone()
+                        },
+                        &ToggleViewed,
+                        Some("Review"),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(file) = this.current_file {
                             this.toggle_file_viewed(file, cx);
@@ -356,6 +401,10 @@ fn branch_chip(
         .into_any_element()
 }
 
+fn short_sha(sha: &str) -> &str {
+    sha.get(..8).unwrap_or(sha)
+}
+
 fn empty_state(message: SharedString, cx: &mut Context<ReviewView>) -> AnyElement {
     v_flex()
         .size_full()
@@ -365,6 +414,69 @@ fn empty_state(message: SharedString, cx: &mut Context<ReviewView>) -> AnyElemen
         .text_color(cx.theme().muted_foreground)
         .child(message)
         .into_any_element()
+}
+
+#[derive(Clone)]
+struct TreeResize;
+
+impl Render for TreeResize {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+impl ReviewView {
+    fn render_tree_panel(
+        &self,
+        tree: AnyElement,
+        side: TreeSide,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let width = self.tree_width;
+        let closing = self.tree_closing;
+        let handle = div()
+            .id("tree-resize")
+            .absolute()
+            .top_0()
+            .h_full()
+            .w(px(5.))
+            .when(side == TreeSide::Left, |el| el.right(px(-2.)))
+            .when(side == TreeSide::Right, |el| el.left(px(-2.)))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .hover(|el| el.bg(theme.drag_border))
+            .on_drag(TreeResize, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            });
+        let panel = div()
+            .relative()
+            .flex_none()
+            .h_full()
+            .when(side == TreeSide::Left, |el| el.border_r_1())
+            .when(side == TreeSide::Right, |el| el.border_l_1())
+            .border_color(theme.border)
+            .child(
+                div()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(div().h_full().w(px(width)).child(tree)),
+            )
+            .when(!closing, |el| el.child(handle));
+        if self.tree_toggles == 0 {
+            return panel.w(px(width)).into_any_element();
+        }
+        panel
+            .with_animation(
+                ElementId::NamedInteger("tree-slide".into(), self.tree_toggles as u64),
+                Animation::new(TREE_SLIDE).with_easing(ease_out_quint()),
+                move |el, delta| {
+                    let factor = if closing { 1.0 - delta } else { delta };
+                    el.w(px(width * factor))
+                },
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for ReviewView {
@@ -388,8 +500,10 @@ impl Render for ReviewView {
                     this.step_file(-1, cx);
                 }
             }))
-            .on_action(cx.listener(|this, _: &ToggleViewed, _, cx| {
-                if let Some(file) = this.current_file {
+            .on_action(cx.listener(|this, _: &ToggleViewed, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else if let Some(file) = this.current_file {
                     this.toggle_file_viewed(file, cx);
                 }
             }))
@@ -442,21 +556,28 @@ impl Render for ReviewView {
             .child(self.render_file_toolbar(cx))
             .child(self.render_diff(cx))
             .into_any_element();
-        let tree_panel = resizable_panel()
-            .size(px(300.))
-            .size_range(px(160.)..px(720.))
-            .visible(self.tree_visible)
-            .child(tree);
-        let diff_panel = resizable_panel().child(diff);
-        let body = match settings(cx).tree_side {
-            TreeSide::Left => h_resizable("review-split")
-                .child(tree_panel)
-                .child(diff_panel),
-            TreeSide::Right => h_resizable("review-split-right")
-                .child(diff_panel)
-                .child(tree_panel),
+        let side = settings(cx).tree_side;
+        let tree_panel = (self.tree_visible || self.tree_closing)
+            .then(|| self.render_tree_panel(tree, side, cx));
+        let body = h_flex()
+            .id("review-body")
+            .size_full()
+            .min_h_0()
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<TreeResize>, _, cx| {
+                    let x = event.event.position.x;
+                    let width = match side {
+                        TreeSide::Left => x - event.bounds.left(),
+                        TreeSide::Right => event.bounds.right() - x,
+                    };
+                    this.resize_tree(f32::from(width), cx);
+                }),
+            );
+        let diff = div().flex_1().min_w_0().h_full().child(diff);
+        let body = match side {
+            TreeSide::Left => body.children(tree_panel).child(diff),
+            TreeSide::Right => body.child(diff).children(tree_panel),
         };
-        let _ = ComposerTarget::General;
         root.child(header)
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()

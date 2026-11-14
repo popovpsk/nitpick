@@ -1,7 +1,8 @@
 # review
 
-One review: a branch comparison or a GitLab merge request, loaded into a file tree, a diff of
-one file at a time, per-file "viewed" marks and, for a merge request, its discussions.
+One review: a branch comparison, a GitLab merge request or the uncommitted changes of the work
+tree, loaded into a file tree, a diff of one file at a time, per-file "viewed" marks and, for a
+merge request, its discussions.
 `ReviewView` is the entity; the window creates one per opened review.
 
 Not here: choosing what to review (`workspace/start.rs`), the git operations
@@ -20,8 +21,9 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   a debounced save, `flush_all` at quit.
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
-- `diff_panel.rs` — the review header (branches with pull buttons, or the MR), the file
-  toolbar and the `Diff` element; `Render for ReviewView`.
+- `diff_panel.rs` — the review header (branches with pull buttons, the MR, or the work
+  tree), the file toolbar and the `Diff` element; the sliding, resizable tree panel;
+  `Render for ReviewView`.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
   general and outdated discussions.
 
@@ -33,6 +35,10 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
   is missing locally, `refs/merge-requests/<iid>/head` is fetched into `refs/slopcop/mr/<iid>`
   (hidden from branch lists) from the remote whose URL path is the MR's project, else
   `origin`, else any remote on the GitLab host.
+- The work-tree review (`ReviewSource::WorkingTree`) diffs `HEAD` (the empty tree in an
+  unborn repository) against the files on disk: staged, unstaged and untracked
+  (`git_repo::Repo::working_tree_*`). It has no commits, no pull and no comments. It reloads
+  when its window becomes active, so edits made in an editor show up on return.
 - The patch is requested with full-file context so the diff can expand folded lines; over
   48 MB it is recomputed with 3 lines and the header says so.
 - Exactly one file is in the `DiffState` at a time; selecting a file replaces it. This bounds
@@ -53,10 +59,21 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 - Tree rows are rebuilt when data changes (load, viewed, collapse, discussions), never in
   `render`; the list closure only reads them.
 - Key bindings in the tree (context `ReviewTree`) are single letters (`j/k/h/l`, `space`/`v`,
-  `n/p`); anywhere in the review (context `Review`) they use modifiers (`alt-up/down`,
-  `cmd-b`, `cmd-r`, `cmd-1/2`). `alt-up/down` pass through (`cx.propagate`) while an input
-  has focus, so typing a comment never switches files. No `alt-<letter>` binding: on macOS
-  bindings match before text input, so it would eat the character the layout types.
+  `n/p`); anywhere in the review (context `Review`) they are `space` (viewed) and modifier
+  keys (`alt-up/down`, `cmd-b`, `cmd-r`, `cmd-1/2`). `space` and `alt-up/down` pass through
+  (`cx.propagate`) while an input has focus, so typing a comment never marks or switches
+  files. No `alt-<letter>` binding: on macOS bindings match before text input, so it would
+  eat the character the layout types. Toolbar tooltips name their key through
+  `tooltip_with_action`, so they follow the bindings.
+- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed, except a file
+  the user unmarked by hand in this review (`kept_unviewed`, cleared on every load since file
+  indices change). Reloads and the first file of a load never mark anything.
+- The tree panel is drawn here rather than with `h_resizable`, so it can slide: toggling
+  animates its width over `TREE_SLIDE` (ease-out, as in pawse) while the content keeps its
+  full width inside an `overflow_hidden` box, and a closing panel stays rendered until the
+  slide ends. The first render of a review does not animate. The drag handle on its inner
+  edge resizes it within `TREE_WIDTH_RANGE`; the width is saved to settings 400 ms after the
+  last move.
 - The comment composer survives file switches and reloads; only Cancel or a successful post
   of that same composer closes it.
 - Notifications go to the review's own window (`window_handle`) through `cx.defer`, never to
@@ -71,4 +88,5 @@ Not here: choosing what to review (`workspace/start.rs`), the git operations
 
 - One file at a time rather than all files in one scrolling list.
 - Viewed progress is local; GitLab has no API for its "viewed" checkboxes.
+- The uncommitted-changes review compares with `HEAD`, not with a target branch.
 - Pull is fast-forward only and only from the branch chips of a branch review.

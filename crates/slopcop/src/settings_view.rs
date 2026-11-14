@@ -296,6 +296,16 @@ impl Render for SettingsView {
                     ),
                 )
                 .description(s.advance_on_viewed_desc.clone()),
+            )
+            .item(
+                SettingItem::new(
+                    s.auto_mark_viewed.clone(),
+                    SettingField::switch(
+                        |cx| settings(cx).auto_mark_viewed,
+                        |value, cx| update_settings(cx, |s| s.auto_mark_viewed = value),
+                    ),
+                )
+                .description(s.auto_mark_viewed_desc.clone()),
             );
         let url_view = view.clone();
         let token_view = view.clone();

@@ -35,6 +35,8 @@ gpui_kit_assets::icon_assets!(
         CircleCheckBig,
         Undo2,
         Space,
+        CheckCheck,
+        FilePen,
     ]
 );
 

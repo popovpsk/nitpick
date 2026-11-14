@@ -4,7 +4,7 @@ use crate::command::checked_arg;
 use crate::repo::Repo;
 use crate::{ChangeStatus, ChangedFile, DiffOptions, GitError};
 
-const DIFF_CONFIG: [&str; 6] = [
+pub(crate) const DIFF_CONFIG: [&str; 6] = [
     "-c",
     "diff.noprefix=false",
     "-c",
@@ -13,9 +13,9 @@ const DIFF_CONFIG: [&str; 6] = [
     "diff.relative=false",
 ];
 
-const PATCH_FLAGS: [&str; 3] = ["--no-color", "--no-ext-diff", "--no-textconv"];
+pub(crate) const PATCH_FLAGS: [&str; 3] = ["--no-color", "--no-ext-diff", "--no-textconv"];
 
-fn option_flags(opts: &DiffOptions) -> Vec<String> {
+pub(crate) fn option_flags(opts: &DiffOptions) -> Vec<String> {
     let mut flags = vec![if opts.find_renames {
         "-M".to_string()
     } else {

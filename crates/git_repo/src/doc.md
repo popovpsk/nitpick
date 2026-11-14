@@ -18,6 +18,8 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - `repo.rs` — `Repo`: open, branches, current branch, default target, resolve, `compare`,
   commits, remotes, upstream remote.
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
+- `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
+  `working_tree_diff`), untracked files included, and `head_or_empty_tree`.
 - `pull.rs` — `fetch` and the fast-forward-only `pull`.
 - `remote_url.rs` — `parse_remote_url`: host, project path and web base of a remote URL.
 - `tests.rs` — throwaway repositories in a `TempDir` with the real `git` and an empty
@@ -45,6 +47,11 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab API
 - Blob ids are full length; the absent side of an add or delete is all zeros. Additions and
   deletions are `None` for binary files. `path` is the new path (the old one for a delete);
   `old_path` is set only for renames and copies.
+- Work-tree diffs stay read-only: nothing is staged and no object is written. Untracked
+  files (`ls-files --others --exclude-standard`) are appended as new-file patches built here,
+  in git's format (C-quoted paths, `\ No newline at end of file`, `Binary files … differ` for
+  NUL bytes or files over 16 MB); the on-disk blob ids come from `hash-object` without `-w`,
+  in batches. An untracked symlink shows its target; its blob id is `link:<target>`.
 - `current_branch` is `None` for a detached or unborn HEAD.
 - `branches`: local first, then remote-tracking, each newest committer date first, then by
   name; symbolic refs such as `origin/HEAD` are left out. `upstream` is the short name.

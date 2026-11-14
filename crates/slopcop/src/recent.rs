@@ -12,6 +12,7 @@ const LIMIT: usize = 20;
 pub enum StoredReview {
     Branches { target: String, source: String },
     MergeRequest { project: String, iid: u64 },
+    WorkingTree,
 }
 
 impl StoredReview {
@@ -25,6 +26,7 @@ impl StoredReview {
                 project: project.clone(),
                 iid: *iid,
             },
+            ReviewSource::WorkingTree => StoredReview::WorkingTree,
         }
     }
 
@@ -38,6 +40,7 @@ impl StoredReview {
                 project: project.clone(),
                 iid: *iid,
             },
+            StoredReview::WorkingTree => ReviewSource::WorkingTree,
         }
     }
 }

@@ -6,6 +6,7 @@ mod viewed;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use git_repo::{PullOutcome, Repo};
@@ -25,7 +26,9 @@ use gpui_component::{
 use review_core::{FileStatus, Progress, Side};
 
 use crate::localization::tr;
-use crate::settings_store::{DiffLayout, SettingsStore, settings, update_settings};
+use crate::settings_store::{
+    DiffLayout, SettingsStore, TREE_WIDTH_RANGE, settings, update_settings,
+};
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
 pub use viewed::flush_all as flush_viewed;
@@ -50,6 +53,9 @@ actions!(
     ]
 );
 
+const TREE_SLIDE: Duration = Duration::from_millis(200);
+const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
+
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("down", SelectNext, Some("ReviewTree")),
@@ -65,6 +71,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("v", ToggleViewed, Some("ReviewTree")),
         KeyBinding::new("n", NextFile, Some("ReviewTree")),
         KeyBinding::new("p", PreviousFile, Some("ReviewTree")),
+        KeyBinding::new("space", ToggleViewed, Some("Review")),
         KeyBinding::new("alt-down", NextFile, Some("Review")),
         KeyBinding::new("alt-up", PreviousFile, Some("Review")),
         KeyBinding::new("cmd-1", FocusTree, Some("Review")),
@@ -209,8 +216,14 @@ pub struct ReviewView {
     tree_focus: FocusHandle,
     tree_scroll: UniformListScrollHandle,
     composer: Option<Composer>,
+    kept_unviewed: HashSet<usize>,
     tree_visible: bool,
+    tree_closing: bool,
+    tree_toggles: usize,
+    tree_width: f32,
     busy: Option<Busy>,
+    _tree_close: Task<()>,
+    _tree_width_save: Task<()>,
     _load: Task<()>,
     _discussions: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -239,6 +252,15 @@ impl ReviewView {
         let viewed_store = viewed::shared_for(repo.root(), cx);
         let viewed_sync = cx.observe(&viewed_store, |this, _, cx| this.sync_viewed(cx));
         let settings_sync = cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx));
+        let activation = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active()
+                && this.source == ReviewSource::WorkingTree
+                && this.busy.is_none()
+                && this.review.is_some()
+            {
+                this.reload(cx);
+            }
+        });
         let mut this = Self {
             repo,
             source,
@@ -262,11 +284,17 @@ impl ReviewView {
             tree_focus: cx.focus_handle(),
             tree_scroll: UniformListScrollHandle::new(),
             composer: None,
+            kept_unviewed: HashSet::new(),
             tree_visible: true,
+            tree_closing: false,
+            tree_toggles: 0,
+            tree_width: settings(cx).tree_width,
             busy: None,
+            _tree_close: Task::ready(()),
+            _tree_width_save: Task::ready(()),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
-            _subscriptions: vec![subscription, viewed_sync, settings_sync],
+            _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
         };
         this.load(cx);
         this
@@ -331,6 +359,7 @@ impl ReviewView {
                     .map(|f| store.is_viewed(&f.path, &f.fingerprint))
                     .collect();
                 let review = Rc::new(review);
+                self.kept_unviewed.clear();
                 self.review = Some(review.clone());
                 self.mr = mr;
                 self.load_state = LoadState::Ready;
@@ -462,6 +491,13 @@ impl ReviewView {
             return;
         };
         if self.current_file != Some(ix) {
+            if let Some(left) = self.current_file
+                && settings(cx).auto_mark_viewed
+                && !self.viewed.get(left).copied().unwrap_or(true)
+                && !self.kept_unviewed.contains(&left)
+            {
+                self.set_viewed(&[left], true, cx);
+            }
             self.current_file = Some(ix);
             let diff_file = file.diff.clone();
             self.diff
@@ -510,6 +546,11 @@ impl ReviewView {
         for &ix in files {
             if let Some(file) = review.files.get(ix) {
                 self.viewed[ix] = viewed;
+                if viewed {
+                    self.kept_unviewed.remove(&ix);
+                } else {
+                    self.kept_unviewed.insert(ix);
+                }
                 marks.push((file.path.as_ref(), file.fingerprint.as_str()));
             }
         }
@@ -966,6 +1007,38 @@ impl ReviewView {
 
     pub fn toggle_tree(&mut self, cx: &mut Context<Self>) {
         self.tree_visible = !self.tree_visible;
+        self.tree_toggles += 1;
+        self.tree_closing = !self.tree_visible;
+        self._tree_close = if self.tree_closing {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(TREE_SLIDE).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.tree_closing = false;
+                    cx.notify();
+                });
+            })
+        } else {
+            Task::ready(())
+        };
+        cx.notify();
+    }
+
+    pub fn set_auto_mark(&mut self, on: bool, cx: &mut Context<Self>) {
+        update_settings(cx, |s| s.auto_mark_viewed = on);
+        cx.notify();
+    }
+
+    pub fn resize_tree(&mut self, width: f32, cx: &mut Context<Self>) {
+        let (min, max) = TREE_WIDTH_RANGE;
+        let width = width.clamp(min, max).round();
+        if (width - self.tree_width).abs() < 0.5 {
+            return;
+        }
+        self.tree_width = width;
+        self._tree_width_save = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(TREE_WIDTH_SAVE_DELAY).await;
+            cx.update(|cx| update_settings(cx, |s| s.tree_width = width));
+        });
         cx.notify();
     }
 
@@ -1012,6 +1085,14 @@ async fn load_review(
                     let comparison = repo.compare(&target, &source)?;
                     model::build(&repo, comparison, ignore_whitespace)
                 })
+                .await?;
+            Ok((review, None))
+        }
+        ReviewSource::WorkingTree => {
+            let review = cx
+                .background_spawn(
+                    async move { model::build_working_tree(&repo, ignore_whitespace) },
+                )
                 .await?;
             Ok((review, None))
         }

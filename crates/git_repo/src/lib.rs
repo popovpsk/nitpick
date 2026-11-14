@@ -3,6 +3,7 @@ mod diff;
 mod pull;
 mod remote_url;
 mod repo;
+mod worktree;
 
 #[cfg(test)]
 mod tests;

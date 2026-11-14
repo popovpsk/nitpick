@@ -4,7 +4,7 @@ use std::process::Command;
 use git_repo::Repo;
 use review_core::{FileStatus, LineKind, Side};
 
-use super::{build, gitlab_remote};
+use super::{build, build_working_tree, gitlab_remote};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -199,4 +199,35 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
         Some(LineKind::Removed { old: 5 })
     );
     assert!(review.comments_aligned);
+}
+
+#[test]
+fn working_tree_review_shows_uncommitted_and_untracked_files() {
+    let (dir, repo) = fixture();
+    let root = dir.path();
+    write(root, "main_only.txt", "edited but not committed\n");
+    write(root, "notes/todo.md", "# todo\n- review\n");
+    let review = build_working_tree(&repo, false).unwrap();
+    let mut seen: Vec<(&str, FileStatus)> = review
+        .files
+        .iter()
+        .map(|f| (f.path.as_ref(), f.status))
+        .collect();
+    seen.sort_by(|a, b| a.0.cmp(b.0));
+    assert_eq!(
+        seen,
+        vec![
+            ("main_only.txt", FileStatus::Modified),
+            ("notes/todo.md", FileStatus::Added),
+        ]
+    );
+    assert_eq!(review.target, "main");
+    assert!(review.commits.is_empty());
+    let todo = &review.files[review.file_index("notes/todo.md").unwrap()];
+    assert_eq!(todo.additions, 2);
+    let first = todo.fingerprint.clone();
+    write(root, "notes/todo.md", "# todo\n- review\n- ship\n");
+    let again = build_working_tree(&repo, false).unwrap();
+    let todo = &again.files[again.file_index("notes/todo.md").unwrap()];
+    assert_ne!(todo.fingerprint, first);
 }
