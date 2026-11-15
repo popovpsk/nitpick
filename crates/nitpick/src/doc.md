@@ -21,7 +21,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
-  tree's path), `HideScope`, `add_hide_pattern`; diff display (`show_whole_file`,
+  tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`; diff display (`show_whole_file`,
   `WrapLines`); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower).
@@ -39,7 +39,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   after typing stops by a detached task, and reloads when the saved value differs from the
   one it last loaded or saved and the field is not focused), hidden-file patterns (all
   repositories, and the window's repository when it has one; saved 400 ms after typing
-  stops by a detached task, invalid lines named under the field), GitLab and GitHub groups
+  stops by a detached task, invalid lines named under the field; an empty field shows its
+  own dimmed example over the textarea, because the component paints placeholders in
+  `muted_foreground`, which reads as typed text on some themes), GitLab and GitHub groups
   (`ForgeForm`: URL + token, "Save and check" saves both fields and shows "Connected as
   @user" or the error). A save applies the difference between the list the field was loaded
   from and what was typed (`review_core::hidden::merge_patterns`), so a pattern added from a

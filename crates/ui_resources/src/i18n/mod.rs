@@ -189,6 +189,8 @@ pub struct Strings {
     pub file_deleted_tag: SharedString,
     pub file_renamed_tag: SharedString,
     pub auto_mark_viewed_desc: SharedString,
+    pub collapse_viewed_folders: SharedString,
+    pub collapse_viewed_folders_desc: SharedString,
     pub auto_mark_on: SharedString,
     pub auto_mark_off: SharedString,
     pub uncommitted_changes: SharedString,

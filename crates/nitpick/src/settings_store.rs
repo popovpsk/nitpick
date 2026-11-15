@@ -102,6 +102,8 @@ pub struct Settings {
     pub advance_on_viewed: bool,
     #[serde(default)]
     pub auto_mark_viewed: bool,
+    #[serde(default = "default_true")]
+    pub collapse_viewed_folders: bool,
     #[serde(default = "default_tree_width")]
     pub tree_width: f32,
     #[serde(default = "default_split_ratio")]
@@ -189,6 +191,7 @@ impl Default for Settings {
             ignore_whitespace: false,
             advance_on_viewed: true,
             auto_mark_viewed: false,
+            collapse_viewed_folders: true,
             tree_width: default_tree_width(),
             split_ratio: default_split_ratio(),
             hidden_files: Vec::new(),

@@ -16,7 +16,8 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   rejects and keeps the others' indices; `build_shaped` with a `TreeShape` builds a flat
   list sorted by path or a tree without folder compression; `progress_tracked` counts only
   the files a filter tracks), `rows` (the visible rows for a set of
-  collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`.
+  collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`,
+  `completed_folders` (the ancestor folders of some files whose progress is complete).
 - `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `viewed_versions_except` (the
   other versions of a path marked viewed, newest first), `snapshot` / `save`), `fingerprint`,
   `fingerprint_blobs`, `write_atomic`.
@@ -42,7 +43,8 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - `fuzzy_tests.rs` — match positions, ranking order, highlight ranges.
 - `hidden.rs` — `HideRules`: gitignore-style patterns (the `ignore` crate's matcher, rooted
   at the repository, global then repository lines so a repository `!pattern` re-shows a
-  file); `matching_rule` names the pattern that hid a path; the pattern suggestions the tree
+  file); `normalize` turns a leading `*/` into `**/` before the matcher and the highlighter
+  see it, and `matching_rule` names the pattern as the user typed it; the pattern suggestions the tree
   menu offers (`file_pattern`, `dir_pattern`, `dir_name_pattern`, `family_pattern`), which
   `escape` glob characters and a leading `!`/`#` so `[slug]/` means that folder only;
   `merge_patterns` (an edit applied as a diff against the list it started from);
@@ -100,6 +102,10 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   the shorter label, then to the given order, so an empty query keeps the caller's order.
 
 ## Decisions
+
+- A leading `*/` matches at any depth (`*/mocks/*` hides every `mocks` folder), unlike
+  gitignore, where it means exactly one level: nobody writes it for that, and globs in IDEs
+  read it this way. Any other slash still anchors the pattern to the root, as in gitignore.
 
 - Viewed state is local only: GitLab keeps its "viewed" checkboxes in the browser and has
   no API for them.

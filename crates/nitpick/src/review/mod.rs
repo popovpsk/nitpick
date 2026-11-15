@@ -1090,9 +1090,40 @@ impl ReviewView {
         }
         self.viewed_store
             .update(cx, |store, cx| store.set(&marks, viewed, cx));
+        let selected = self
+            .selected_row
+            .and_then(|row| self.rows.get(row))
+            .map(|row| row.node);
+        let folded =
+            viewed && settings(cx).collapse_viewed_folders && self.collapse_finished_folders(files);
         self.rebuild_rows();
+        if folded {
+            self.selected_row = selected.and_then(|node| self.visible_row_of(node));
+        }
         cx.emit(ReviewEvent::Changed);
         cx.notify();
+    }
+
+    fn collapse_finished_folders(&mut self, files: &[usize]) -> bool {
+        let mask = &self.hidden_mask;
+        let progress = self
+            .tree
+            .progress_tracked(&self.viewed, |f| !mask.get(f).copied().unwrap_or(false));
+        let folders = self.tree.completed_folders(files, &progress);
+        let folded = !folders.is_empty();
+        self.collapsed.extend(folders);
+        folded
+    }
+
+    fn visible_row_of(&self, node: usize) -> Option<usize> {
+        self.rows.iter().position(|r| r.node == node).or_else(|| {
+            let shown = self
+                .tree
+                .ancestors(node)
+                .filter(|a| self.collapsed.contains(&a.path))
+                .last()?;
+            self.rows.iter().position(|r| r.path.as_ref() == shown.path)
+        })
     }
 
     pub fn viewed_count(&self) -> usize {

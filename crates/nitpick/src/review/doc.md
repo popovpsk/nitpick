@@ -182,6 +182,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   save 250 ms later (a newer change replaces the pending one, so snapshots land in order);
   quitting flushes synchronously. Marking the current file viewed jumps to the next unviewed
   file in tree order when `advance_on_viewed` is set; a folder toggles all files under it.
+  With `collapse_viewed_folders`, a mark that completes a folder (hidden files not counted)
+  collapses it and every completed folder above it; the selection moves to the row that now
+  shows the selected file. Unmarking never expands anything.
 - A discussion is placed on a line only when its position's `head_sha` is the review's head;
   others are listed as outdated in the comments sheet with the general ones. A new line
   comment sends `old_line`/`new_line` from `LineMap::locate`: both for a context line, one
@@ -210,7 +213,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
   second press opens the neighbouring file in tree order, at its first (or last) change; a
   manual scroll or another jump disarms it. No wrap-around after the last file. Opening a
   file any other way resets the cursor. The viewport position itself is private to
-  gpui-component's `DiffState`, hence the cursor and the scroll detection.- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
+  gpui-component's `DiffState`, hence the cursor and the scroll detection.
+- Auto-mark (`auto_mark_viewed`): leaving a file for another marks it viewed if it was shown
   for at least `AUTO_MARK_DWELL` (0.5 s); each decision is logged at debug level, so running through the tree with j/k marks nothing,
   and unless the user unmarked it by hand (`kept_unviewed`, keyed by path + fingerprint so it
   survives reloads of this review). Reloads and the first file of a load never mark anything.

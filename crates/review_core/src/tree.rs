@@ -318,6 +318,22 @@ impl FileTree {
         progress
     }
 
+    pub fn completed_folders(&self, files: &[usize], progress: &[Progress]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for &file in files {
+            let Some(node) = self.file_node(file) else {
+                continue;
+            };
+            for ix in std::iter::successors(self.nodes[node].parent, |&p| self.nodes[p].parent) {
+                let path = &self.nodes[ix].path;
+                if progress[ix].is_complete() && !out.contains(path) {
+                    out.push(path.clone());
+                }
+            }
+        }
+        out
+    }
+
     pub fn files_under(&self, node: usize) -> Vec<usize> {
         let mut out = Vec::new();
         self.collect_files(node, &mut out);

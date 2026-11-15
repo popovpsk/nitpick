@@ -508,3 +508,20 @@ fn untracked_files_count_nowhere_in_progress() {
     let mock = tree.file_node(1).unwrap();
     assert_eq!(progress[mock], Progress::default());
 }
+
+#[test]
+fn completed_folders_are_the_finished_ancestors_of_the_marked_files() {
+    let files = [
+        file("a/b/x.rs"),
+        file("a/b/y.rs"),
+        file("a/c/z.rs"),
+        file("a/b/gen_mock.rs"),
+    ];
+    let tree = FileTree::build(&files);
+    let tracked = |ix: usize| ix != 3;
+    let progress = tree.progress_tracked(&[true, false, true, false], tracked);
+    assert!(tree.completed_folders(&[0], &progress).is_empty());
+    assert_eq!(tree.completed_folders(&[2], &progress), vec!["a/c"]);
+    let progress = tree.progress_tracked(&[true, true, true, false], tracked);
+    assert_eq!(tree.completed_folders(&[1, 0], &progress), vec!["a/b", "a"]);
+}

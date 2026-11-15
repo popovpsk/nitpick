@@ -9,7 +9,7 @@ use gpui::{
     Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _,
     PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px,
+    Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
@@ -40,6 +40,11 @@ use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 actions!(settings_view, [CloseSettings]);
 
 const HIDDEN_SAVE_DELAY: Duration = Duration::from_millis(400);
+const HIDDEN_MIN_ROWS: usize = 10;
+const HIDDEN_MAX_ROWS: usize = 30;
+const HIDDEN_FIELD_WIDTH: f32 = 440.;
+const HIDDEN_EXAMPLE: &str =
+    "package-lock.json\n*.min.js\n*.pb.go\n*/mocks/*\n__snapshots__/\ndist/";
 const EDITOR_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
@@ -146,7 +151,26 @@ fn hidden_rules_item(
                 .text_color(theme.muted_foreground)
                 .child(description),
         )
-        .child(Textarea::new(&rules.input).font_family(theme.mono_font_family.clone()))
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .max_w(px(HIDDEN_FIELD_WIDTH))
+                .child(Textarea::new(&rules.input).font_family(theme.mono_font_family.clone()))
+                .when(rules.empty, |field| {
+                    field.child(
+                        div()
+                            .absolute()
+                            .top(px(9.))
+                            .left(px(11.))
+                            .text_sm()
+                            .line_height(rems(1.25))
+                            .font_family(theme.mono_font_family.clone())
+                            .text_color(theme.muted_foreground.opacity(0.45))
+                            .child(HIDDEN_EXAMPLE),
+                    )
+                }),
+        )
         .children(
             rules
                 .invalid
@@ -211,6 +235,7 @@ impl ForgeForm {
 struct HiddenRules {
     input: Entity<TextareaState>,
     invalid: Option<SharedString>,
+    empty: bool,
     baseline: Vec<String>,
     generation: Rc<Cell<u64>>,
 }
@@ -220,6 +245,7 @@ impl HiddenRules {
         Self {
             input,
             invalid: None,
+            empty: true,
             baseline: Vec::new(),
             generation: Rc::default(),
         }
@@ -237,6 +263,7 @@ impl HiddenRules {
         self.baseline = list.to_vec();
         self.invalid = invalid_patterns(list);
         let text = list.join("\n");
+        self.empty = text.is_empty();
         self.input
             .update(cx, |state, cx| state.set_value(text, window, cx));
     }
@@ -321,11 +348,7 @@ impl SettingsView {
             });
         });
         let hidden_input = |window: &mut Window, cx: &mut Context<Self>| {
-            cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .auto_grow(3, 12)
-                    .placeholder("package-lock.json\n*.min.js\n*.pb.go\ndist/")
-            })
+            cx.new(|cx| TextareaState::new(window, cx).auto_grow(HIDDEN_MIN_ROWS, HIDDEN_MAX_ROWS))
         };
         let global_input = hidden_input(window, cx);
         let repo_input = hidden_input(window, cx);
@@ -456,10 +479,9 @@ impl SettingsView {
         } else {
             &mut self.hidden_global
         };
-        let typed: Vec<String> = rules
-            .input
-            .read(cx)
-            .value()
+        let value = rules.input.read(cx).value();
+        rules.empty = value.is_empty();
+        let typed: Vec<String> = value
             .lines()
             .map(|line| line.trim_end().to_string())
             .filter(|line| !line.trim().is_empty())
@@ -1157,6 +1179,16 @@ impl Render for SettingsView {
                         ),
                     )
                     .description(s.advance_on_viewed_desc.clone()),
+                )
+                .item(
+                    SettingItem::new(
+                        s.collapse_viewed_folders.clone(),
+                        SettingField::switch(
+                            |cx| settings(cx).collapse_viewed_folders,
+                            |value, cx| update_settings(cx, |s| s.collapse_viewed_folders = value),
+                        ),
+                    )
+                    .description(s.collapse_viewed_folders_desc.clone()),
                 )
                 .item(
                     SettingItem::new(
