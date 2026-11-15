@@ -31,9 +31,15 @@ const BLAME_DELAY: Duration = Duration::from_millis(120);
 pub(crate) const TINT_COUNT: usize = 12;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct BlameKey {
+struct SideKey {
     rev: Option<String>,
     path: SharedString,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct BlameKey {
+    old: Option<SideKey>,
+    new: Option<SideKey>,
 }
 
 struct BlameChip {
@@ -51,10 +57,28 @@ struct Computed {
     chips: Vec<BlameChip>,
 }
 
-pub struct BlameMarks {
+impl Computed {
+    fn empty() -> Self {
+        Self {
+            runs: Vec::new(),
+            chips: Vec::new(),
+        }
+    }
+}
+
+type SideResult = Option<Result<Computed, git_repo::GitError>>;
+type SideResults = (SideResult, SideResult);
+
+struct SideMarks {
     runs: Vec<(usize, usize)>,
     chips: Vec<Rc<BlameChip>>,
-    pub markers: Vec<DiffGutterMarker>,
+}
+
+pub struct BlameMarks {
+    old: Option<SideMarks>,
+    new: Option<SideMarks>,
+    split_markers: Vec<DiffGutterMarker>,
+    unified_markers: Vec<DiffGutterMarker>,
 }
 
 struct Shown {
@@ -161,29 +185,18 @@ impl ReviewView {
             self.blame.pending = None;
             return;
         }
-        let (key, side) = match (file.status, &self.source) {
-            (FileStatus::Deleted, _) => (
-                BlameKey {
-                    rev: Some(review.base_sha.clone()),
-                    path: file.old_path.clone(),
-                },
-                DiffSide::Original,
-            ),
-            (_, ReviewSource::WorkingTree) => (
-                BlameKey {
-                    rev: None,
-                    path: file.new_path.clone(),
-                },
-                DiffSide::Modified,
-            ),
-            _ => (
-                BlameKey {
-                    rev: Some(review.head_sha.clone()),
-                    path: file.new_path.clone(),
-                },
-                DiffSide::Modified,
-            ),
-        };
+        let old = (file.status != FileStatus::Added).then(|| SideKey {
+            rev: Some(review.base_sha.clone()),
+            path: file.old_path.clone(),
+        });
+        let new = (file.status != FileStatus::Deleted).then(|| SideKey {
+            rev: match &self.source {
+                ReviewSource::WorkingTree => None,
+                _ => Some(review.head_sha.clone()),
+            },
+            path: file.new_path.clone(),
+        });
+        let key = BlameKey { old, new };
         let fingerprint = file.fingerprint.clone();
         if let Some(marks) = self.blame.cache.get(&key) {
             self.blame.shown = Some(Shown {
@@ -206,12 +219,9 @@ impl ReviewView {
             .is_some_and(|shown| shown.key == key && shown.fingerprint == fingerprint);
         if !keep {
             let placeholder = Rc::new(BlameMarks::build(
-                Computed {
-                    runs: Vec::new(),
-                    chips: Vec::new(),
-                },
+                key.old.as_ref().map(|_| Computed::empty()),
+                key.new.as_ref().map(|_| Computed::empty()),
                 &diff_path,
-                side,
             ));
             self.blame.shown = Some(Shown {
                 key: key.clone(),
@@ -231,18 +241,17 @@ impl ReviewView {
             let fetch_key = key.clone();
             let result = cx
                 .background_spawn(async move {
-                    let lines = repo.blame(fetch_key.rev.as_deref(), &fetch_key.path)?;
-                    let side = match side {
-                        DiffSide::Original => Side::Old,
-                        DiffSide::Modified => Side::New,
+                    let blame_side = |side_key: &SideKey, side: Side| {
+                        repo.blame(side_key.rev.as_deref(), &side_key.path)
+                            .map(|lines| compute(&lines, &line_map, side, context, min_folded))
                     };
-                    Ok::<_, git_repo::GitError>(compute(
-                        &lines, &line_map, side, context, min_folded,
-                    ))
+                    let old = fetch_key.old.as_ref().map(|k| blame_side(k, Side::Old));
+                    let new = fetch_key.new.as_ref().map(|k| blame_side(k, Side::New));
+                    (old, new)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.install_blame(key, fingerprint, diff_path, side, result, cx)
+                this.install_blame(key, fingerprint, diff_path, result, cx)
             });
         });
         cx.notify();
@@ -253,26 +262,34 @@ impl ReviewView {
         key: BlameKey,
         fingerprint: String,
         diff_path: SharedString,
-        side: DiffSide,
-        result: Result<Computed, git_repo::GitError>,
+        result: SideResults,
         cx: &mut Context<Self>,
     ) {
-        let computed = result.unwrap_or_else(|err| {
-            log::warn!("blame {:?} {}: {err}", key.rev, key.path);
+        let (old, new) = result;
+        let errors: Vec<String> = [&old, &new]
+            .into_iter()
+            .filter_map(|side| side.as_ref()?.as_ref().err().map(ToString::to_string))
+            .collect();
+        let all_failed = old.as_ref().is_none_or(Result::is_err)
+            && new.as_ref().is_none_or(Result::is_err)
+            && !errors.is_empty();
+        for err in &errors {
+            log::warn!("blame {}: {err}", diff_path);
+        }
+        if all_failed {
             self.blame.failed.insert(key.clone());
             if !self.blame.failure_reported {
                 self.blame.failure_reported = true;
                 self.notify(
-                    Notification::error(format!("{}: {err}", tr().blame_failed)),
+                    Notification::error(format!("{}: {}", tr().blame_failed, errors[0])),
                     cx,
                 );
             }
-            Computed {
-                runs: Vec::new(),
-                chips: Vec::new(),
-            }
-        });
-        let marks = Rc::new(BlameMarks::build(computed, &diff_path, side));
+        }
+        let settle = |side: Option<Result<Computed, git_repo::GitError>>| {
+            side.map(|result| result.unwrap_or_else(|_| Computed::empty()))
+        };
+        let marks = Rc::new(BlameMarks::build(settle(old), settle(new), &diff_path));
         self.blame.cache.insert(key.clone(), marks.clone());
         if self.blame.pending.as_ref() == Some(&key) {
             self.blame.pending = None;
@@ -342,36 +359,66 @@ fn chip(commit: &BlameCommit) -> BlameChip {
     }
 }
 
-impl BlameMarks {
-    fn build(computed: Computed, path: &SharedString, side: DiffSide) -> Self {
+impl SideMarks {
+    fn build(
+        computed: Computed,
+        path: &SharedString,
+        side: DiffSide,
+        id: &'static str,
+        markers: &mut Vec<DiffGutterMarker>,
+    ) -> Self {
         let chips: Vec<Rc<BlameChip>> = computed.chips.into_iter().map(Rc::new).collect();
-        let mut markers: Vec<DiffGutterMarker> = computed
-            .runs
-            .iter()
-            .map(|&(line, chip)| {
-                let chip = &chips[chip];
-                let label = if chip.uncommitted {
-                    tr().blame_uncommitted.clone()
-                } else {
-                    format!("{} {}", chip.author, chip.short_id).into()
-                };
-                DiffGutterMarker::new(
-                    ("blame", line),
-                    DiffLinePosition::new(path.clone(), side, line),
-                )
+        let start = markers.len();
+        markers.extend(computed.runs.iter().map(|&(line, chip)| {
+            let chip = &chips[chip];
+            let label = if chip.uncommitted {
+                tr().blame_uncommitted.clone()
+            } else {
+                format!("{} {}", chip.author, chip.short_id).into()
+            };
+            DiffGutterMarker::new((id, line), DiffLinePosition::new(path.clone(), side, line))
                 .with_label(label)
-            })
-            .collect();
-        if markers.is_empty() {
+        }));
+        if markers.len() == start {
             markers.push(DiffGutterMarker::new(
-                "blame-lane",
+                (id, usize::MAX),
                 DiffLinePosition::new(path.clone(), side, usize::MAX),
             ));
         }
         Self {
             runs: computed.runs,
             chips,
-            markers,
+        }
+    }
+}
+
+impl BlameMarks {
+    fn build(old: Option<Computed>, new: Option<Computed>, path: &SharedString) -> Self {
+        let mut old_markers = Vec::new();
+        let mut new_markers = Vec::new();
+        let old = old
+            .map(|c| SideMarks::build(c, path, DiffSide::Original, "blame-old", &mut old_markers));
+        let new =
+            new.map(|c| SideMarks::build(c, path, DiffSide::Modified, "blame", &mut new_markers));
+        let unified_markers = if new.is_some() {
+            new_markers.clone()
+        } else {
+            old_markers.clone()
+        };
+        old_markers.extend(new_markers);
+        Self {
+            old,
+            new,
+            split_markers: old_markers,
+            unified_markers,
+        }
+    }
+
+    pub fn markers(&self, split: bool) -> &[DiffGutterMarker] {
+        if split {
+            &self.split_markers
+        } else {
+            &self.unified_markers
         }
     }
 
@@ -382,10 +429,17 @@ impl BlameMarks {
         cx: &mut App,
     ) -> AnyElement {
         let line = marker.position().line();
-        let Ok(run) = self.runs.binary_search_by_key(&line, |&(start, _)| start) else {
+        let side = match marker.position().side() {
+            DiffSide::Original => self.old.as_ref(),
+            _ => self.new.as_ref(),
+        };
+        let Some(side) = side else {
             return Empty.into_any_element();
         };
-        let chip = self.chips[self.runs[run].1].clone();
+        let Ok(run) = side.runs.binary_search_by_key(&line, |&(start, _)| start) else {
+            return Empty.into_any_element();
+        };
+        let chip = side.chips[side.runs[run].1].clone();
         let theme = cx.theme();
         let row = window.rem_size() * (f32::from(theme.mono_font_size) / 16.) * 1.6;
         let height = row * 0.78;

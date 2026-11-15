@@ -311,11 +311,13 @@ wraps `gitlab` and `github`; nothing here names those crates).
   after the last move, detached, like the tree width.
 - Blame (`settings.show_blame`, the toolbar toggle and `ToggleBlame`, no default key; the
   setting is global, so every window follows it): the shown file is blamed off the UI thread
-  at the review's head commit, or the work tree for the uncommitted-changes review, and a
-  deleted file at `base_sha` on its old side. A fetch starts `BLAME_DELAY` (120 ms) after the
+  on both sides in one task — the new side at the review's head commit (the work tree for
+  the uncommitted-changes review), the old side at `base_sha` under the old path — skipping
+  the side an added or deleted file lacks. One side failing still shows the other; only both
+  failing counts as a failed blame. A fetch starts `BLAME_DELAY` (120 ms) after the
   file is shown, so running through files with j/k starts no `git blame` (a started one runs
   to its end: the blocking child is not killed when its task is dropped). Results are cached
-  by (rev, path) for the installed review; a reload that installs a new review drops the
+  by both sides' (rev, path) for the installed review; a reload that installs a new review drops the
   cache and refetches, and an unchanged reload keeps it like everything else but retries
   failed blames. Chips are shown only for the file and content they were computed for: the
   same key with the same fingerprint keeps its chips until the refetch lands (a work-tree
@@ -323,10 +325,12 @@ wraps `gitlab` and `github`; nothing here names those crates).
   result that lands after the file changed is cached but not shown. A failed blame leaves
   the lane empty and shows one notification until the next reload or toggle.
 - Blame chips use the `Diff`'s marker lane (between the line numbers and the code, one row
-  high and one row wide, in each column in split mode, once in unified): no extra row. A
+  high and one row wide, in each column in split mode, once in unified): no extra row. In
+  split mode each column gets its own side's chips, so the lane the component opens on the
+  left is never empty; unified mode shows the new side only (the old side for a deleted
+  file), since a context row would otherwise carry two chips (`BlameMarks::markers`). A
   chip sits on the first line of each run from one commit and on the first line of each
-  block the default folding shows (`review_core::LineMap::shown_block_starts`); nothing on
-  the other side. It is the author's initials on a tint picked from the commit id
+  block the default folding shows (`review_core::LineMap::shown_block_starts`). It is the author's initials on a tint picked from the commit id
   (`review_core::blame::tint_index`) over six theme hues at two strengths with the theme's
   foreground, so it reads in light and dark themes; uncommitted lines get a muted "you". The
   tooltip shows author, relative date (computed when it opens), short id and summary. While

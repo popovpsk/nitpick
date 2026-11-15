@@ -809,7 +809,7 @@ impl ReviewView {
                             diff.decorations(decorations.iter().cloned())
                         })
                         .when_some(blame, |diff, marks| {
-                            diff.gutter_markers(marks.markers.iter().cloned())
+                            diff.gutter_markers(marks.markers(split_mode).iter().cloned())
                                 .render_gutter_marker(move |marker, window, cx| {
                                     marks.render_chip(marker, window, cx)
                                 })
