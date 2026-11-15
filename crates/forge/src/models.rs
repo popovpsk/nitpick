@@ -129,6 +129,7 @@ pub struct Request {
     pub kind: ForgeKind,
     pub number: u64,
     pub title: String,
+    pub description: Option<String>,
     pub author: User,
     pub source_branch: String,
     pub target_branch: String,

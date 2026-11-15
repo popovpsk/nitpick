@@ -397,3 +397,16 @@ fn list_entries_carry_people_and_comment_counts() {
     assert_eq!(request.reviewers[0].username, "bob");
     assert_eq!(github_request(&github_pr("open", false)).comments, None);
 }
+
+#[rstest]
+#[case::text(Some("## Summary"), Some("## Summary"))]
+#[case::blank(Some("  \n"), None)]
+#[case::missing(None, None)]
+fn a_blank_description_is_none(#[case] text: Option<&str>, #[case] expected: Option<&str>) {
+    let mut mr = gitlab_mr("opened", false);
+    mr.description = text.map(str::to_string);
+    assert_eq!(gitlab_request(&mr).description.as_deref(), expected);
+    let mut pr = github_pr("open", false);
+    pr.body = text.map(str::to_string);
+    assert_eq!(github_request(&pr).description.as_deref(), expected);
+}

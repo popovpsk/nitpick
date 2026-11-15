@@ -91,6 +91,7 @@ pub static EN: Strings = lang! {
     no_comments: "No comments yet",
     comments_code: "On code",
     comments_general: "General",
+    mr_description: "Description",
     no_code_comments: "No comments on the code",
     line_comment_hint: "Click a line number for the + button, or press C over a line",
     comments_active: "Open threads",

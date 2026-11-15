@@ -11,6 +11,7 @@ use gpui_component::{
     h_flex,
     tab::{Tab, TabBar},
     tag::Tag,
+    text::TextView,
     v_flex,
 };
 use review_core::FileStatus;
@@ -25,6 +26,7 @@ const PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CommentsTab {
+    Description,
     #[default]
     Code,
     General,
@@ -155,39 +157,63 @@ pub fn open_comments_sheet(
     window: &mut Window,
     cx: &mut Context<ReviewView>,
 ) {
-    if this.code_threads.is_empty() && !this.general_only.is_empty() {
-        this.comments_tab = CommentsTab::General;
+    if this.code_threads.is_empty() {
+        if !this.general_only.is_empty() {
+            this.comments_tab = CommentsTab::General;
+        } else if this.description.is_some() {
+            this.comments_tab = CommentsTab::Description;
+        }
     }
     let view = cx.entity();
     window.open_sheet(cx, move |sheet, _window, cx| {
         let review = view.read(cx);
         let title = tr().comments.clone();
-        let tab = review.comments_tab;
-        let tabs = TabBar::new("comments-tabs")
-            .segmented()
-            .small()
-            .selected_index(match tab {
-                CommentsTab::Code => 0,
-                CommentsTab::General => 1,
-            })
-            .child(Tab::new().label(review.comment_tab_labels.0.clone()))
-            .child(Tab::new().label(review.comment_tab_labels.1.clone()))
+        let description = review.description.clone();
+        let tabs_shown: &[CommentsTab] = if description.is_some() {
+            &[
+                CommentsTab::Description,
+                CommentsTab::Code,
+                CommentsTab::General,
+            ]
+        } else {
+            &[CommentsTab::Code, CommentsTab::General]
+        };
+        let tab = match review.comments_tab {
+            CommentsTab::Description if description.is_none() => CommentsTab::Code,
+            tab => tab,
+        };
+        let tabs = tabs_shown
+            .iter()
+            .fold(
+                TabBar::new("comments-tabs").segmented().small(),
+                |bar, shown| {
+                    bar.child(Tab::new().label(match shown {
+                        CommentsTab::Description => tr().mr_description.clone(),
+                        CommentsTab::Code => review.comment_tab_labels.0.clone(),
+                        CommentsTab::General => review.comment_tab_labels.1.clone(),
+                    }))
+                },
+            )
+            .selected_index(tabs_shown.iter().position(|t| *t == tab).unwrap_or(0))
             .on_click({
                 let view = view.clone();
                 move |ix, _, cx| {
                     view.update(cx, |this, cx| {
-                        this.comments_tab = if *ix == 0 {
-                            CommentsTab::Code
-                        } else {
-                            CommentsTab::General
-                        };
+                        if let Some(tab) = tabs_shown.get(*ix) {
+                            this.comments_tab = *tab;
+                        }
                         cx.notify();
                     })
                 }
             });
-        let body = match tab {
-            CommentsTab::Code => render_code_list(&view, cx),
-            CommentsTab::General => render_general_list(&view, cx),
+        let body = match (tab, description) {
+            (CommentsTab::Description, Some(text)) => div()
+                .text_sm()
+                .pb_4()
+                .child(TextView::markdown("mr-description", text))
+                .into_any_element(),
+            (CommentsTab::General, _) => render_general_list(&view, cx),
+            _ => render_code_list(&view, cx),
         };
         sheet.title(title).size(px(560.)).child(
             v_flex().size_full().gap_3().child(tabs).child(

@@ -91,6 +91,7 @@ pub static RU: Strings = lang! {
     no_comments: "Комментариев пока нет",
     comments_code: "В коде",
     comments_general: "Общие",
+    mr_description: "Описание",
     no_code_comments: "Нет комментариев к коду",
     line_comment_hint: "Кликните номер строки — появится кнопка +, или нажмите C над строкой",
     comments_active: "Открытые",

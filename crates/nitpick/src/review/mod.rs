@@ -276,6 +276,7 @@ pub struct ReviewView {
     code_threads: Rc<Vec<comment_list::CodeThread>>,
     comments_tab: comment_list::CommentsTab,
     comment_tab_labels: (SharedString, SharedString),
+    description: Option<SharedString>,
     code_section_labels: (SharedString, SharedString),
     expanded_notes: HashSet<u64>,
     thread_collapse: HashMap<String, bool>,
@@ -402,6 +403,7 @@ impl ReviewView {
             code_threads: Rc::default(),
             comments_tab: comment_list::CommentsTab::default(),
             comment_tab_labels: (SharedString::default(), SharedString::default()),
+            description: None,
             code_section_labels: (SharedString::default(), SharedString::default()),
             expanded_notes: HashSet::new(),
             thread_collapse: HashMap::new(),
@@ -704,6 +706,10 @@ impl ReviewView {
                 self.refresh_seen_before(cx);
                 self.apply_hide_rules(cx);
                 self.installed_whitespace = whitespace;
+                self.description = mr
+                    .as_ref()
+                    .and_then(|mr| mr.request.description.clone())
+                    .map(SharedString::from);
                 self.mr = mr;
                 self.refresh_web(cx);
                 self.load_state = LoadState::Ready;

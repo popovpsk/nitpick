@@ -62,14 +62,15 @@ wraps `gitlab` and `github`; nothing here names those crates).
   body (`NoteView::long`: over 10 lines counting a wrap every 90 chars) is cut to about ten
   lines with a fade and a Show more / Show less toggle (`expanded_notes`). Starting another
   edit replaces the open one; a reload that no longer has the edited note drops the editor.
-- `comment_list.rs` — the comments sheet (titled Comments) with two tabs: On code (every
+- `comment_list.rs` — the comments sheet (titled Comments) with a Description tab first when
+  the request has one (its markdown body, `ReviewView::description`) and two more: On code (every
   discussion with a file position, outdated ones included, as full cards: open threads first,
   then resolved, each section grouped by file in tree order then line; above each card its
   `L<line>`, an outdated tag when its `head_sha` is not the review's head, and Go to code,
   which closes the sheet and `reveal_discussion` opens the file, at the line when the thread
   is drawn in the diff) and General (discussions without a file, with the new-comment
   composer). `build_code_threads` precomputes the rows; it opens on General when there is no
-  code thread.
+  code thread, and on Description when there is no comment at all.
 - `review_tests.rs` — comment times in a fixed time zone; which file Viewed advances to.
 - `comment_list_tests.rs` — previews and row order.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's

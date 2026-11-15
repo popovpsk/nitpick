@@ -95,6 +95,7 @@ pub struct Strings {
     pub no_comments: SharedString,
     pub comments_code: SharedString,
     pub comments_general: SharedString,
+    pub mr_description: SharedString,
     pub no_code_comments: SharedString,
     pub line_comment_hint: SharedString,
     pub comments_active: SharedString,

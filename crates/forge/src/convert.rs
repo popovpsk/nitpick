@@ -30,11 +30,17 @@ pub(crate) fn own_avatar(url: Option<&str>) -> Option<String> {
     Some(url.to_string())
 }
 
+fn non_blank(text: Option<&str>) -> Option<String> {
+    text.filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+}
+
 pub(crate) fn gitlab_request(mr: &gitlab::MergeRequest) -> Request {
     Request {
         kind: ForgeKind::GitLab,
         number: mr.iid,
         title: mr.title.clone(),
+        description: non_blank(mr.description.as_deref()),
         author: gitlab_user(&mr.author),
         source_branch: mr.source_branch.clone(),
         target_branch: mr.target_branch.clone(),
@@ -124,6 +130,7 @@ pub(crate) fn github_request(pr: &github::PullRequest) -> Request {
         kind: ForgeKind::GitHub,
         number: pr.number,
         title: pr.title.clone(),
+        description: non_blank(pr.body.as_deref()),
         author: github_user(&pr.user),
         source_branch: pr.head.name.clone(),
         target_branch: pr.base.name.clone(),
