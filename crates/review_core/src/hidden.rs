@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Range;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -12,36 +11,19 @@ pub struct RuleError {
 
 pub struct HideRules {
     matcher: Option<Gitignore>,
-    typed: HashMap<String, String>,
-}
-
-pub fn normalize(pattern: &str) -> Cow<'_, str> {
-    let (bang, rest) = match pattern.strip_prefix('!') {
-        Some(rest) => ("!", rest),
-        None => ("", pattern),
-    };
-    match rest.strip_prefix("*/") {
-        Some(tail) => Cow::Owned(format!("{bang}**/{tail}")),
-        None => Cow::Borrowed(pattern),
-    }
 }
 
 impl HideRules {
     pub fn new(global: &[String], repository: &[String]) -> (HideRules, Vec<RuleError>) {
         let mut builder = GitignoreBuilder::new("");
         let mut errors = Vec::new();
-        let mut typed = HashMap::new();
         let mut any = false;
         for pattern in global.iter().chain(repository) {
             let line = pattern.trim_end();
             if line.trim().is_empty() || line.starts_with('#') {
                 continue;
             }
-            let normalized = normalize(line);
-            if let Cow::Owned(normalized) = &normalized {
-                typed.insert(normalized.clone(), line.to_string());
-            }
-            match builder.add_line(None, &normalized) {
+            match builder.add_line(None, line) {
                 Ok(_) => any = true,
                 Err(err) => errors.push(RuleError {
                     pattern: line.to_string(),
@@ -63,7 +45,7 @@ impl HideRules {
         } else {
             None
         };
-        (HideRules { matcher, typed }, errors)
+        (HideRules { matcher }, errors)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -77,15 +59,7 @@ impl HideRules {
             return None;
         }
         match matcher.matched_path_or_any_parents(path, false) {
-            ignore::Match::Ignore(glob) => {
-                let original = glob.original();
-                Some(
-                    self.typed
-                        .get(original)
-                        .map_or(original, String::as_str)
-                        .to_string(),
-                )
-            }
+            ignore::Match::Ignore(glob) => Some(glob.original().to_string()),
             _ => None,
         }
     }
@@ -151,7 +125,7 @@ pub fn merge_patterns(list: &mut Vec<String>, baseline: &[String], typed: &[Stri
 }
 
 pub fn matched_ranges(pattern: &str, path: &str) -> Vec<Range<usize>> {
-    expand_braces(&normalize(pattern.trim_end()))
+    expand_braces(pattern.trim_end())
         .iter()
         .map(|alternative| matched_single(alternative, path))
         .find(|ranges| !ranges.is_empty())

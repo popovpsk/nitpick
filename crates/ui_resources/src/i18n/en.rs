@@ -189,7 +189,7 @@ pub static EN: Strings = lang! {
     hide_folder_here: "Hide this folder in this repository",
     all_files_hidden: "Every changed file is hidden by your rules",
     hidden_files_setting: "Hidden files",
-    hidden_files_setting_desc: "One gitignore-style pattern per line: package-lock.json, *.min.js, *.pb.go, */mocks/* (a mocks folder at any depth), __snapshots__/, dist/, !src/keep.min.js. Hidden files leave the tree, the progress and the navigation. Right-click a file or folder in the tree to add one.",
+    hidden_files_setting_desc: "One gitignore-style pattern per line: package-lock.json, *.min.js, *.pb.go, mocks/, __snapshots__/, dist/, !src/keep.min.js. Hidden files leave the tree, the progress and the navigation. Right-click a file or folder in the tree to add one.",
     hidden_files_global: "All repositories",
     hidden_files_global_desc: "Applies to every repository",
     hidden_files_repo_desc: "Applies on top of the rules for all repositories; a !pattern shows a file again",

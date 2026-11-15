@@ -44,8 +44,7 @@ const HIDDEN_SAVE_DELAY: Duration = Duration::from_millis(400);
 const HIDDEN_MIN_ROWS: usize = 10;
 const HIDDEN_MAX_ROWS: usize = 30;
 const HIDDEN_FIELD_WIDTH: f32 = 440.;
-const HIDDEN_EXAMPLE: &str =
-    "package-lock.json\n*.min.js\n*.pb.go\n*/mocks/*\n__snapshots__/\ndist/";
+const HIDDEN_EXAMPLE: &str = "package-lock.json\n*.min.js\n*.pb.go\nmocks/\n__snapshots__/\ndist/";
 const EDITOR_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {

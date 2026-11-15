@@ -24,10 +24,6 @@ fn rules(global: &[&str], repository: &[&str]) -> HideRules {
 #[case::anchored_file_nested("/go.sum", "tools/go.sum", false)]
 #[case::double_star("**/testdata/**", "pkg/a/testdata/in.json", true)]
 #[case::extension("*.pb.go", "api/v1/service.pb.go", true)]
-#[case::star_dir_any_depth("*/mocks/*", "internal/store/mocks/user.go", true)]
-#[case::star_dir_top_level("*/mocks/*", "store/mocks/user.go", true)]
-#[case::star_dir_nested_file("*/mocks/*", "a/mocks/deep/user.go", true)]
-#[case::star_dir_other_name("*/mocks/*", "a/mockserver/user.go", false)]
 #[case::middle_slash_stays_anchored("src/gen/", "pkg/src/gen/a.go", false)]
 fn patterns_follow_gitignore(#[case] pattern: &str, #[case] path: &str, #[case] hidden: bool) {
     assert_eq!(rules(&[pattern], &[]).is_hidden(path), hidden);
@@ -175,15 +171,4 @@ fn many_stars_do_not_backtrack_exponentially() {
     let long: String = (0..60).map(|i| format!("d{i}/")).collect::<String>() + "y";
     assert!(matched_ranges(&deep, &long).is_empty());
     assert!(started.elapsed() < std::time::Duration::from_millis(500));
-}
-
-#[test]
-fn a_leading_star_dir_reports_and_highlights_what_was_typed() {
-    let rules = rules(&["*/mocks/*"], &["!*/mocks/keep.go"]);
-    let path = "internal/store/mocks/user.go";
-    assert_eq!(rules.matching_rule(path).as_deref(), Some("*/mocks/*"));
-    assert!(!rules.is_hidden("a/b/mocks/keep.go"));
-    let ranges = matched_ranges("*/mocks/*", path);
-    let lit: String = ranges.iter().map(|r| &path[r.clone()]).collect();
-    assert_eq!(lit, "mocks");
 }
