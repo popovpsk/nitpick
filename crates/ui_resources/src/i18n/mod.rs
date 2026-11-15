@@ -149,6 +149,7 @@ pub struct Strings {
     pub compact_folders: SharedString,
     pub show_hidden_files: SharedString,
     pub tree_comments: SharedString,
+    pub strike_viewed: SharedString,
     pub tree_view_options: SharedString,
     pub shortcut_needs_modifier: SharedString,
     pub shortcut_builtin: SharedString,

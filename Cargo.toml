@@ -12,6 +12,7 @@ members = [
     "crates/github",
     "crates/forge",
     "crates/avatar_cache",
+    "crates/app_db",
     "crates/review_core",
     "crates/secret_store",
     "crates/zed_theme",

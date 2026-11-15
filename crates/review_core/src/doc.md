@@ -18,9 +18,10 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   the files a filter tracks), `rows` (the visible rows for a set of
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`,
   `completed_folders` (the ancestor folders of some files whose progress is complete).
-- `viewed.rs` — `ViewedStore` (load, `is_viewed`, `set_viewed`, `viewed_versions_except` (the
-  other versions of a path marked viewed, newest first), `snapshot` / `save`), `fingerprint`,
-  `fingerprint_blobs`, `write_atomic`.
+- `viewed.rs` — `ViewedStore`, the in-memory viewed map (`from_marks`, `is_viewed`,
+  `set_viewed`, `viewed_versions_except`: the other versions of a path marked viewed, newest
+  first; persistence is `app_db`'s), `fingerprint`, `fingerprint_blobs`, `write_atomic` (the
+  temp-file-and-rename write the JSON settings use).
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
   `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
@@ -69,9 +70,8 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - Viewed marks are keyed by file path and `fingerprint(old_blob, new_blob)`, not by review:
   a file counts as viewed while both sides stay byte-identical, so any new push that touches
   it un-views it (GitLab behaves the same), and the same change seen through a branch
-  comparison or the GitLab MR shares one mark. One JSON per repository, named after the
-  folder plus a hash of its full path. Marks older than 180 days are dropped on load. An
-  unreadable file starts empty rather than failing the review.
+  comparison or the GitLab MR shares one mark. Marks are stored per repository (its full
+  path) in `app_db`.
 - `line_maps` walks hunks by their declared counts, so a removed line `--- x` or an added
   `+++ y` is never taken for a file header. The result is index-aligned with
   gpui-component's `DiffFile::parse` of the same patch, which also yields one file per

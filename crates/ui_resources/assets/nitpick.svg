@@ -30,6 +30,13 @@
     <rect x="552" y="580" width="256" height="48" rx="12" fill="#31422f"/>
     <rect x="572" y="588" width="120" height="32" rx="16"/>
   </g>
-  <circle cx="780" cy="764" r="128" fill="#4ea1d3" stroke="#1c1b1a" stroke-width="20"/>
-  <path d="M722 766 L764 808 L842 722" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#4ea1d3">
+    <rect x="708" y="556" width="104" height="76" rx="22"/>
+    <path d="M730 624 L730 664 L770 624 Z"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="736" cy="594" r="9"/>
+    <circle cx="760" cy="594" r="9"/>
+    <circle cx="784" cy="594" r="9"/>
+  </g>
 </svg>

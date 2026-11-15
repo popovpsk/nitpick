@@ -1,9 +1,9 @@
 # avatar_cache
 
-Fetches the avatar pictures of comment authors and keeps them on disk: a download that
-sends the forge token only to the forge's own origin, a normalizer that turns any picture
-into a 64 px square PNG, and a file cache keyed by the avatar URL. GPUI-free; the app runs
-`fetch` on `net_runtime` and the rest on its background executor.
+Fetches the avatar pictures of comment authors and keeps them: a download that sends the
+forge token only to the forge's own origin, a normalizer that turns any picture into a 64 px
+square PNG, and a cache keyed by the avatar URL in `app_db`. GPUI-free; the app runs `fetch`
+on `net_runtime` and `normalize` on its background executor.
 
 Not here: which URLs are wanted and the in-memory URL → image map the UI reads
 (`nitpick` `review/avatars.rs`), dropping Gravatar links (`forge`'s conversion).
@@ -26,10 +26,9 @@ Not here: which URLs are wanted and the in-memory URL → image map the UI reads
   huge dimensions never allocates the bitmap. The picture is cropped to its centred square
   before scaling, so a 1×N strip never scales its long side up into a huge buffer. Animated
   pictures keep their first frame.
-- Cache files are `<FNV-1a 64 of the URL>.png` in the given folder, written through a
-  `.<pid>.part` file and a rename, so two app processes never write into one temp file. An entry older than `MAX_AGE` (7 days, by file mtime) is
-  stale: the app shows it and refetches, and keeps it when the refetch fails. Nothing is
-  ever deleted.
+- `Cache` reads and writes `app_db`'s `avatars` table. An entry older than `MAX_AGE` (7 days)
+  is stale: the app shows it and refetches, and keeps it when the refetch fails. The database
+  drops entries older than 90 days at startup.
 
 ## Decisions
 

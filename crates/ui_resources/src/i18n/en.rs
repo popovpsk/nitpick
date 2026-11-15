@@ -145,6 +145,7 @@ pub static EN: Strings = lang! {
     compact_folders: "Compact single-child folders",
     show_hidden_files: "Show hidden files in the tree",
     tree_comments: "Show comment counts in the tree",
+    strike_viewed: "Strike through viewed files",
     tree_view_options: "View options and hidden files",
     shortcut_needs_modifier: "Window shortcuts need ⌘, Ctrl or a function key, so typing in text fields keeps working.",
     shortcut_builtin: "Built-in controls also use this key, so it may not work while one of them has focus.",

@@ -8,6 +8,7 @@ use gpui_component::*;
 use crate::workspace::Workspace;
 
 pub mod app_menu;
+pub mod db;
 pub mod keymap;
 pub mod localization;
 pub mod picker;
@@ -95,6 +96,7 @@ fn main() {
 
         gpui_component::init(cx);
         cx.set_global(settings_store::SettingsStore::load());
+        db::init(cx);
         settings_store::observe_theme_for_syntax_colors(cx);
         cx.set_global(recent::RecentRepos::load(data_dir.join("recent.json")));
         localization::sync_active_lang(cx);
@@ -119,9 +121,12 @@ fn main() {
 
         cx.on_app_quit(|cx| {
             window_registry::quitting(cx);
-            review::flush_viewed(cx);
+            let writes = db::barrier(cx);
             diagnostics::flush();
-            async {}
+            async move {
+                writes.await;
+                diagnostics::flush();
+            }
         })
         .detach();
 

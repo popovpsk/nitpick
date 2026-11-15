@@ -1,7 +1,8 @@
-use std::fs;
+use std::future::Future;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+
+use app_db::Db;
 
 use image::{ImageFormat, ImageReader, imageops::FilterType};
 use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue, LOCATION};
@@ -173,48 +174,47 @@ pub struct Cached {
     pub fresh: bool,
 }
 
+#[derive(Clone)]
 pub struct Cache {
-    dir: PathBuf,
+    db: Db,
 }
 
 impl Cache {
-    pub fn new(dir: impl Into<PathBuf>) -> Cache {
-        Cache { dir: dir.into() }
+    pub fn new(db: Db) -> Cache {
+        Cache { db }
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
+    pub fn read(
+        &self,
+        url: &str,
+        now: i64,
+    ) -> impl Future<Output = Option<Cached>> + 'static + use<> {
+        let found = self.db.avatar(url);
+        async move {
+            let (png, fetched_at) = found
+                .await
+                .inspect_err(|err| log::debug!("avatar cache: {err}"))
+                .ok()??;
+            Some(Cached {
+                png,
+                fresh: now - fetched_at <= MAX_AGE.as_secs() as i64,
+            })
+        }
     }
 
-    pub fn path(&self, url: &str) -> PathBuf {
-        self.dir.join(format!("{:016x}.png", fnv1a(url)))
+    pub fn write(
+        &self,
+        url: &str,
+        png: Vec<u8>,
+        now: i64,
+    ) -> impl Future<Output = ()> + 'static + use<> {
+        let stored = self.db.put_avatar(url, png, now);
+        async move {
+            if let Err(err) = stored.await {
+                log::debug!("avatar cache: {err}");
+            }
+        }
     }
-
-    pub fn read(&self, url: &str, now: SystemTime) -> Option<Cached> {
-        let path = self.path(url);
-        let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-        let png = fs::read(&path).ok()?;
-        let age = now.duration_since(modified).unwrap_or_default();
-        Some(Cached {
-            png,
-            fresh: age <= MAX_AGE,
-        })
-    }
-
-    pub fn write(&self, url: &str, png: &[u8]) -> Result<(), Error> {
-        fs::create_dir_all(&self.dir)?;
-        let path = self.path(url);
-        let partial = path.with_extension(format!("{}.part", std::process::id()));
-        fs::write(&partial, png)?;
-        fs::rename(&partial, &path)?;
-        Ok(())
-    }
-}
-
-fn fnv1a(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-    })
 }
 
 #[cfg(test)]

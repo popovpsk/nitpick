@@ -1,9 +1,9 @@
 use std::io::Cursor;
-use std::time::{Duration, SystemTime};
+
+use futures_executor::block_on;
 
 use image::{ImageFormat, RgbaImage};
 use rstest::rstest;
-use tempfile::TempDir;
 use wiremock::matchers::{header, header_exists, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -52,22 +52,16 @@ fn oversized_or_broken_pictures_are_refused() {
 
 #[test]
 fn the_cache_keys_by_url_and_ages_entries() {
-    let dir = TempDir::new().unwrap();
-    let cache = Cache::new(dir.path().join("avatars"));
+    let cache = Cache::new(app_db::Db::open_in_memory().unwrap());
     let url = "https://gitlab.example.com/uploads/a.png";
-    assert!(cache.read(url, SystemTime::now()).is_none());
-    cache.write(url, b"png").unwrap();
-    let now = SystemTime::now();
-    let fresh = cache.read(url, now).unwrap();
+    let now = 1_800_000_000;
+    assert!(block_on(cache.read(url, now)).is_none());
+    block_on(cache.write(url, b"png".to_vec(), now));
+    let fresh = block_on(cache.read(url, now)).unwrap();
     assert_eq!((fresh.png.as_slice(), fresh.fresh), (&b"png"[..], true));
-    let later = now + MAX_AGE + Duration::from_secs(60);
-    assert!(!cache.read(url, later).unwrap().fresh);
-    assert!(
-        cache
-            .read("https://gitlab.example.com/uploads/b.png", now)
-            .is_none()
-    );
-    assert_ne!(cache.path(url), cache.path(&format!("{url}?v=2")));
+    let later = now + MAX_AGE.as_secs() as i64 + 60;
+    assert!(!block_on(cache.read(url, later)).unwrap().fresh);
+    assert!(block_on(cache.read("https://gitlab.example.com/uploads/b.png", now)).is_none());
 }
 
 fn runtime() -> tokio::runtime::Runtime {

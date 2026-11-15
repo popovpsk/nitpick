@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use avatar_cache::{Auth, Cache, Downloader};
 use forge::ForgeKind;
@@ -11,7 +11,8 @@ use gpui::{
 use gpui_component::ActiveTheme as _;
 
 use super::blame::tint;
-use crate::settings_store::{app_dir, settings};
+use crate::recent::now;
+use crate::settings_store::settings;
 
 enum Slot {
     Loading,
@@ -21,7 +22,7 @@ enum Slot {
 
 struct Avatars {
     slots: HashMap<SharedString, Slot>,
-    cache: Arc<Cache>,
+    cache: Option<Cache>,
     downloader: Option<Arc<Downloader>>,
     refresh_pending: bool,
 }
@@ -35,9 +36,19 @@ pub fn init(cx: &mut App) {
         .inspect_err(|err| log::warn!("avatars: {err}"))
         .ok()
         .map(Arc::new);
+    let db = crate::db::db(cx);
+    if let Some(db) = &db {
+        let pruned = db.prune_avatars(now());
+        cx.background_spawn(async move {
+            if let Err(err) = pruned.await {
+                log::debug!("avatar cache: {err}");
+            }
+        })
+        .detach();
+    }
     cx.set_global(Avatars {
         slots: HashMap::new(),
-        cache: Arc::new(Cache::new(app_dir(dirs::data_dir()).join("avatars"))),
+        cache: db.map(Cache::new),
         downloader,
         refresh_pending: false,
     });
@@ -91,17 +102,14 @@ pub fn request(urls: impl IntoIterator<Item = SharedString>, cx: &mut App) {
 async fn load(
     url: String,
     auth: Option<Auth>,
-    cache: Arc<Cache>,
+    cache: Option<Cache>,
     downloader: Option<Arc<Downloader>>,
     cx: &mut gpui::AsyncApp,
 ) -> Option<Vec<u8>> {
-    let cached = cx
-        .background_spawn({
-            let cache = cache.clone();
-            let url = url.clone();
-            async move { cache.read(&url, SystemTime::now()) }
-        })
-        .await;
+    let cached = match &cache {
+        Some(cache) => cache.read(&url, now()).await,
+        None => None,
+    };
     let stale = match cached {
         Some(cached) if cached.fresh => return Some(cached.png),
         Some(cached) => Some(cached.png),
@@ -122,21 +130,21 @@ async fn load(
             return stale;
         }
     };
-    cx.background_spawn(async move {
-        match avatar_cache::normalize(&raw) {
-            Ok(png) => {
-                if let Err(err) = cache.write(&url, &png) {
-                    log::debug!("avatar cache {url}: {err}");
-                }
-                Some(png)
+    let normalized = cx
+        .background_spawn(async move { avatar_cache::normalize(&raw) })
+        .await;
+    match normalized {
+        Ok(png) => {
+            if let Some(cache) = &cache {
+                cache.write(&url, png.clone(), now()).await;
             }
-            Err(err) => {
-                log::debug!("avatar {url}: {err}");
-                stale
-            }
+            Some(png)
         }
-    })
-    .await
+        Err(err) => {
+            log::debug!("avatar {url}: {err}");
+            stale
+        }
+    }
 }
 
 fn auth_for(url: &str, cx: &App) -> Option<Auth> {

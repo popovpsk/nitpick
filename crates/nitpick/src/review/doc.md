@@ -27,7 +27,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - `model_tests.rs` — the whole pipeline on a throwaway repository; every enabled language
   produces syntax colors.
 - `viewed.rs` — `SharedViewed`: one `ViewedStore` entity per repository for the whole app,
-  a debounced save, `flush_all` at quit.
+  filled from `app_db` in the background; each mark is written to the database at once.
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
 - `diff_panel.rs` — the review header (branch pickers with pull buttons, the MR, or the work
@@ -203,9 +203,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   here or everywhere, a folder name everywhere).
 - Viewed marks key on `path` + `old_blob..new_blob`. Every review of a repository, in any
   window, shares one store entity and observes it, so marks made in one window show in the
-  others and no window overwrites another's marks with a stale copy. A change schedules one
-  save 250 ms later (a newer change replaces the pending one, so snapshots land in order);
-  quitting flushes synchronously. Marking the current file viewed jumps to the next unviewed
+  others and no window overwrites another's marks with a stale copy. The entity starts empty
+  and fills when the database answers (the review's observer re-reads it); marks made before
+  that are written at once and replayed onto the loaded map, so none is lost. Each change is
+  one queued database write; quitting awaits `db::barrier`. Marking the current file viewed jumps to the next unviewed
   file in tree order when `advance_on_viewed` is set; a folder toggles all files under it.
   With `collapse_viewed_folders`, a mark that completes a folder (hidden files not counted)
   collapses it and every completed folder above it; the selection moves to the row that now
@@ -322,7 +323,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - A discussion whose position has no line (file or image comments) is listed on the On code
   tab without a line; one with no file at all on General. Tree rows show comment counts (a
   collapsed folder: the sum of the files under it) unless `tree_comments` is off, a switch in
-  the tree's view options (the eye).
+  the tree's view options (the eye). A viewed file is tinted green with a check; striking its
+  name through is another switch there (`strike_viewed`, off by default).
 - Approve button (left of the comments button): "Approve" (with the count when others
   approved), "Approved" in the success style once the user approved (a click withdraws on
   GitLab), or just the count when the user can't approve (their own request); hidden when

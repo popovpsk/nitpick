@@ -87,23 +87,16 @@ fn progress_rolls_up_to_folders() {
 
 #[test]
 fn viewed_marks_follow_the_fingerprint() {
-    let dir = tempfile::tempdir().unwrap();
-    let repo = std::path::Path::new("/work/my repo");
-    let mut store = ViewedStore::load(dir.path(), repo, 1_000);
     let fp = fingerprint("aaa", "bbb");
-    store.set_viewed("src/a.rs", &fp, true, 1_000);
-    store.save().unwrap();
-    let store = ViewedStore::load(dir.path(), repo, 2_000);
+    let store = ViewedStore::from_marks([("src/a.rs", fp.as_str(), 1_000)]);
     assert!(store.is_viewed("src/a.rs", &fp));
     assert!(!store.is_viewed("src/a.rs", &fingerprint("aaa", "ccc")));
     assert!(!store.is_viewed("src/b.rs", &fp));
-    let other = ViewedStore::load(dir.path(), std::path::Path::new("/work/other"), 2_000);
-    assert!(!other.is_viewed("src/a.rs", &fp));
 }
 
 #[test]
 fn other_viewed_versions_come_newest_first() {
-    let mut store = ViewedStore::in_memory();
+    let mut store = ViewedStore::new();
     let (a, b, c) = (
         fingerprint("o", "a"),
         fingerprint("o", "b"),
@@ -122,26 +115,13 @@ fn other_viewed_versions_come_newest_first() {
 }
 
 #[test]
-fn old_viewed_marks_expire_and_unmarking_removes() {
-    let dir = tempfile::tempdir().unwrap();
-    let repo = std::path::Path::new("/r");
-    let mut store = ViewedStore::load(dir.path(), repo, 0);
+fn unmarking_removes_the_mark() {
+    let mut store = ViewedStore::new();
     store.set_viewed("a", "f1", true, 0);
     store.set_viewed("b", "f2", true, 0);
     store.set_viewed("b", "f2", false, 0);
+    assert!(store.is_viewed("a", "f1"));
     assert!(!store.is_viewed("b", "f2"));
-    store.save().unwrap();
-    assert!(ViewedStore::load(dir.path(), repo, 10).is_viewed("a", "f1"));
-    assert!(!ViewedStore::load(dir.path(), repo, 400 * 24 * 3600).is_viewed("a", "f1"));
-}
-
-#[test]
-fn corrupt_store_starts_empty() {
-    let dir = tempfile::tempdir().unwrap();
-    let repo = std::path::Path::new("/r");
-    std::fs::write(ViewedStore::file_for(dir.path(), repo), b"{not json").unwrap();
-    let store = ViewedStore::load(dir.path(), repo, 0);
-    assert!(!store.is_viewed("a", "b"));
 }
 
 const PATCH: &str = "diff --git a/one.rs b/one.rs

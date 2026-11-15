@@ -49,7 +49,6 @@ pub use blame::ToggleBlame;
 pub use file_actions::{CopyPath, HostOs, OpenInEditor, editor_presets};
 pub use model::{LoadedReview, MrContext, ReviewSource};
 use viewed::SharedViewed;
-pub use viewed::flush_all as flush_viewed;
 
 actions!(
     review,

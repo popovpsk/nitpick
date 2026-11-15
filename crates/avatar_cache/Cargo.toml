@@ -7,12 +7,14 @@ publish = false
 [dependencies]
 thiserror = "2"
 http_client = { path = "../http_client" }
+app_db = { path = "../app_db" }
+log = { workspace = true }
 reqwest = { version = "0.13.5", default-features = false }
 url = "2"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 
 [dev-dependencies]
-tempfile = "3"
+futures-executor = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 wiremock = "0.6.5"
 rstest = "0.28"

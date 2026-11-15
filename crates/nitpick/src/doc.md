@@ -16,6 +16,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   `open_window`, restoring the windows open at the last quit, app-level action handlers. An
   app-level handler that touches a window defers the work: gpui runs it while the window that
   dispatched the action is still borrowed, so updating that window directly fails.
+- `db.rs` — the `app_db::Db` global (`init`: `nitpick.db` in the data folder, an in-memory
+  one if that fails, so nothing breaks but nothing is kept), `db`, `barrier` for quit.
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
   GitHub tokens sealed by `secret_store`; `forge_url` (normalised by `ForgeKind::web_url`: an empty GitHub URL is github.com),
@@ -23,7 +25,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
-  tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`; diff display (`show_whole_file`,
+  tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`, `strike_viewed`; diff display (`show_whole_file`,
   `WrapLines`); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower).

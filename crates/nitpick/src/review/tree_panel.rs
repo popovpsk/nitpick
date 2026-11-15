@@ -41,6 +41,7 @@ fn view_options_panel(
     let show_hidden = current.show_hidden_files;
     let compact = current.compact_folders;
     let comments = current.tree_comments;
+    let strike = current.strike_viewed;
     let theme = cx.theme();
     let popover = cx.entity();
     let rows = hidden.len();
@@ -118,6 +119,17 @@ fn view_options_panel(
                 .on_click(|checked, _, cx| {
                     let checked = *checked;
                     update_settings(cx, move |s| s.tree_comments = checked)
+                })
+                .into_any_element(),
+        ))
+        .child(option(
+            s.strike_viewed.clone(),
+            Switch::new("tree-strike-viewed")
+                .small()
+                .checked(strike)
+                .on_click(|checked, _, cx| {
+                    let checked = *checked;
+                    update_settings(cx, move |s| s.strike_viewed = checked)
                 })
                 .into_any_element(),
         ))
@@ -521,7 +533,10 @@ impl ReviewView {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .when(complete && !row.is_dir, |el| el.line_through())
+                    .when(
+                        complete && !row.is_dir && settings(cx).strike_viewed,
+                        |el| el.line_through(),
+                    )
                     .when(row.muted, |el| el.italic())
                     .child(row.name.clone()),
             )
