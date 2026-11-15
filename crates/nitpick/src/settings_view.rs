@@ -1169,15 +1169,10 @@ impl Render for SettingsView {
                 )
                 .description(syntax_desc),
             )
-            .item(
-                SettingItem::new(
-                    s.zed_themes.clone(),
-                    SettingField::render(move |_, _, cx| {
-                        import_zed_button(import_view.clone(), cx)
-                    }),
-                )
-                .description(s.import_zed_theme_desc.clone()),
-            )
+            .item(SettingItem::new(
+                s.zed_themes.clone(),
+                SettingField::render(move |_, _, cx| import_zed_button(import_view.clone(), cx)),
+            ))
             .item(SettingItem::new(
                 s.interface_size.clone(),
                 SettingField::render(|_, _, cx| {
@@ -1227,22 +1222,26 @@ impl Render for SettingsView {
                     )
                     .description(s.show_whole_file_desc.clone()),
                 )
-                .item(SettingItem::new(
-                    s.wrap_lines.clone(),
-                    SettingField::render(|_, _, cx| {
-                        let s = tr();
-                        choice_buttons(
-                            "wrap-lines",
-                            vec![
-                                (s.wrap_split_only.clone(), WrapLines::SplitOnly),
-                                (s.wrap_always.clone(), WrapLines::Always),
-                                (s.wrap_never.clone(), WrapLines::Never),
-                            ],
-                            settings(cx).wrap_lines,
-                            |st, v| st.wrap_lines = v,
-                        )
-                    }),
-                ))
+                .item(
+                    SettingItem::new(
+                        s.wrap_lines.clone(),
+                        SettingField::render(|_, _, cx| {
+                            let s = tr();
+                            choice_buttons(
+                                "wrap-lines",
+                                vec![
+                                    (s.wrap_split_only.clone(), WrapLines::SplitOnly),
+                                    (s.wrap_always.clone(), WrapLines::Always),
+                                    (s.wrap_never.clone(), WrapLines::Never),
+                                ],
+                                settings(cx).wrap_lines,
+                                |st, v| st.wrap_lines = v,
+                            )
+                        }),
+                    )
+                    .layout(Axis::Vertical)
+                    .description(s.wrap_lines_desc.clone()),
+                )
                 .item(
                     SettingItem::new(
                         s.ignore_whitespace.clone(),

@@ -71,6 +71,7 @@ actions!(
         ToggleTree,
         FindFile,
         FindInFile,
+        AddComment,
     ]
 );
 
@@ -178,6 +179,14 @@ pub struct DiscussionView {
     pub location: Option<SharedString>,
     pub preview: SharedString,
     pub replies: Option<SharedString>,
+}
+
+fn nearest_unviewed(after: &[usize], before: &[usize], viewed: &[bool]) -> Option<usize> {
+    after
+        .iter()
+        .chain(before.iter().rev())
+        .copied()
+        .find(|&f| !viewed[f])
 }
 
 fn note_time<Tz: chrono::TimeZone>(created_at: &str, zone: &Tz) -> String
@@ -298,6 +307,7 @@ pub struct ReviewView {
     tree_scroll: UniformListScrollHandle,
     composer: Option<Composer>,
     kept_unviewed: HashSet<(SharedString, String)>,
+    hovered_line: Option<DiffLinePosition>,
     change_cursor: Option<usize>,
     change_scrolled: bool,
     cross_hint: Option<CrossHint>,
@@ -358,7 +368,9 @@ impl ReviewView {
         let subscription = cx.subscribe_in(&diff, window, |_, _, event: &DiffEvent, _, cx| {
             if matches!(
                 event,
-                DiffEvent::FileCollapsed(_) | DiffEvent::FileExpanded(_)
+                DiffEvent::FileCollapsed(_)
+                    | DiffEvent::FileExpanded(_)
+                    | DiffEvent::SelectionChanged(_)
             ) {
                 cx.notify();
             }
@@ -421,6 +433,7 @@ impl ReviewView {
             tree_scroll: UniformListScrollHandle::new(),
             composer: None,
             kept_unviewed: HashSet::new(),
+            hovered_line: None,
             change_cursor: None,
             change_scrolled: false,
             cross_hint: None,
@@ -1144,19 +1157,29 @@ impl ReviewView {
         let Some(review) = self.review.clone() else {
             return;
         };
-        let mut marks = Vec::with_capacity(files.len());
+        let mut marks: Vec<(String, String)> = Vec::with_capacity(files.len());
+        let store = self.viewed_store.read(cx).store();
         for &ix in files {
             if let Some(file) = review.files.get(ix) {
                 self.viewed[ix] = viewed;
                 let key = (file.path.clone(), file.fingerprint.clone());
                 if viewed {
                     self.kept_unviewed.remove(&key);
+                    marks.push((file.path.to_string(), file.fingerprint.clone()));
                 } else {
                     self.kept_unviewed.insert(key);
+                    let covering = store.covering_marks(&file.path, &file.fingerprint);
+                    if covering.is_empty() {
+                        marks.push((file.path.to_string(), file.fingerprint.clone()));
+                    }
+                    marks.extend(covering);
                 }
-                marks.push((file.path.as_ref(), file.fingerprint.as_str()));
             }
         }
+        let marks: Vec<(&str, &str)> = marks
+            .iter()
+            .map(|(path, fingerprint)| (path.as_str(), fingerprint.as_str()))
+            .collect();
         self.viewed_store
             .update(cx, |store, cx| store.set(&marks, viewed, cx));
         let selected = self
@@ -1246,11 +1269,7 @@ impl ReviewView {
                 None => (&order[..], &order[..0]),
             },
         };
-        after
-            .iter()
-            .chain(before)
-            .copied()
-            .find(|&f| !self.viewed[f])
+        nearest_unviewed(after, before, &self.viewed)
     }
 
     pub fn toggle_row_viewed(&mut self, row: usize, cx: &mut Context<Self>) {
@@ -1644,13 +1663,48 @@ impl ReviewView {
         self.annotations = Rc::new(annotations);
     }
 
+    pub(super) fn can_comment_lines(&self) -> bool {
+        self.mr.is_some()
+            && self.interdiff.is_none()
+            && self
+                .review
+                .as_ref()
+                .is_some_and(|r| r.comments_aligned && r.commit.is_none())
+    }
+
+    pub(super) fn set_hovered_line(&mut self, position: Option<&DiffLinePosition>) {
+        if let Some(position) = position {
+            self.hovered_line = Some(position.clone());
+        }
+    }
+
+    pub(super) fn leave_diff(&mut self) {
+        self.hovered_line = None;
+    }
+
+    pub(super) fn comment_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let range = self.diff.read(cx).selected_lines().or_else(|| {
+            self.hovered_line.as_ref().map(|position| {
+                DiffLineRange::new(
+                    position.path().clone(),
+                    position.side(),
+                    position.line(),
+                    position.line(),
+                )
+            })
+        });
+        if let Some(range) = range {
+            self.open_line_composer(&range, window, cx);
+        }
+    }
+
     pub fn open_line_composer(
         &mut self,
         range: &DiffLineRange,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.mr.is_none() || self.review.as_ref().is_none_or(|r| r.commit.is_some()) {
+        if !self.can_comment_lines() {
             return;
         }
         let side = range.end_side();
@@ -1662,6 +1716,8 @@ impl ReviewView {
             );
             return;
         }
+        self.diff
+            .update(cx, |diff, cx| diff.set_selected_lines(None, cx));
         self.open_composer(ComposerTarget::Line(position), window, cx);
     }
 
@@ -1925,13 +1981,6 @@ impl ReviewView {
         file.line_map
             .locate(side, position.line() as u32)
             .is_some_and(|kind| file.line_map.near_change(kind, context))
-    }
-
-    pub fn comments_title(&self) -> SharedString {
-        match self.mr.as_ref().map(MrContext::kind) {
-            Some(ForgeKind::GitHub) => tr().pr_comments.clone(),
-            _ => tr().general_comments.clone(),
-        }
     }
 
     pub fn focus_tree(&self, window: &mut Window, cx: &mut App) {

@@ -22,7 +22,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
   GitHub tokens sealed by `secret_store`; `forge_url` (normalised by `ForgeKind::web_url`: an empty GitHub URL is github.com),
   `forge_configured`, `forge_hosts`, `forge_client`), the `SettingsStore` global, `update_settings`,
-  `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
+  `apply_theme` (the System choice follows the OS with One Light / One Dark, falling back to
+  gpui-component's defaults until the bundled themes are registered); syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
   tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`, `strike_viewed`; diff display (`show_whole_file`,
@@ -63,7 +64,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   @user" or the error; "Create…" next to the token opens the host's new-token page with the
   name and scopes filled in, `ForgeKind::new_token_url`, as JetBrains' Generate does). Text fields with a description (editor command, server URL, token)
   use the vertical item layout, capped at `FIELD_MAX_WIDTH`: in a horizontal item the
-  component gives the text up to 60% of the row, so a fixed-width field overflowed. A save applies the difference between the list the field was loaded
+  component gives the text up to 60% of the row, so a fixed-width field overflowed; the same goes for a wide control under a description
+  (the wrap choice). A save applies the difference between the list the field was loaded
   from and what was typed (`review_core::hidden::merge_patterns`), so a pattern added from a
   tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
   settings change, and `set_repository` reloads both each time the screen opens.
@@ -175,6 +177,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   (`review/model_grammars.rs`) and must stay on the versions gpui-component resolves.
 
 ## Decisions
+
+- The default theme (System) is Zed's One Light / One Dark.
 
 - gpui-component and gpui-kit-assets come from `longbridge/gpui-kit` at a pinned commit of
   `main`, not crates.io: `Diff::split_ratio` (the movable split) is not in a release yet.

@@ -161,7 +161,7 @@ pub fn open_comments_sheet(
     let view = cx.entity();
     window.open_sheet(cx, move |sheet, _window, cx| {
         let review = view.read(cx);
-        let title = review.comments_title();
+        let title = tr().comments.clone();
         let tab = review.comments_tab;
         let tabs = TabBar::new("comments-tabs")
             .segmented()
@@ -209,10 +209,12 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
     let discussions = review.discussions.clone();
     let (open_label, resolved_label) = review.code_section_labels.clone();
     if threads.is_empty() {
-        return div()
+        return v_flex()
+            .gap_1()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
             .child(s.no_code_comments.clone())
+            .child(div().text_xs().child(s.line_comment_hint.clone()))
             .into_any_element();
     }
     let theme = cx.theme();

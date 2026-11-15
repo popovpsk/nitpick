@@ -124,6 +124,63 @@ fn unmarking_removes_the_mark() {
     assert!(!store.is_viewed("b", "f2"));
 }
 
+#[test]
+fn a_chain_of_viewed_steps_covers_the_whole_change() {
+    let mut store = ViewedStore::new();
+    store.set_viewed("f", &fingerprint("0", "a"), true, 1);
+    assert!(!store.is_viewed("f", &fingerprint("0", "b")));
+    store.set_viewed("f", &fingerprint("a", "b"), true, 2);
+    assert!(store.is_viewed("f", &fingerprint("0", "b")));
+    assert!(!store.is_viewed("f", &fingerprint("x", "b")));
+}
+
+#[test]
+fn a_rename_chains_through_the_source_path() {
+    let mut store = ViewedStore::new();
+    store.set_viewed("old.rs", &fingerprint("0", "s"), true, 1);
+    store.set_viewed("new.rs", &fingerprint("s", "x"), true, 2);
+    assert!(store.is_viewed("new.rs", &fingerprint("0", "x")));
+}
+
+#[test]
+fn an_identical_change_elsewhere_does_not_count() {
+    let mut store = ViewedStore::new();
+    store.set_viewed("g", &fingerprint("0", "x"), true, 1);
+    assert!(!store.is_viewed("f", &fingerprint("0", "x")));
+    assert!(store.covering_marks("f", &fingerprint("0", "x")).is_empty());
+}
+
+#[test]
+fn covering_marks_unview_a_chained_file() {
+    let mut store = ViewedStore::new();
+    let (first, second, other) = (
+        fingerprint("0", "a"),
+        fingerprint("a", "b"),
+        fingerprint("0", "z"),
+    );
+    store.set_viewed("f", &first, true, 1);
+    store.set_viewed("f", &second, true, 2);
+    store.set_viewed("g", &other, true, 3);
+    store.set_viewed("h", &fingerprint("0", "y"), true, 3);
+    store.set_viewed("h", &fingerprint("y", "0"), true, 3);
+    let whole = fingerprint("0", "b");
+    let mut marks = store.covering_marks("f", &whole);
+    marks.sort();
+    assert_eq!(
+        marks,
+        vec![
+            ("f".to_string(), first.clone()),
+            ("f".to_string(), second.clone())
+        ]
+    );
+    for (path, fp) in &marks {
+        store.set_viewed(path, fp, false, 4);
+    }
+    assert!(!store.is_viewed("f", &whole));
+    assert!(store.is_viewed("g", &other));
+    assert!(store.is_viewed("h", &fingerprint("y", "0")));
+}
+
 const PATCH: &str = "diff --git a/one.rs b/one.rs
 index 1111111..2222222 100644
 --- a/one.rs

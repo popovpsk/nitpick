@@ -24,7 +24,8 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`nitpick/sr
   (convert with `zed_theme`, write `zed-<family>.json` into the themes folder).
 - `themes_tests.rs` — an imported Zed family loads as gpui-component's `ThemeSet`;
   re-import keeps its names; a non-theme file writes nothing.
-- `themes/` — one JSON per theme family.
+- `themes/` — one JSON per theme family; `one.json` is Zed's built-in One Dark / One Light
+  (not an extension, so Zed's folders never offer it), converted with `zed_theme`.
 - `i18n/mod.rs` — the `Strings` schema, `lang!` / `languages!`, `Lang`, the active-language
   atomic (`set_active`, `active`, `strings`), interpolation accessors, `relative_time`.
 - `i18n/en.rs`, `i18n/ru.rs` — one `static` table per language.

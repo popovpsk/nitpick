@@ -25,10 +25,10 @@ use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview,
-    NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
-    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comment_list, comments,
-    file_actions,
+    AddComment, Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState,
+    LoadedReview, NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh,
+    ReviewSource, ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comment_list,
+    comments, file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -182,7 +182,7 @@ impl ReviewView {
                 .icon(Icon::new(Icons::MessageSquareText))
                 .label(count.to_string())
                 .loading(self.discussions_loading)
-                .tooltip(self.comments_title())
+                .tooltip(tr().comments.clone())
                 .on_click(cx.listener(|this, _, window, cx| {
                     comment_list::open_comments_sheet(this, window, cx)
                 }))
@@ -704,10 +704,9 @@ impl ReviewView {
         let annotation_view = view.clone();
         let add_view = view.clone();
         let measure_view = view.clone();
-        let can_comment = self.mr.is_some()
-            && review.comments_aligned
-            && review.commit.is_none()
-            && self.interdiff.is_none();
+        let can_comment = self.can_comment_lines();
+        let lines_selected = can_comment && self.diff.read(cx).selected_lines().is_some();
+        let hover_view = view.clone();
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
             .current_file
@@ -744,6 +743,11 @@ impl ReviewView {
             .min_h_0()
             .when(current_viewed, |el| el.bg(viewed_bg))
             .on_scroll(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
+            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                if !hovered {
+                    this.leave_diff();
+                }
+            }))
             .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 let keys = &event.keystroke;
@@ -799,6 +803,11 @@ impl ReviewView {
                             comments::render_annotation(&annotation_view, annotation, window, cx)
                         })
                         .when(can_comment, |diff| {
+                            diff.on_line_hover(move |position, _, cx| {
+                                hover_view.update(cx, |this, _| this.set_hovered_line(position))
+                            })
+                        })
+                        .when(lines_selected, |diff| {
                             diff.on_add_annotation(move |range, window, cx| {
                                 add_view.update(cx, |this, cx| {
                                     this.open_line_composer(range, window, cx)
@@ -1205,6 +1214,13 @@ impl Render for ReviewView {
             }))
             .on_action(cx.listener(|this, _: &FindInFile, window, cx| {
                 this.open_find(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &AddComment, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.comment_here(window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &ToggleBlame, window, cx| {
                 if window.has_focused_input(cx) {

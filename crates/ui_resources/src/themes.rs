@@ -29,6 +29,7 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
         include_str!("../themes/mellifluous.json"),
     ),
     ("molokai.json", include_str!("../themes/molokai.json")),
+    ("one.json", include_str!("../themes/one.json")),
     ("solarized.json", include_str!("../themes/solarized.json")),
     ("spaceduck.json", include_str!("../themes/spaceduck.json")),
     ("tokyonight.json", include_str!("../themes/tokyonight.json")),

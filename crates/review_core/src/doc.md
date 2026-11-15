@@ -19,7 +19,8 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   collapsed folder paths), `progress` (viewed/total per node), `file_order`, `ancestors`,
   `completed_folders` (the ancestor folders of some files whose progress is complete).
 - `viewed.rs` — `ViewedStore`, the in-memory viewed map (`from_marks`, `is_viewed`,
-  `set_viewed`, `viewed_versions_except`: the other versions of a path marked viewed, newest
+  `set_viewed`, `covering_marks`: the marks that make a file count as viewed,
+  `viewed_versions_except`: the other versions of a path marked viewed, newest
   first; persistence is `app_db`'s), `fingerprint`, `fingerprint_blobs`, `write_atomic` (the
   temp-file-and-rename write the JSON settings use).
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
@@ -71,6 +72,15 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   it un-views it (GitLab behaves the same), and the same change seen through a branch
   comparison or the GitLab MR shares one mark. Marks are stored per repository (its full
   path) in `app_db`.
+- A file without its own mark still counts as viewed when marks chain from its old blob to
+  its new one in two or more steps (`old → a → new`), of any path: the per-commit diffs of
+  every commit that changed it cover the whole change, renames included. The one-step edge
+  `old → new` of another path is left out, so an identical change in another file never
+  vouches for this one. The search runs backward from the new blob (`into`), since the null
+  blob has every added file as a successor. Unmarking such a file must remove the chain too
+  (`covering_marks`), or it would stay viewed; it takes only steps between the two blobs,
+  never one entering the old blob or leaving the new one, so a loop through the null blob
+  (another file's deletion `x → 0`) is kept.
 - `line_maps` walks hunks by their declared counts, so a removed line `--- x` or an added
   `+++ y` is never taken for a file header. The result is index-aligned with
   gpui-component's `DiffFile::parse` of the same patch, which also yields one file per

@@ -404,10 +404,25 @@ fn apply_zoom(cx: &mut App) {
     });
 }
 
+const SYSTEM_LIGHT_THEME: &str = "One Light";
+const SYSTEM_DARK_THEME: &str = "One Dark";
+
 pub fn apply_theme(choice: &ThemeChoice, cx: &mut App) {
     reset_theme_metrics(cx);
     match choice {
-        ThemeChoice::System => Theme::sync_system_appearance(None, cx),
+        ThemeChoice::System => {
+            let registry = ThemeRegistry::global(cx);
+            let light = registry.themes().get(SYSTEM_LIGHT_THEME).cloned();
+            let dark = registry.themes().get(SYSTEM_DARK_THEME).cloned();
+            let theme = cx.global_mut::<Theme>();
+            if let Some(light) = light {
+                theme.light_theme = light;
+            }
+            if let Some(dark) = dark {
+                theme.dark_theme = dark;
+            }
+            Theme::sync_system_appearance(None, cx);
+        }
         ThemeChoice::Named(name) => {
             let config = ThemeRegistry::global(cx)
                 .themes()

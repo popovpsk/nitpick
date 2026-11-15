@@ -9,9 +9,9 @@ use gpui::{
 use ui_resources::i18n::Strings;
 
 use crate::review::{
-    CollapseSelected, CopyPath, ExpandSelected, FindFile, FindInFile, FocusDiff, FocusTree,
-    NextChange, NextFile, OpenInEditor, OpenSelected, PreviousChange, PreviousFile, Refresh,
-    SelectNext, SelectPrevious, ToggleBlame, ToggleTree, ToggleViewed,
+    AddComment, CollapseSelected, CopyPath, ExpandSelected, FindFile, FindInFile, FocusDiff,
+    FocusTree, NextChange, NextFile, OpenInEditor, OpenSelected, PreviousChange, PreviousFile,
+    Refresh, SelectNext, SelectPrevious, ToggleBlame, ToggleTree, ToggleViewed,
 };
 use crate::settings_store::{SettingsStore, settings, update_settings};
 use crate::workspace::{
@@ -135,6 +135,14 @@ pub static COMMANDS: &[Command] = &[
         defaults: &["secondary-f"],
         action: || Box::new(FindInFile),
         title: |s| s.find_in_file.clone(),
+    },
+    Command {
+        id: "review.add_comment",
+        group: Group::Review,
+        context: REVIEW,
+        defaults: &["c"],
+        action: || Box::new(AddComment),
+        title: |s| s.cmd_add_comment.clone(),
     },
     Command {
         id: "review.copy_path",

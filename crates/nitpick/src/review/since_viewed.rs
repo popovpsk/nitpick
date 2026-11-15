@@ -38,7 +38,7 @@ impl ReviewView {
                             let Some((_, new)) = fingerprint_blobs(mark) else {
                                 continue;
                             };
-                            if !is_blob(new) {
+                            if !is_blob(new) || new == file.new_blob {
                                 continue;
                             }
                             match self.blob_known.get(new) {

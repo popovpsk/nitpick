@@ -62,7 +62,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   body (`NoteView::long`: over 10 lines counting a wrap every 90 chars) is cut to about ten
   lines with a fade and a Show more / Show less toggle (`expanded_notes`). Starting another
   edit replaces the open one; a reload that no longer has the edited note drops the editor.
-- `comment_list.rs` — the comments sheet (`comments_title`) with two tabs: On code (every
+- `comment_list.rs` — the comments sheet (titled Comments) with two tabs: On code (every
   discussion with a file position, outdated ones included, as full cards: open threads first,
   then resolved, each section grouped by file in tree order then line; above each card its
   `L<line>`, an outdated tag when its `head_sha` is not the review's head, and Go to code,
@@ -70,7 +70,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   is drawn in the diff) and General (discussions without a file, with the new-comment
   composer). `build_code_threads` precomputes the rows; it opens on General when there is no
   code thread.
-- `review_tests.rs` — comment times in a fixed time zone.
+- `review_tests.rs` — comment times in a fixed time zone; which file Viewed advances to.
 - `comment_list_tests.rs` — previews and row order.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
   own notes, then a discussion reload; `ApprovalView` (label, tooltip with who approved) and
@@ -107,7 +107,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
   wait; a cross-file step remembers its direction (`pending_jump`) and lands once it is in.
 - "Since last view" (`since_mode`, view state, off by default): a file whose current
   fingerprint is not marked viewed in the store but an older version of it is
-  (`ViewedStore::last_viewed_except`, newest first) is "seen before": it gets a clock badge
+  (`ViewedStore::viewed_versions_except`, newest first, skipping versions with the current
+  new blob, which would have nothing to show) is "seen before": it gets a clock badge
   in the tree while unviewed, and the toolbar shows the toggle while it is shown (viewed or
   not). With the toggle on such a file shows `git diff <viewed new blob> <current new blob>`
   (full context, the review's whitespace setting, named after the file), or a "nothing
@@ -225,7 +226,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   and fills when the database answers (the review's observer re-reads it); marks made before
   that are written at once and replayed onto the loaded map, so none is lost. Each change is
   one queued database write; quitting awaits `db::barrier`. Marking the current file viewed jumps to the next unviewed
-  file in tree order when `advance_on_viewed` is set; a folder toggles all files under it.
+  file in tree order when `advance_on_viewed` is set, or, with none below, to the nearest
+  unviewed one above (`next_unviewed_after`), never back to the top: a reader going upward
+  stays where they are; a folder toggles all files under it.
   With `collapse_viewed_folders`, a mark that completes a folder (hidden files not counted)
   collapses it and every completed folder above it; the selection moves to the row that now
   shows the selected file. Unmarking never expands anything.
@@ -276,6 +279,13 @@ wraps `gitlab` and `github`; nothing here names those crates).
   last move by a detached task, so closing the review right after a drag still saves it.
 - The comment composer survives file switches and reloads; only Cancel or a successful post
   of that same composer closes it.
+- Starting a line comment (`can_comment_lines`): the `Diff`'s add button is passed only
+  while lines are selected (a click on a line number), so it sits at the selection's end and
+  never trails the pointer over the code; `AddComment` (C) comments the selection, else the
+  line under the pointer (`hovered_line`, from `on_line_hover`, stored without a redraw;
+  a line's `None` is ignored since leaving one line reports after entering the next, and the
+  diff area's own hover clears it).
+  Opening the composer clears the selection. The On code tab's empty state names both ways.
 - Notifications go to the review's own window (`window_handle`) through `cx.defer`, never to
   whichever window happens to be active, and never inside that window's own update.
 - The review observes the settings: a new diff layout applies at once, a change of "ignore
@@ -391,8 +401,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   file is not kept and the first unviewed file opens. In commit mode no discussion is placed
   on a line (all go to the sheet), the diff offers no line comment and a pending line draft
   is neither drawn nor sent, since comment positions refer to the request's diff. Viewed marks key
-  on the commit's blob pairs, so they are shared with the full diff only for a file that one
-  commit changed alone. A pick during a pull or a post loads without taking `busy`, so it
+  on the commit's blob pairs; the full diff of a file counts as viewed once viewed pairs chain
+  from its old blob to its new one (`ViewedStore::is_viewed`), e.g. every commit that changed
+  it, a rename included, and unmarking it there removes those pairs (`covering_marks`). A pick during a pull or a post loads without taking `busy`, so it
   never clears theirs. The unchanged-reload check also compares the commit list and the
   merge base, since in commit mode a grown range keeps the same pair and files.
 - Viewed progress leads the tree header (`viewed/total` and a thin bar, the count in the
