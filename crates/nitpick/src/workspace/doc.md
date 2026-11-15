@@ -10,7 +10,12 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
 
 - `mod.rs` — `Workspace`: opening a repository (and its last review), switching screens,
   window title, the folder prompts (open one, add all from a folder), the repository
-  picker's entries, window-level actions and bindings.
+  picker's entries, window-level actions and bindings. Replacing the review, switching the
+  repository or closing the window (`CloseWindow` and the window's own close, through
+  `on_window_should_close`) asks first while the review holds an unsent comment
+  (`ReviewView::has_unsent_comment`, `confirm_discard_comment`); Quit asks in the first
+  window that holds one (`ask_before_quit` over the `OpenWorkspaces` global, deferred, since
+  an app-level action runs while the dispatching window is borrowed).
 - `title_bar.rs` — the repository picker trigger and its footer (open, add from folder), the
   review button, the "Restart to Update" button once the updater has an update staged
   (`updater::ready_note`; the workspace observes the updater), the settings button.
@@ -21,7 +26,8 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   comparison, the uncommitted-changes review, and the open merge requests (GitLab) or pull
   requests (GitHub) of the repository's remote on a configured host (list, filter, URL,
   `!123` or `#123`); the list reloads when a forge URL or token changes (`forge_key`, a hash,
-  so other settings changes don't refetch).
+  so other settings changes don't refetch), and by hand: Refresh beside the filter, Retry
+  beside a load error.
 
 ## Spec
 

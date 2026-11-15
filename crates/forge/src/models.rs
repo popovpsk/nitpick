@@ -202,3 +202,58 @@ pub struct NewPosition {
     pub old_line: Option<u32>,
     pub new_line: Option<u32>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draft {
+    pub id: String,
+    pub body: String,
+    pub position: Option<Position>,
+    pub reply_to: Option<String>,
+    pub resolve: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReviewHandle {
+    pub id: u64,
+    pub node_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PendingReview {
+    pub handle: Option<ReviewHandle>,
+    pub drafts: Vec<Draft>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftTarget<'a> {
+    General,
+    Line(&'a NewPosition),
+    Reply {
+        discussion_id: &'a str,
+        resolve: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Verdict {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+impl ForgeKind {
+    pub fn general_drafts(self) -> bool {
+        self == ForgeKind::GitLab
+    }
+
+    pub fn resolves_on_submit(self) -> bool {
+        self == ForgeKind::GitLab
+    }
+
+    pub fn verdicts(self) -> &'static [Verdict] {
+        match self {
+            ForgeKind::GitLab => &[Verdict::Comment, Verdict::Approve],
+            ForgeKind::GitHub => &[Verdict::Comment, Verdict::Approve, Verdict::RequestChanges],
+        }
+    }
+}

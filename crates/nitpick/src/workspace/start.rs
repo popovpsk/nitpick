@@ -348,6 +348,7 @@ impl StartView {
             .collect();
         let any_ready = !connected.is_empty();
         self.mr_state = MrListState::Loading;
+        cx.notify();
         let repo = self.repo.clone();
         let task = cx.spawn(async move |this, cx| {
             let found = cx
@@ -498,10 +499,25 @@ impl StartView {
                 .gap_2()
                 .child(Spinner::new().small())
                 .into_any_element(),
-            MrListState::Failed(message) => div()
-                .text_sm()
-                .text_color(theme.danger)
-                .child(message.clone())
+            MrListState::Failed(message) => h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(message.clone()),
+                )
+                .child(
+                    Button::new("mr-retry")
+                        .small()
+                        .outline()
+                        .icon(IconName::RefreshCw)
+                        .label(s.retry.clone())
+                        .on_click(cx.listener(|this, _, _, cx| this.load_merge_requests(cx))),
+                )
                 .into_any_element(),
             MrListState::Loaded => {
                 let mut list = v_flex().gap_1();
@@ -539,7 +555,11 @@ impl StartView {
                                                     .child(mr.title.clone()),
                                             )
                                             .when(mr.draft, |el| {
-                                                el.child(Tag::secondary().small().child("Draft"))
+                                                el.child(
+                                                    Tag::secondary()
+                                                        .small()
+                                                        .child(tr().request_draft.clone()),
+                                                )
                                             }),
                                     )
                                     .child(
@@ -614,7 +634,21 @@ impl StartView {
                     ),
             )
             .when(matches!(self.mr_state, MrListState::Loaded), |el| {
-                el.child(Input::new(&self.filter).small().cleanable(true))
+                el.child(
+                    h_flex()
+                        .gap_2()
+                        .child(Input::new(&self.filter).small().cleanable(true).flex_1())
+                        .child(
+                            Button::new("mr-refresh")
+                                .small()
+                                .ghost()
+                                .icon(IconName::RefreshCw)
+                                .tooltip(s.refresh.clone())
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.load_merge_requests(cx)),
+                                ),
+                        ),
+                )
             })
             .child(body)
             .into_any_element()
@@ -804,9 +838,10 @@ impl Render for StartView {
 }
 
 fn branch_hint(branch: &Branch) -> SharedString {
+    let remote = tr().remote_prefix.clone();
     let kind = match branch.kind {
         BranchKind::Local => "",
-        BranchKind::Remote => "remote · ",
+        BranchKind::Remote => remote.as_ref(),
     };
     let subject: String = branch.subject.chars().take(60).collect();
     format!(

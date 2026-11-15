@@ -266,3 +266,188 @@ async fn github_edits_each_comment_kind_at_its_endpoint() {
     client.approve("o/r", 9).await.unwrap();
     assert!(client.unapprove("o/r", 9).await.is_err());
 }
+
+#[tokio::test]
+async fn a_gitlab_review_publishes_then_approves_then_summarises() {
+    let server = MockServer::start().await;
+    let mr = "/api/v4/projects/g%2Fp/merge_requests/5";
+    Mock::given(method("POST"))
+        .and(path(format!("{mr}/draft_notes/bulk_publish")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{mr}/discussions")))
+        .and(body_json(json!({"body": "Looks good"})))
+        .respond_with(json_response(201, json!({"id": "d1", "notes": []})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{mr}/approvals")))
+        .respond_with(json_response(200, json!({"user_has_approved": false})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{mr}/approve")))
+        .respond_with(json_response(201, json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+    let pending = crate::PendingReview {
+        handle: None,
+        drafts: vec![crate::Draft {
+            id: "41".into(),
+            body: "n".into(),
+            position: None,
+            reply_to: None,
+            resolve: false,
+        }],
+    };
+
+    client
+        .submit_review("g/p", 5, &pending, "Looks good", crate::Verdict::Approve)
+        .await
+        .unwrap();
+
+    let order: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.url.path().rsplit('/').next().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        order,
+        ["bulk_publish", "approvals", "approve", "discussions"]
+    );
+}
+
+#[tokio::test]
+async fn a_first_github_draft_starts_a_review() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/repos/o/r/pulls/5/reviews"))
+        .respond_with(json_response(200, json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/repos/o/r/pulls/5"))
+        .respond_with(json_response(200, json!({"number": 5, "node_id": "PR5"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(json_response(
+            200,
+            json!({"data": {"addPullRequestReview": {"pullRequestReview": {"id": "R9"}},
+                            "addPullRequestReviewThread": {"thread": {"id": "T1"}}}}),
+        ))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitHub, &server.uri(), TOKEN).unwrap();
+
+    client
+        .add_draft(
+            "o/r",
+            5,
+            None,
+            "Why?",
+            crate::DraftTarget::Line(&position()),
+        )
+        .await
+        .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    let start: serde_json::Value = serde_json::from_slice(&requests[2].body).unwrap();
+    let thread: serde_json::Value = serde_json::from_slice(&requests[3].body).unwrap();
+    assert_eq!(start["variables"], json!({"pr": "PR5", "commit": "h"}));
+    assert_eq!(
+        thread["variables"],
+        json!({"review": "R9", "path": "a.rs", "line": 4, "side": "RIGHT", "body": "Why?"})
+    );
+}
+
+#[tokio::test]
+async fn github_takes_no_general_draft() {
+    let server = MockServer::start().await;
+    let client = Client::new(ForgeKind::GitHub, &server.uri(), TOKEN).unwrap();
+    let handle = crate::ReviewHandle {
+        id: 9,
+        node_id: "R9".into(),
+    };
+
+    let err = client
+        .add_draft("o/r", 5, Some(&handle), "x", crate::DraftTarget::General)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, crate::Error::Unsupported(_)));
+}
+
+#[tokio::test]
+async fn a_gitlab_retry_does_not_approve_twice() {
+    let server = MockServer::start().await;
+    let mr = "/api/v4/projects/g%2Fp/merge_requests/5";
+    Mock::given(method("GET"))
+        .and(path(format!("{mr}/approvals")))
+        .respond_with(json_response(200, json!({"user_has_approved": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    client
+        .submit_review(
+            "g/p",
+            5,
+            &crate::PendingReview::default(),
+            "",
+            crate::Verdict::Approve,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_github_review_started_elsewhere_is_reused() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/repos/o/r/pulls/5/reviews"))
+        .respond_with(json_response(
+            200,
+            json!([{"id": 9, "node_id": "R9", "state": "PENDING", "user": {"login": "me"}}]),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(json_response(
+            200,
+            json!({"data": {"addPullRequestReviewThread": {"thread": {"id": "T1"}}}}),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitHub, &server.uri(), TOKEN).unwrap();
+
+    client
+        .add_draft(
+            "o/r",
+            5,
+            None,
+            "Why?",
+            crate::DraftTarget::Line(&position()),
+        )
+        .await
+        .unwrap();
+}

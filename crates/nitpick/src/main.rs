@@ -131,8 +131,10 @@ fn main() {
         .detach();
 
         cx.on_action(|_: &crate::app_menu::Quit, cx| {
-            window_registry::quitting(cx);
-            cx.quit();
+            if workspace::ask_before_quit(cx, quit_now) {
+                return;
+            }
+            quit_now(cx);
         });
 
         #[cfg(target_os = "macos")]
@@ -170,4 +172,9 @@ fn main() {
 
         open_startup_windows(cx);
     });
+}
+
+fn quit_now(cx: &mut App) {
+    window_registry::quitting(cx);
+    cx.quit();
 }

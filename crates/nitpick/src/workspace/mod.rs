@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use git_repo::Repo;
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, PathPromptOptions, Render, SharedString, Styled as _,
-    Subscription, Window, actions, div, px,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Render,
+    SharedString, Styled as _, Subscription, WeakEntity, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, StyledExt as _, WindowExt as _,
@@ -115,7 +115,42 @@ impl Workspace {
         }
         this.refresh_repo_picker(window, cx);
         this.update_title(window, cx);
+        let entry = (cx.entity().downgrade(), window.window_handle());
+        let open = &mut cx.default_global::<OpenWorkspaces>().0;
+        open.retain(|(workspace, _)| workspace.upgrade().is_some());
+        open.push(entry);
+        let workspace = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return true;
+            };
+            if !workspace.read(cx).unsent_comment(cx) {
+                return true;
+            }
+            workspace.update(cx, |this, cx| this.close_window(window, cx));
+            false
+        });
         this
+    }
+
+    pub(crate) fn unsent_comment(&self, cx: &App) -> bool {
+        self.review
+            .as_ref()
+            .is_some_and(|review| review.read(cx).has_unsent_comment(cx))
+    }
+
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.unsent_comment(cx) {
+            window.remove_window();
+            return;
+        }
+        let review = self.review.clone();
+        crate::review::confirm_discard_comment(window, cx, move |window, cx| {
+            if let Some(review) = &review {
+                review.update(cx, |review, cx| review.cancel_composer(cx));
+            }
+            window.remove_window();
+        });
     }
 
     fn refresh_repo_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -196,6 +231,23 @@ impl Workspace {
     }
 
     pub fn open_review(
+        &mut self,
+        source: ReviewSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.unsent_comment(cx) {
+            let workspace = cx.entity().downgrade();
+            crate::review::confirm_discard_comment(window, cx, move |window, cx| {
+                let source = source.clone();
+                let _ = workspace.update(cx, |this, cx| this.replace_review(source, window, cx));
+            });
+            return;
+        }
+        self.replace_review(source, window, cx);
+    }
+
+    fn replace_review(
         &mut self,
         source: ReviewSource,
         window: &mut Window,
@@ -390,6 +442,15 @@ impl Workspace {
         if new_window && self.repo.is_some() {
             crate::open_window(Some(path), cx);
         } else if self.repo_path() != Some(path.as_path()) {
+            if self.unsent_comment(cx) {
+                let workspace = cx.entity().downgrade();
+                crate::review::confirm_discard_comment(window, cx, move |window, cx| {
+                    let path = path.clone();
+                    let _ =
+                        workspace.update(cx, |this, cx| this.open_repo(&path, true, window, cx));
+                });
+                return;
+            }
             self.open_repo(&path, true, window, cx);
         }
     }
@@ -509,7 +570,9 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &ShowSettings, window, cx| this.show_settings(window, cx)),
             )
-            .on_action(cx.listener(|_, _: &CloseWindow, window, _| window.remove_window()))
+            .on_action(
+                cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+            )
             .on_action(cx.listener(|_, _: &ShowNextWindowTab, window, cx| {
                 window_tabs::activate_next(window, cx, 1)
             }))
@@ -536,4 +599,33 @@ fn display_path(path: &Path, home: Option<&Path>) -> SharedString {
         }
         _ => path.display().to_string().into(),
     }
+}
+
+#[derive(Default)]
+struct OpenWorkspaces(Vec<(WeakEntity<Workspace>, AnyWindowHandle)>);
+
+impl Global for OpenWorkspaces {}
+
+pub fn ask_before_quit(cx: &mut App, quit: fn(&mut App)) -> bool {
+    let open = cx
+        .try_global::<OpenWorkspaces>()
+        .map(|open| open.0.clone())
+        .unwrap_or_default();
+    let unsent = open.into_iter().find(|(workspace, _)| {
+        workspace
+            .upgrade()
+            .is_some_and(|workspace| workspace.read(cx).unsent_comment(cx))
+    });
+    let Some((_, handle)) = unsent else {
+        return false;
+    };
+    cx.defer(move |cx| {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.activate_window();
+            crate::review::confirm_discard_comment(window, cx, move |_, cx| {
+                cx.defer(quit);
+            });
+        });
+    });
+    true
 }

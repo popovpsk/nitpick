@@ -67,7 +67,9 @@ What the code and `release.yml` both rely on.
   workflow's collect step, and the release job fails on a second `-setup.exe` or `.dmg`. The
   naming is kept identical to pawse's so the rules stay one tested shape: do not tidy it.
 - Trust is our release over HTTPS plus a SHA-256 check against the asset's `digest`
-  (`install/doc.md`); no code-signature verification.
+  (`install/doc.md`); no code-signature verification. So whoever can publish a release can
+  ship code to every installed copy: the workflows pin every action to a commit SHA (the tag
+  in a comment) and only the publish job gets `contents: write`.
 
 ## Build variants
 

@@ -1,6 +1,9 @@
 use crate::convert;
 use crate::error::Error;
-use crate::models::{Approval, Discussion, ForgeKind, NewPosition, Request, RequestState, User};
+use crate::models::{
+    Approval, Discussion, DraftTarget, ForgeKind, NewPosition, PendingReview, Request,
+    RequestState, ReviewHandle, User, Verdict,
+};
 
 #[derive(Debug, Clone)]
 pub enum Client {
@@ -275,6 +278,230 @@ impl Client {
             Client::GitHub(_) => Err(Error::Unsupported("withdrawing an approval")),
         }
     }
+}
+
+impl Client {
+    pub async fn pending_review(&self, project: &str, number: u64) -> Result<PendingReview, Error> {
+        Ok(match self {
+            Client::GitLab(client) => PendingReview {
+                handle: None,
+                drafts: client
+                    .draft_notes(&gitlab_project(project), number)
+                    .await?
+                    .iter()
+                    .map(convert::gitlab_draft)
+                    .collect(),
+            },
+            Client::GitHub(client) => {
+                let repo = github::RepoRef::parse(project)?;
+                match client.pending_review(&repo, number).await? {
+                    None => PendingReview::default(),
+                    Some(review) => {
+                        let comments = client.review_comments_of(&repo, number, review.id).await?;
+                        PendingReview {
+                            handle: Some(ReviewHandle {
+                                id: review.id,
+                                node_id: review.node_id,
+                            }),
+                            drafts: comments.iter().map(convert::github_draft).collect(),
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    pub async fn add_draft(
+        &self,
+        project: &str,
+        number: u64,
+        pending: Option<&ReviewHandle>,
+        body: &str,
+        target: DraftTarget<'_>,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                let position = match target {
+                    DraftTarget::Line(position) => Some(convert::gitlab_position(position)),
+                    _ => None,
+                };
+                let target = match (target, position.as_ref()) {
+                    (DraftTarget::Line(_), Some(position)) => gitlab::DraftTarget::Line(position),
+                    (
+                        DraftTarget::Reply {
+                            discussion_id,
+                            resolve,
+                        },
+                        _,
+                    ) => gitlab::DraftTarget::Reply {
+                        discussion_id,
+                        resolve,
+                    },
+                    _ => gitlab::DraftTarget::General,
+                };
+                client
+                    .create_draft_note(&gitlab_project(project), number, body, target)
+                    .await?;
+            }
+            Client::GitHub(client) => {
+                let repo = github::RepoRef::parse(project)?;
+                let existing = match pending {
+                    Some(handle) => Some(handle.node_id.clone()),
+                    None => client
+                        .pending_review(&repo, number)
+                        .await?
+                        .map(|review| review.node_id),
+                };
+                let review = match existing {
+                    Some(review) => review,
+                    None => {
+                        let commit = match target {
+                            DraftTarget::Line(position) => Some(position.head_sha.as_str()),
+                            _ => None,
+                        };
+                        let pull = client.pull_request(&repo, number).await?;
+                        client.start_review(&pull.node_id, commit).await?
+                    }
+                };
+                match target {
+                    DraftTarget::General => {
+                        return Err(Error::Unsupported("a general comment in a GitHub review"));
+                    }
+                    DraftTarget::Line(position) => {
+                        let comment = convert::github_comment(body, position)?;
+                        client
+                            .add_draft_thread(
+                                &review,
+                                &comment.path,
+                                comment.line,
+                                comment.side,
+                                body,
+                            )
+                            .await?;
+                    }
+                    DraftTarget::Reply { discussion_id, .. } => {
+                        let root = convert::github_reply_target(discussion_id)?;
+                        let root = client.review_comment(&repo, root).await?;
+                        client.add_draft_reply(&review, &root.node_id, body).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn edit_draft(
+        &self,
+        project: &str,
+        number: u64,
+        draft_id: &str,
+        body: &str,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                client
+                    .update_draft_note(
+                        &gitlab_project(project),
+                        number,
+                        gitlab_draft_id(draft_id)?,
+                        body,
+                    )
+                    .await?;
+            }
+            Client::GitHub(client) => client.update_draft(draft_id, body).await?,
+        }
+        Ok(())
+    }
+
+    pub async fn delete_draft(
+        &self,
+        project: &str,
+        number: u64,
+        draft_id: &str,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                client
+                    .delete_draft_note(&gitlab_project(project), number, gitlab_draft_id(draft_id)?)
+                    .await?;
+            }
+            Client::GitHub(client) => client.delete_draft(draft_id).await?,
+        }
+        Ok(())
+    }
+
+    pub async fn submit_review(
+        &self,
+        project: &str,
+        number: u64,
+        pending: &PendingReview,
+        body: &str,
+        verdict: Verdict,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                let project = gitlab_project(project);
+                if verdict == Verdict::RequestChanges {
+                    return Err(Error::Unsupported("requesting changes on GitLab"));
+                }
+                if !pending.drafts.is_empty() {
+                    client.publish_draft_notes(&project, number).await?;
+                }
+                if verdict == Verdict::Approve
+                    && !client.approvals(&project, number).await?.user_has_approved
+                {
+                    client.approve(&project, number).await?;
+                }
+                if !body.trim().is_empty() {
+                    client
+                        .create_discussion(&project, number, body, None)
+                        .await?;
+                }
+            }
+            Client::GitHub(client) => {
+                client
+                    .submit_review(
+                        &github::RepoRef::parse(project)?,
+                        number,
+                        pending.handle.as_ref().map(|handle| handle.id),
+                        convert::github_verdict(verdict),
+                        body,
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn discard_review(
+        &self,
+        project: &str,
+        number: u64,
+        pending: &PendingReview,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                let project = gitlab_project(project);
+                for draft in &pending.drafts {
+                    client
+                        .delete_draft_note(&project, number, gitlab_draft_id(&draft.id)?)
+                        .await?;
+                }
+            }
+            Client::GitHub(client) => {
+                if let Some(handle) = &pending.handle {
+                    client
+                        .discard_review(&github::RepoRef::parse(project)?, number, handle.id)
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn gitlab_draft_id(id: &str) -> Result<u64, Error> {
+    id.parse().map_err(|_| Error::UnknownDraft(id.to_string()))
 }
 
 fn gitlab_project(project: &str) -> gitlab::ProjectRef {

@@ -9,9 +9,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::error::Error;
-use crate::models::{Approvals, Discussion, MergeRequest, Note, Project, User};
+use crate::models::{Approvals, Discussion, DraftNote, MergeRequest, Note, Project, User};
 use crate::request::{
-    MrQuery, NewDiscussionBody, NewPosition, NoteBody, ProjectRef, WirePosition, encode_segment,
+    DraftEditBody, DraftTarget, MrQuery, NewDiscussionBody, NewDraftBody, NewPosition, NoteBody,
+    ProjectRef, WirePosition, encode_segment,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -205,6 +206,99 @@ impl Client {
     ) -> Result<(), Error> {
         let path = note_path(project, iid, discussion_id, note_id);
         self.send(Method::DELETE, &path).await
+    }
+
+    pub async fn draft_notes(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+    ) -> Result<Vec<DraftNote>, Error> {
+        let path = format!("{}/draft_notes", mr_path(project, iid));
+        let mut next = Some(self.page_url(&path, 1)?);
+        let mut drafts = Vec::new();
+        let mut pages = 0;
+        while let Some(url) = next.take() {
+            if pages == MAX_PAGES {
+                warn!("{path}: stopped after {MAX_PAGES} pages of draft notes");
+                break;
+            }
+            pages += 1;
+            let response = self.execute(Method::GET, url, &path, None::<&()>).await?;
+            next = self.next_page(&response, &path)?;
+            let page: Vec<DraftNote> = decode(response, &path).await?;
+            if page.is_empty() {
+                break;
+            }
+            drafts.extend(page);
+        }
+        Ok(drafts)
+    }
+
+    pub async fn create_draft_note(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+        body: &str,
+        target: DraftTarget<'_>,
+    ) -> Result<DraftNote, Error> {
+        let path = format!("{}/draft_notes", mr_path(project, iid));
+        let payload = match target {
+            DraftTarget::General => NewDraftBody {
+                note: body,
+                position: None,
+                in_reply_to_discussion_id: None,
+                resolve_discussion: false,
+            },
+            DraftTarget::Line(position) => NewDraftBody {
+                note: body,
+                position: Some(WirePosition::from(position)),
+                in_reply_to_discussion_id: None,
+                resolve_discussion: false,
+            },
+            DraftTarget::Reply {
+                discussion_id,
+                resolve,
+            } => NewDraftBody {
+                note: body,
+                position: None,
+                in_reply_to_discussion_id: Some(discussion_id),
+                resolve_discussion: resolve,
+            },
+        };
+        self.call(Method::POST, &path, &[], Some(&payload)).await
+    }
+
+    pub async fn update_draft_note(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+        draft_id: u64,
+        body: &str,
+    ) -> Result<DraftNote, Error> {
+        let path = format!("{}/draft_notes/{draft_id}", mr_path(project, iid));
+        self.call(Method::PUT, &path, &[], Some(&DraftEditBody { note: body }))
+            .await
+    }
+
+    pub async fn delete_draft_note(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+        draft_id: u64,
+    ) -> Result<(), Error> {
+        self.send(
+            Method::DELETE,
+            &format!("{}/draft_notes/{draft_id}", mr_path(project, iid)),
+        )
+        .await
+    }
+
+    pub async fn publish_draft_notes(&self, project: &ProjectRef, iid: u64) -> Result<(), Error> {
+        self.send(
+            Method::POST,
+            &format!("{}/draft_notes/bulk_publish", mr_path(project, iid)),
+        )
+        .await
     }
 
     pub async fn approvals(&self, project: &ProjectRef, iid: u64) -> Result<Approvals, Error> {

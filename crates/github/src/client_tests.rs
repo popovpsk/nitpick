@@ -557,3 +557,125 @@ async fn an_unparsable_body_is_a_decode_error() {
         matches!(err, Error::Decode(m) if m.starts_with("/repos/octocat/Hello-World/pulls/1347"))
     );
 }
+
+#[tokio::test]
+async fn the_pending_review_is_the_one_in_pending_state() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO_PATH}/pulls/7/reviews")))
+        .respond_with(json_response(
+            200,
+            r#"[{"id": 1, "node_id": "R1", "user": {"login": "a"}, "state": "APPROVED"},
+                {"id": 2, "node_id": "R2", "user": {"login": "me"}, "state": "PENDING"}]"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let pending = client(&server).pending_review(&repo(), 7).await.unwrap();
+
+    let pending = pending.unwrap();
+    assert_eq!((pending.id, pending.node_id.as_str()), (2, "R2"));
+}
+
+#[rstest]
+#[case::pending(Some(2), "/pulls/7/reviews/2/events")]
+#[case::fresh(None, "/pulls/7/reviews")]
+#[tokio::test]
+async fn submitting_posts_the_verdict(#[case] pending: Option<u64>, #[case] endpoint: &str) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO_PATH}{endpoint}")))
+        .and(body_json(
+            json!({"event": "REQUEST_CHANGES", "body": "Needs work"}),
+        ))
+        .respond_with(json_response(200, "{}"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .submit_review(
+            &repo(),
+            7,
+            pending,
+            crate::ReviewVerdict::RequestChanges,
+            "Needs work",
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_empty_summary_is_left_out() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO_PATH}/pulls/7/reviews/2/events")))
+        .and(body_json(json!({"event": "COMMENT"})))
+        .respond_with(json_response(200, "{}"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .submit_review(&repo(), 7, Some(2), crate::ReviewVerdict::Comment, "")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn draft_threads_go_through_graphql() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(json_response(
+            200,
+            r#"{"data": {"addPullRequestReviewThread": {"thread": {"id": "T1"}}}}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .add_draft_thread("R2", "src/a.rs", 12, Side::Left, "Why?")
+        .await
+        .unwrap();
+
+    let sent: Value = serde_json::from_slice(&received(&server).await[0].body).unwrap();
+    assert_eq!(
+        sent["variables"],
+        json!({"review": "R2", "path": "src/a.rs", "line": 12, "side": "LEFT", "body": "Why?"})
+    );
+}
+
+#[tokio::test]
+async fn a_graphql_error_fails_the_draft() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(json_response(
+            200,
+            r#"{"data": null, "errors": [{"message": "line must be part of the diff"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .add_draft_reply("R2", "C1", "Agreed")
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::GraphQl(message) if message.contains("part of the diff")));
+}
+
+#[tokio::test]
+async fn discarding_deletes_the_pending_review() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{REPO_PATH}/pulls/7/reviews/2")))
+        .respond_with(json_response(200, "{}"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server).discard_review(&repo(), 7, 2).await.unwrap();
+}

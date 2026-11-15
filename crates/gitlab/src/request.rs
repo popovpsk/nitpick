@@ -136,3 +136,29 @@ impl<'a> From<&'a NewPosition> for WirePosition<'a> {
 pub(crate) struct NoteBody<'a> {
     pub body: &'a str,
 }
+
+#[derive(Serialize)]
+pub(crate) struct NewDraftBody<'a> {
+    pub note: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<WirePosition<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_reply_to_discussion_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resolve_discussion: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DraftEditBody<'a> {
+    pub note: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftTarget<'a> {
+    General,
+    Line(&'a NewPosition),
+    Reply {
+        discussion_id: &'a str,
+        resolve: bool,
+    },
+}

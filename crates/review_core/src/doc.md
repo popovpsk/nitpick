@@ -21,7 +21,7 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - `viewed.rs` — `ViewedStore`, the in-memory viewed map (`from_marks`, `is_viewed`,
   `set_viewed`, `covering_marks`: the marks that make a file count as viewed,
   `viewed_versions_except`: the other versions of a path marked viewed, newest
-  first; persistence is `app_db`'s), `fingerprint`, `fingerprint_blobs`, `write_atomic` (the
+  first; persistence is `app_db`'s), `fingerprint`, `fingerprint_blobs`, `write_atomic` (owner-only on Unix from the first byte; the
   temp-file-and-rename write the JSON settings use).
 - `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);

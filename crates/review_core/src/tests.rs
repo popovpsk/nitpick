@@ -562,3 +562,15 @@ fn completed_folders_are_the_finished_ancestors_of_the_marked_files() {
     let progress = tree.progress_tracked(&[true, true, true, false], tracked);
     assert_eq!(tree.completed_folders(&[1, 0], &progress), vec!["a/b", "a"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn atomic_writes_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = std::env::temp_dir().join(format!("review-core-write-{}", std::process::id()));
+    let path = dir.join("settings.json");
+    crate::write_atomic(&path, b"{}").unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(mode, 0o600);
+}

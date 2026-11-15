@@ -50,7 +50,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   next time discussions load; any other failure (401 from a sign-in-only GitLab, not a
   picture) stays initials until the next launch, logged once.
 - `comments.rs` — discussion cards and the composer as `Diff` annotations, also used on the
-  sheet. A card's top-left chevron collapses it to one line (avatar, author, preview of the
+  sheet. Remote markdown (notes, the description) goes through `remote_markdown`: a link
+  opens only for http, https or mailto (`opens_in_browser`; a `file:` or custom-scheme link
+  in someone's comment could launch a program), and images resolve as URIs only, so a
+  `data:` image is never decoded (gpui-component would decode it inline with no size cap). A card's top-left chevron collapses it to one line (avatar, author, preview of the
   first note, reply count, resolved tag); resolved threads start collapsed, open ones
   expanded, and `thread_collapse` keeps the user's explicit choice per thread, so resolving
   or unresolving doesn't flip a card the user set. A card with its reply composer or a note
@@ -62,7 +65,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   body (`NoteView::long`: over 10 lines counting a wrap every 90 chars) is cut to about ten
   lines with a fade and a Show more / Show less toggle (`expanded_notes`). Starting another
   edit replaces the open one; a reload that no longer has the edited note drops the editor.
-- `comment_list.rs` — the comments sheet (titled Comments) with a Description tab first when
+- `comment_list.rs` — the comments sheet (titled Comments; its body is the `CommentsSheet`
+  view, embedded `.cached()` and redrawn when the review notifies, since the sheet builder
+  runs on every window frame) with a Description tab first when
   the request has one (its markdown body, `ReviewView::description`) and two more: On code (every
   discussion with a file position, outdated ones included, as full cards: open threads first,
   then resolved, each section grouped by file in tree order then line; above each card its
@@ -75,9 +80,19 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - `review_tests.rs` — comment times in a fixed time zone; which file Viewed advances to.
 - `comment_list_tests.rs` — previews and row order.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
-  own notes, then a discussion reload; `ApprovalView` (label, tooltip with who approved) and
+  own notes, then a discussion reload; a resolve toggle is busy per thread (`resolving`) so a
+  second click can't repeat it; `ApprovalView` (label, tooltip with who approved) and
   `toggle_approval` for the header's Approve button, reloaded with the discussions; the button
   stays busy until the reloaded approval arrives, so a second click can't repeat the call.
+- `pending.rs` — the review in progress (`Drafts`): the host's pending review loaded with
+  the discussions (`load_pending`), drafts indexed by file and by the thread they answer
+  (`index_drafts`; a line draft whose head is not the loaded one is listed as "the line
+  changed" and not drawn), the draft card (`render_draft`, edit and delete), the review sheet
+  (drafts with go-to and delete, the summary, the verdict tabs, Submit and Discard), and the
+  composer's guards (`can_draft`, `submit_primary`, `has_unsent_comment`, `reveal_composer`,
+  `request_cancel_composer`, `confirm_discard_comment`).
+- `push_watch.rs` — `PushWatch`: whether the request got new commits since it was loaded,
+  and the banner offering Refresh.
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
@@ -88,7 +103,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - `since_viewed.rs` — the "since last view" mode: which files were viewed at an earlier
   version (`seen_before`), loading and installing the `Interdiff`, the toolbar toggle and
   the tree badge.
-- `file_actions.rs` — `CopyPath`, `OpenInEditor`: the file items of the tree row menu and the
+- `file_actions.rs` — `CopyPath`, `OpenInEditor` (a target outside the checkout, through a
+  symlink, is refused; with no editor command a `launchable` file — a script, binary, app
+  bundle or shortcut — is revealed in the file manager, `reveal_invocation`, instead of being
+  handed to the OS, which would run it; on Windows every file is, since file associations
+  there run interpreters for many types, `reveal_instead`): the file items of the tree row menu and the
   toolbar path menu (copy path, open in editor, open in GitLab / on GitHub; the items carry
   their action only so the menu shows its key — gpui-component runs an item's own click
   handler instead of the action, so the row menu still acts on the row), the editor
@@ -99,7 +118,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   `/bin/sh` runs (`HOME` in the temp dir) that get an awkward file name through every
   quoting context unmangled.
 - `image_preview.rs` — `ImagePreview`: the before/after panes shown in place of the `Diff`
-  for a binary image, their off-thread loading and decoding, and their rendering.
+  for a binary image, their off-thread loading and decoding, and their rendering. A GIF or
+  WebP is shown as its first frame (`first_frame_png`): gpui keeps every frame as a
+  full-size buffer, so a small file of many frames would otherwise exhaust memory.
 
 ## Spec
 
@@ -280,25 +301,55 @@ wraps `gitlab` and `github`; nothing here names those crates).
   edge resizes it within `TREE_WIDTH_RANGE`; the width is saved to settings 400 ms after the
   last move by a detached task, so closing the review right after a drag still saves it.
 - The comment composer survives file switches and reloads; only Cancel or a successful post
-  of that same composer closes it.
+  of that same composer closes it. Cancel asks first when it holds text, and so do the
+  workspace's review switch, window close and Quit — those also count an edited draft and a
+  typed review summary (`has_unsent_comment`). While the composer holds text another line
+  or Reply does not open a second one: `reveal_composer` scrolls to it (a reply to a thread
+  not drawn in the diff opens the comments sheet on its tab), focuses it and says why.
+- Review drafts (`pending.rs`): where the host takes a draft for the target (`can_draft`:
+  any line; a reply to a thread that takes replies; a general comment only on GitLab), the
+  composer's primary button and ⌘/Ctrl-Enter add it to the review ("Start a review" before
+  the first, "Add to review" after) and "Comment now" posts at once; elsewhere the primary
+  button posts. While a GitHub review is pending, GitHub takes no single line comment, reply
+  or approval outside it, so "Comment now" is hidden there (`direct_blocked`) and Approve
+  opens the review sheet with Approve chosen. The resolve checkbox (GitLab, an open
+  resolvable thread) resolves the thread on submit for a draft, or right after the reply
+  for "Comment now". Drafts show as cards in the diff (line drafts) or under the
+  thread they answer, tagged Draft; the header's "Review · N" button (shown while a review
+  is pending) opens the sheet. The verdicts offered are the host's, Approve and Request
+  changes only when the user may approve; Submit needs a draft, a summary or a verdict other
+  than Comment (on GitHub, Request changes needs a summary). A submit, success or not,
+  reloads the discussions (a GitLab submit is several calls and may stop halfway). Drafts load
+  with every discussion reload; a failed first load (an old GitLab without the draft notes
+  API) leaves `pending` empty and the composer posts directly, and a failed later load keeps
+  the drafts already shown. The verdicts are fixed when the sheet opens (`ReviewForm`), and
+  the header label and the composer's key hints are built when their data changes, not per
+  frame.
+- New pushes (`push_watch.rs`): while a merge request's window is active, at most every
+  5 minutes (a 30 s tick checks the time, and window activation checks at once) one request
+  fetch compares the head with the loaded one; nothing is fetched in an inactive window. A
+  new head shows a banner under the header until a reload installs it; the diff is never
+  replaced on its own, so the text does not move under the reader.
 - Starting a line comment (`can_comment_lines`): no `on_add_annotation` button (it trails
   the pointer over the code and is lost when a press clears the selection it hangs on).
-  Instead every commentable line gets a gutter marker (`comment_markers`, rebuilt by
-  `refresh_comment_markers` only when the review, file or layout changes): a faint comment
-  icon in the marker lane, right of the line number (the lane is the only slot the component
-  offers), invisible until the row is hovered (`group_hover("diff-line")`), no fill; a click
-  opens the composer. Unified rows carry one marker (the new side of a context line), split
-  rows one per side. Blame markers go first, so a line with a blame chip shows the chip.
-  Lines GitHub would reject (`line_commentable`) get no icon, and a click on their number
-  explains the 3-line rule in an info notice.
+  Instead the hovered line gets one gutter marker (`comment_marker`, set by
+  `set_hovered_line` when the hovered line changes, which then redraws): a faint comment icon
+  in the marker lane, right of the line number (the lane is the only slot the component
+  offers), no fill; a click opens the composer. Not a marker per line: the component rebuilds
+  its marker map from the list on every frame. A `COMMENT_LANE` marker at line 0 (no such
+  row) keeps the lane while nothing is hovered, so the code does not shift under the
+  pointer. Blame markers go first, so a line with a blame chip shows the chip. Lines GitHub
+  would reject (`line_commentable`) get no icon, and a click on their number explains the
+  3-line rule in an info notice.
   A line-number gesture opens the composer when the mouse is released: `SelectionStarted`
   sets `gutter_gesture` and the next `SelectionEnded` takes it, so a Shift-arrow selection,
   which ends without starting, opens nothing. `AddComment` (C) comments the selection, else
-  the line under the pointer (`hovered_line`, from `on_line_hover`, stored without a redraw;
-  a line's `None` is ignored since leaving one line reports after entering the next, and the
-  diff area's own hover clears it). Opening the composer clears the selection; a composer
-  that already holds text is moved to the new target instead of being replaced. The On code
-  tab's empty state names both ways.
+  the line under the pointer (`hovered_line`, from `on_line_hover`). Leaving one line reports
+  after entering the next (handlers run in reverse paint order), so a line's `None` within
+  `HOVER_SWAP_WINDOW` of an enter is ignored; a later one (the pointer moved onto a card, a
+  hunk header or below the code) clears the line and its icon, as does leaving the diff area
+  or installing a review). Opening the composer clears the selection. The On code tab's
+  empty state names both ways.
 - Notifications go to the review's own window (`window_handle`) through `cx.defer`, never to
   whichever window happens to be active, and never inside that window's own update.
 - The review observes the settings: a new diff layout applies at once, a change of "ignore
@@ -486,6 +537,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
 
 ## Decisions
 
+- Batched review as GitLab does it, drafts kept on the host, on both GitLab and GitHub; no
+  multi-line comments for now.
+- New pushes are polled, at most every 5 minutes and only in an active window; a banner,
+  not an automatic reload.
 - One file at a time rather than all files in one scrolling list.
 - Viewed progress is local; neither GitLab nor GitHub has an API for its "viewed" checkboxes.
 - The uncommitted-changes review compares with `HEAD`, not with a target branch.

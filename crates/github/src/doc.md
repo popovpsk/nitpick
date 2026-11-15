@@ -16,9 +16,17 @@ finding the repository from git remotes (the app), storing the token (`secret_st
 - `client.rs` — `Client`: API roots from the web URL, the reqwest client (from
   `http_client::builder`, plus auth, the total timeout and the same-host redirect policy),
   one method per endpoint (pulls, review and issue comments: create, reply, edit, delete;
-  reviews, approve), Link-header pagination, the GraphQL calls.
+  reviews, approve), Link-header pagination, the GraphQL calls. A pending review: found by
+  state `PENDING` in the reviews list (only its author sees it), its comments from
+  `reviews/{id}/comments`; started with `addPullRequestReview` (the pull's `node_id`), and
+  its drafts added, edited and deleted only through GraphQL (`addPullRequestReviewThread`,
+  `addPullRequestReviewComment` with `inReplyTo` a comment's `node_id`,
+  `updatePullRequestReviewComment`, `deletePullRequestReviewComment`), since REST cannot add
+  to an existing pending review; submitted with `reviews/{id}/events` (or a new review when
+  none is pending) and discarded with `DELETE reviews/{id}`.
 - `request.rs` — what the client sends: `RepoRef` (`owner/name`), `Side`,
-  `NewReviewComment`, the JSON bodies.
+  `NewReviewComment`, `ReviewVerdict` (an empty summary is left out of the body), the JSON
+  bodies.
 - `models.rs` — what GitHub returns: `User` (with `avatar_url`), `PullRequest` (with
   requested reviewers and assignees), `BranchRef`, `ReviewComment`, `IssueComment`, `Review`,
   `ThreadState`, `ReviewThread`, `group_threads`; the GraphQL shapes.

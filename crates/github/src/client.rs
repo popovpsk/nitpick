@@ -10,10 +10,13 @@ use serde::de::DeserializeOwned;
 
 use crate::error::Error;
 use crate::models::{
-    GraphQlResponse, IssueComment, PullRequest, ResolveData, Review, ReviewComment, ReviewThread,
-    ThreadState, ThreadsData, User, group_threads,
+    AddReviewData, GraphQlResponse, Ignored, IssueComment, PullRequest, ResolveData, Review,
+    ReviewComment, ReviewThread, ThreadState, ThreadsData, User, group_threads,
 };
-use crate::request::{BodyOnly, GraphQlRequest, NewReviewComment, RepoRef, ReviewEvent};
+use crate::request::{
+    BodyOnly, GraphQlRequest, NewReviewComment, RepoRef, ReviewEvent, ReviewSubmit, ReviewVerdict,
+    Side,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const USER_AGENT: &str = "nitpick";
@@ -30,6 +33,11 @@ pub(crate) const MAX_THREAD_PAGES: usize = 50;
 
 const THREADS_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved viewerCanResolve viewerCanUnresolve comments(first: 1) { nodes { databaseId } } } } } } }";
 const RESOLVE_MUTATION: &str = "mutation($id: ID!) { result: resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }";
+const ADD_REVIEW_MUTATION: &str = "mutation($pr: ID!, $commit: GitObjectID) { addPullRequestReview(input: {pullRequestId: $pr, commitOID: $commit}) { pullRequestReview { id } } }";
+const ADD_THREAD_MUTATION: &str = "mutation($review: ID!, $path: String!, $line: Int!, $side: DiffSide!, $body: String!) { addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path, line: $line, side: $side, body: $body}) { thread { id } } }";
+const ADD_REPLY_MUTATION: &str = "mutation($review: ID!, $replyTo: ID!, $body: String!) { addPullRequestReviewComment(input: {pullRequestReviewId: $review, inReplyTo: $replyTo, body: $body}) { comment { id } } }";
+const UPDATE_COMMENT_MUTATION: &str = "mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) { pullRequestReviewComment { id } } }";
+const DELETE_COMMENT_MUTATION: &str = "mutation($id: ID!) { deletePullRequestReviewComment(input: {id: $id}) { pullRequestReview { id } } }";
 const UNRESOLVE_MUTATION: &str = "mutation($id: ID!) { result: unresolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }";
 
 #[derive(Clone)]
@@ -65,6 +73,35 @@ struct ThreadsVariables<'a> {
 #[derive(Serialize)]
 struct ThreadVariables<'a> {
     id: &'a str,
+}
+
+#[derive(Serialize)]
+struct PullVariables<'a> {
+    pr: &'a str,
+    commit: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct ThreadDraftVariables<'a> {
+    review: &'a str,
+    path: &'a str,
+    line: u32,
+    side: Side,
+    body: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplyDraftVariables<'a> {
+    review: &'a str,
+    reply_to: &'a str,
+    body: &'a str,
+}
+
+#[derive(Serialize)]
+struct CommentBodyVariables<'a> {
+    id: &'a str,
+    body: &'a str,
 }
 
 impl Client {
@@ -297,6 +334,137 @@ impl Client {
     pub async fn reviews(&self, repo: &RepoRef, number: u64) -> Result<Vec<Review>, Error> {
         let path = format!("{}/reviews", pull_path(repo, number));
         self.get_all(&path, &[], MAX_COMMENT_PAGES).await
+    }
+
+    pub async fn pending_review(
+        &self,
+        repo: &RepoRef,
+        number: u64,
+    ) -> Result<Option<Review>, Error> {
+        Ok(self
+            .reviews(repo, number)
+            .await?
+            .into_iter()
+            .find(|review| review.state == "PENDING"))
+    }
+
+    pub async fn review_comments_of(
+        &self,
+        repo: &RepoRef,
+        number: u64,
+        review_id: u64,
+    ) -> Result<Vec<ReviewComment>, Error> {
+        let path = format!("{}/reviews/{review_id}/comments", pull_path(repo, number));
+        self.get_all(&path, &[], MAX_COMMENT_PAGES).await
+    }
+
+    pub async fn review_comment(
+        &self,
+        repo: &RepoRef,
+        comment_id: u64,
+    ) -> Result<ReviewComment, Error> {
+        let path = format!("{}/pulls/comments/{comment_id}", repo.api_path());
+        self.call(Method::GET, &path, &[], None::<&()>).await
+    }
+
+    pub async fn start_review(
+        &self,
+        pull_node_id: &str,
+        commit: Option<&str>,
+    ) -> Result<String, Error> {
+        let variables = PullVariables {
+            pr: pull_node_id,
+            commit,
+        };
+        let data: AddReviewData = self.graphql(ADD_REVIEW_MUTATION, variables).await?;
+        data.result
+            .and_then(|result| result.review)
+            .map(|review| review.id)
+            .ok_or_else(|| Error::Decode("/graphql: no review in the answer".to_string()))
+    }
+
+    pub async fn add_draft_thread(
+        &self,
+        review_node_id: &str,
+        path: &str,
+        line: u32,
+        side: Side,
+        body: &str,
+    ) -> Result<(), Error> {
+        let variables = ThreadDraftVariables {
+            review: review_node_id,
+            path,
+            line,
+            side,
+            body,
+        };
+        let _: Ignored = self.graphql(ADD_THREAD_MUTATION, variables).await?;
+        Ok(())
+    }
+
+    pub async fn add_draft_reply(
+        &self,
+        review_node_id: &str,
+        reply_to_node_id: &str,
+        body: &str,
+    ) -> Result<(), Error> {
+        let variables = ReplyDraftVariables {
+            review: review_node_id,
+            reply_to: reply_to_node_id,
+            body,
+        };
+        let _: Ignored = self.graphql(ADD_REPLY_MUTATION, variables).await?;
+        Ok(())
+    }
+
+    pub async fn update_draft(&self, comment_node_id: &str, body: &str) -> Result<(), Error> {
+        let variables = CommentBodyVariables {
+            id: comment_node_id,
+            body,
+        };
+        let _: Ignored = self.graphql(UPDATE_COMMENT_MUTATION, variables).await?;
+        Ok(())
+    }
+
+    pub async fn delete_draft(&self, comment_node_id: &str) -> Result<(), Error> {
+        let _: Ignored = self
+            .graphql(
+                DELETE_COMMENT_MUTATION,
+                ThreadVariables {
+                    id: comment_node_id,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn submit_review(
+        &self,
+        repo: &RepoRef,
+        number: u64,
+        pending: Option<u64>,
+        verdict: ReviewVerdict,
+        body: &str,
+    ) -> Result<(), Error> {
+        let submit = ReviewSubmit {
+            event: verdict.event(),
+            body,
+        };
+        let path = match pending {
+            Some(id) => format!("{}/reviews/{id}/events", pull_path(repo, number)),
+            None => format!("{}/reviews", pull_path(repo, number)),
+        };
+        self.send(Method::POST, &path, Some(&submit)).await
+    }
+
+    pub async fn discard_review(
+        &self,
+        repo: &RepoRef,
+        number: u64,
+        review_id: u64,
+    ) -> Result<(), Error> {
+        let path = format!("{}/reviews/{review_id}", pull_path(repo, number));
+        self.send(Method::DELETE, &path, None::<&()>).await
     }
 
     pub async fn approve(&self, repo: &RepoRef, number: u64) -> Result<(), Error> {

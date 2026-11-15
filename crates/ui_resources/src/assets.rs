@@ -20,6 +20,8 @@ gpui_kit_assets::icon_assets!(
         MessageSquare,
         MessageSquarePlus,
         MessageSquareText,
+        ClipboardCheck,
+        GitPullRequestDraft,
         Columns2,
         Rows2,
         CircleDot,

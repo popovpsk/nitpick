@@ -13,14 +13,14 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install Linux build dependencies
         run: |
@@ -30,9 +30,11 @@ jobs:
             libxkbcommon-x11-dev libssl-dev libzstd-dev libgit2-dev \
             build-essential cmake clang
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-test
           cache-on-failure: true
@@ -66,7 +68,7 @@ jobs:
             formats: appimage,deb
             update_info: gh-releases-zsync|popovpsk|nitpick|latest|nitpick_*_aarch64.AppImage.zsync
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Stamp release version
         shell: bash
@@ -99,15 +101,17 @@ jobs:
           fi
           xcrun -sdk macosx metal -v
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-${{ matrix.label }}
           cache-on-failure: true
 
       - name: Install cargo-packager
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-packager
 
@@ -262,7 +266,7 @@ jobs:
           done
           ls -la dist
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{ matrix.label }}
           path: dist/*
@@ -283,7 +287,7 @@ jobs:
             os: windows-11-arm
             arch_tag: arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Stamp release version
         shell: bash
@@ -297,9 +301,11 @@ jobs:
             echo "No semver release version (got '$VERSION'); leaving Cargo.toml version as-is"
           fi
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-${{ matrix.label }}
           cache-on-failure: true
@@ -328,7 +334,7 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/nitpick_${version}_${{ matrix.arch_tag }}-portable.zip"
           Get-ChildItem dist
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{ matrix.label }}-portable
           path: dist/*
@@ -339,8 +345,10 @@ jobs:
     needs: [bundle, portable]
     if: inputs.version != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: artifacts
           merge-multiple: true
@@ -365,7 +373,7 @@ jobs:
           fi
           echo "Updater asset invariant holds: ${setups[0]}"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: artifacts/*
           tag_name: v${{ inputs.version }}

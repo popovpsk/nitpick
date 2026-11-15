@@ -75,12 +75,8 @@ impl ReviewView {
         self._blob_check = cx.spawn(async move |this, cx| {
             let known: Vec<(String, bool)> = cx
                 .background_spawn(async move {
-                    ids.into_iter()
-                        .map(|id| {
-                            let exists = repo.has_blob(&id);
-                            (id, exists)
-                        })
-                        .collect()
+                    let exists = repo.has_blobs(&ids);
+                    ids.into_iter().zip(exists).collect()
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {

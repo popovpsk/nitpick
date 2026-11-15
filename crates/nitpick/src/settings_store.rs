@@ -342,19 +342,9 @@ impl SettingsStore {
 
     fn save(&self) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec_pretty(&self.settings)?;
-        write_private(&self.path, &bytes)?;
+        review_core::write_atomic(&self.path, &bytes)?;
         Ok(())
     }
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    review_core::write_atomic(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 pub fn settings(cx: &App) -> &Settings {

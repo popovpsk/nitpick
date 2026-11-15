@@ -18,10 +18,15 @@ tokens (the app, `secret_store`).
   GitHub's `/settings/tokens/new?description=&scopes=repo`), `User` (with `avatar_url`), `Request` (`description`: GitLab's description or GitHub's body, `None` when blank; reviewers, assignees, `comments` — GitLab's
   `user_notes_count`, `None` on GitHub, whose list has no count — and `updated_at`), `Approval`,
   `RequestState`, `DiffRefs`, `Discussion`, `Note`, `Position`, `NewPosition`,
-  `GITHUB_DEFAULT_URL`.
+  `GITHUB_DEFAULT_URL`; the pending review: `PendingReview` (`handle`: GitHub's review id and
+  node id, `None` on GitLab, whose drafts belong to no review object), `Draft` (`id`: GitLab's
+  draft note id or GitHub's comment node id; a reply has `reply_to` and no position),
+  `DraftTarget`, `Verdict`, and per host `general_drafts`, `resolves_on_submit`, `verdicts`.
 - `client.rs` — `Client`: `new(kind, base_url, token)`, `kind`, `base_url`, and the
   operations `current_user`, `open_requests`, `request`, `discussions`, `comment`, `reply`,
-  `set_resolved`, `edit_note`, `delete_note`, `approval`, `approve`, `unapprove`.
+  `set_resolved`, `edit_note`, `delete_note`, `approval`, `approve`, `unapprove`; the review:
+  `pending_review`, `add_draft`, `edit_draft`, `delete_draft`, `submit_review`,
+  `discard_review`.
 - `convert.rs` — each host's models to the neutral ones and back (positions, comment
   payloads, discussion ids); `own_avatar` keeps a user's `avatar_url` only when it is not a
   Gravatar link (gravatar.com or a subdomain), which GitLab hands out for users without an
@@ -82,6 +87,17 @@ tokens (the app, `secret_store`).
   approval can't be withdrawn (dismissing a review needs maintainer rights), so
   `can_unapprove` is always false there. Neither is offered on a request that is not open;
   `approval` takes the already known username so GitHub needs no `/user` call each time.
+
+- Review drafts live on the host (GitLab draft notes, GitHub's pending review), visible only
+  to their author until submitted, so they survive restarts and match the web UI. Submitting
+  on GitLab is `bulk_publish`, then the approval (skipped when `approvals` says it is
+  already given), then the summary as a general comment, last: GitLab has no review object
+  to carry either, so a submit can stop halfway, and this order lets a retry repeat nothing.
+  GitHub takes no general draft (its review summary is the review body) and has no
+  resolve-on-submit. A GitHub draft without a known pending review looks one up first (it
+  may have been started on the web or by a draft whose reload has not landed: one pending
+  review per user and request) and starts one only when there is none, at the draft's
+  `head_sha` (`commitOID`), so its line numbers mean the loaded diff even after a push.
 
 ## Decisions
 

@@ -293,8 +293,21 @@ fn load(
             return Ok(Loaded::TooLarge(length));
         }
     }
+    let (format, bytes) = match format {
+        ImageFormat::Gif | ImageFormat::Webp => (ImageFormat::Png, first_frame_png(&bytes)?),
+        _ => (format, bytes),
+    };
     let image = Image::from_bytes(format, bytes).to_image_data(svg)?;
     Ok(Loaded::Image(image, length))
+}
+
+pub(super) fn first_frame_png(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let frame = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    frame.write_to(&mut png, image::ImageFormat::Png)?;
+    Ok(png.into_inner())
 }
 
 fn byte_size(bytes: u64) -> (String, SizeUnit) {

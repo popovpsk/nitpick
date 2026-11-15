@@ -11,6 +11,8 @@ mod find_bar;
 mod image_preview;
 pub mod model;
 mod note_actions;
+mod pending;
+mod push_watch;
 mod since_viewed;
 mod tree_panel;
 mod viewed;
@@ -49,6 +51,7 @@ pub use avatars::init as init_avatars;
 pub use blame::ToggleBlame;
 pub use file_actions::{CopyPath, HostOs, OpenInEditor, editor_presets};
 pub use model::{LoadedReview, MrContext, ReviewSource};
+pub use pending::confirm_discard_comment;
 use viewed::SharedViewed;
 
 actions!(
@@ -76,6 +79,9 @@ actions!(
     ]
 );
 
+pub(super) const COMMENT_MARKER: &str = "comment-line";
+pub(super) const COMMENT_LANE: &str = "comment-lane";
+const HOVER_SWAP_WINDOW: Duration = Duration::from_millis(2);
 const TREE_SLIDE: Duration = Duration::from_millis(200);
 const TREE_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
 const SPLIT_RATIO_SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -153,6 +159,9 @@ pub enum ComposerTarget {
 pub struct Composer {
     pub target: ComposerTarget,
     pub input: Entity<TextareaState>,
+    pub resolve: bool,
+    pub send_hint: SharedString,
+    pub review_hint: SharedString,
     _submit: Subscription,
 }
 
@@ -288,6 +297,12 @@ pub struct ReviewView {
     approval: Option<note_actions::ApprovalView>,
     approval_busy: bool,
     _approval: Task<()>,
+    drafts: pending::Drafts,
+    resolving: HashSet<String>,
+    push_watch: push_watch::PushWatch,
+    _push_watch: Task<()>,
+    _push_check: Task<()>,
+    _pending: Task<()>,
     discussions_loading: bool,
     viewed: Vec<bool>,
     tree: Arc<FileTree>,
@@ -311,9 +326,9 @@ pub struct ReviewView {
     composer: Option<Composer>,
     kept_unviewed: HashSet<(SharedString, String)>,
     hovered_line: Option<DiffLinePosition>,
+    line_entered_at: Option<Instant>,
     gutter_gesture: bool,
-    comment_markers: Rc<Vec<DiffGutterMarker>>,
-    comment_markers_key: Option<(usize, usize, bool)>,
+    comment_marker: Option<DiffGutterMarker>,
     change_cursor: Option<usize>,
     change_scrolled: bool,
     cross_hint: Option<CrossHint>,
@@ -387,6 +402,9 @@ impl ReviewView {
         let viewed_sync = cx.observe(&viewed_store, |this, _, cx| this.sync_viewed(cx));
         let settings_sync = cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx));
         let activation = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.check_for_push(cx);
+            }
             if window.is_window_active()
                 && this.source == ReviewSource::WorkingTree
                 && this.busy.is_none()
@@ -421,6 +439,12 @@ impl ReviewView {
             approval: None,
             approval_busy: false,
             _approval: Task::ready(()),
+            drafts: pending::Drafts::default(),
+            resolving: HashSet::new(),
+            push_watch: push_watch::PushWatch::default(),
+            _push_watch: Task::ready(()),
+            _push_check: Task::ready(()),
+            _pending: Task::ready(()),
             discussions_loading: false,
             viewed: Vec::new(),
             tree: Arc::default(),
@@ -444,9 +468,9 @@ impl ReviewView {
             composer: None,
             kept_unviewed: HashSet::new(),
             hovered_line: None,
+            line_entered_at: None,
             gutter_gesture: false,
-            comment_markers: Rc::default(),
-            comment_markers_key: None,
+            comment_marker: None,
             change_cursor: None,
             change_scrolled: false,
             cross_hint: None,
@@ -491,6 +515,7 @@ impl ReviewView {
             _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
         };
         this.load(cx);
+        this.start_push_watch(window, cx);
         this
     }
 
@@ -722,9 +747,12 @@ impl ReviewView {
                     .and_then(|mr| mr.request.description.clone())
                     .map(SharedString::from);
                 self.mr = mr;
+                self.leave_diff();
+                self.note_request_loaded();
                 self.refresh_web(cx);
                 self.load_state = LoadState::Ready;
                 self.index_discussions();
+                self.index_drafts();
                 self.rebuild_rows();
                 let same_file = previous.and_then(|(path, fingerprint)| {
                     let ix = review.file_index(&path)?;
@@ -1426,6 +1454,7 @@ impl ReviewView {
         };
         self.discussions_loading = true;
         self.load_approval(cx);
+        self.load_pending(cx);
         let known_me = self.me.clone();
         self._discussions = cx.spawn(async move |this, cx| {
             let result = net_runtime::spawn(async move {
@@ -1476,6 +1505,7 @@ impl ReviewView {
                             .collect();
                         avatars::request(urls, cx);
                         this.index_discussions();
+                        this.index_drafts();
                         this.rebuild_rows();
                         this.rebuild_annotations();
                     }
@@ -1664,6 +1694,16 @@ impl ReviewView {
                     ));
                 }
             }
+            if let Some(list) = self.drafts.by_file.get(&path) {
+                for &ix in list {
+                    if let Some(position) = self.drafts.list[ix].placed.clone() {
+                        annotations.push(DiffAnnotation::line(
+                            ElementId::from(("pending-draft", ix)),
+                            position,
+                        ));
+                    }
+                }
+            }
             if let Some(Composer {
                 target: ComposerTarget::Line(position),
                 ..
@@ -1689,51 +1729,31 @@ impl ReviewView {
                 .is_some_and(|r| r.comments_aligned && r.commit.is_none())
     }
 
-    pub(super) fn refresh_comment_markers(&mut self, split: bool) {
-        let key = self
-            .current_file
-            .filter(|_| self.can_comment_lines())
-            .zip(self.review.as_ref())
-            .map(|(file, review)| (Rc::as_ptr(review) as usize, file, split));
-        if key == self.comment_markers_key {
-            return;
-        }
-        self.comment_markers_key = key;
-        let mut markers = Vec::new();
-        if let Some(file) = key.and_then(|(_, file, _)| self.review.as_ref()?.files.get(file)) {
-            let mut push = |side: DiffSide, line: u32| {
-                let position = DiffLinePosition::new(file.path.clone(), side, line as usize);
-                if self.line_commentable(&position) {
-                    markers.push(DiffGutterMarker::new(
-                        ElementId::NamedInteger("comment-line".into(), markers.len() as u64),
-                        position,
-                    ));
-                }
-            };
-            for row in file.shown_map().rows() {
-                match row {
-                    LineKind::Added { new } => push(DiffSide::Modified, new),
-                    LineKind::Removed { old } => push(DiffSide::Original, old),
-                    LineKind::Context { old, new } => {
-                        if split {
-                            push(DiffSide::Original, old);
-                        }
-                        push(DiffSide::Modified, new);
-                    }
-                }
-            }
-        }
-        self.comment_markers = Rc::new(markers);
+    pub(super) fn comment_marker(&self) -> Option<&DiffGutterMarker> {
+        self.comment_marker.as_ref()
     }
 
-    pub(super) fn set_hovered_line(&mut self, position: Option<&DiffLinePosition>) {
-        if let Some(position) = position {
-            self.hovered_line = Some(position.clone());
+    pub(super) fn set_hovered_line(&mut self, position: Option<&DiffLinePosition>) -> bool {
+        let Some(position) = position else {
+            let entered_just_now = self
+                .line_entered_at
+                .is_some_and(|at| at.elapsed() < HOVER_SWAP_WINDOW);
+            return !entered_just_now && self.leave_diff();
+        };
+        self.line_entered_at = Some(Instant::now());
+        if self.hovered_line.as_ref() == Some(position) {
+            return false;
         }
+        self.hovered_line = Some(position.clone());
+        self.comment_marker = self
+            .line_commentable(position)
+            .then(|| DiffGutterMarker::new(COMMENT_MARKER, position.clone()));
+        true
     }
 
-    pub(super) fn leave_diff(&mut self) {
-        self.hovered_line = None;
+    pub(super) fn leave_diff(&mut self) -> bool {
+        self.comment_marker = None;
+        self.hovered_line.take().is_some()
     }
 
     pub(super) fn comment_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1781,15 +1801,8 @@ impl ReviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(composer) = self.composer.as_mut()
-            && !composer.input.read(cx).value().trim().is_empty()
-        {
-            composer.target = target;
-            composer
-                .input
-                .update(cx, |state, cx| state.focus(window, cx));
-            self.rebuild_annotations();
-            cx.notify();
+        if self.composer_has_text(cx) {
+            self.reveal_composer(window, cx);
             return;
         }
         let placeholder = tr().comment_placeholder.clone();
@@ -1804,12 +1817,16 @@ impl ReviewView {
                 secondary: true, ..
             } = event
             {
-                this.submit_composer(window, cx);
+                this.submit_primary(window, cx);
             }
         });
+        let enter = crate::keymap::chord("secondary-enter", cx);
         self.composer = Some(Composer {
             target,
             input,
+            resolve: false,
+            send_hint: tr().send_hint(&enter).into(),
+            review_hint: tr().review_hint(&enter).into(),
             _submit: submit,
         });
         self.rebuild_annotations();
@@ -1822,7 +1839,12 @@ impl ReviewView {
         cx.notify();
     }
 
-    pub fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn submit_composer(
+        &mut self,
+        to_review: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(composer), Some(ctx), Some(review)) =
             (self.composer.as_ref(), self.mr.clone(), self.review.clone())
         else {
@@ -1878,19 +1900,44 @@ impl ReviewView {
                 }))
             }
         };
+        let resolve = composer.resolve;
+        let handle = self.drafts.pending.as_ref().and_then(|p| p.handle.clone());
         self.busy = Some(Busy::Posting);
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = net_runtime::spawn(async move {
-                match request {
-                    PostRequest::Reply(id) => {
+                let number = ctx.request.number;
+                match (request, to_review) {
+                    (PostRequest::Reply(id), false) => {
+                        ctx.client.reply(&ctx.project, number, &id, &body).await?;
+                        if resolve {
+                            ctx.client
+                                .set_resolved(&ctx.project, number, &id, true)
+                                .await?;
+                        }
+                        Ok(())
+                    }
+                    (PostRequest::New(position), false) => {
                         ctx.client
-                            .reply(&ctx.project, ctx.request.number, &id, &body)
+                            .comment(&ctx.project, number, &body, position.as_ref())
                             .await
                     }
-                    PostRequest::New(position) => {
+                    (PostRequest::Reply(id), true) => {
+                        let target = forge::DraftTarget::Reply {
+                            discussion_id: &id,
+                            resolve,
+                        };
                         ctx.client
-                            .comment(&ctx.project, ctx.request.number, &body, position.as_ref())
+                            .add_draft(&ctx.project, number, handle.as_ref(), &body, target)
+                            .await
+                    }
+                    (PostRequest::New(position), true) => {
+                        let target = match position.as_ref() {
+                            Some(position) => forge::DraftTarget::Line(position),
+                            None => forge::DraftTarget::General,
+                        };
+                        ctx.client
+                            .add_draft(&ctx.project, number, handle.as_ref(), &body, target)
                             .await
                     }
                 }
@@ -1907,12 +1954,21 @@ impl ReviewView {
                         {
                             this.composer = None;
                         }
-                        this.load_discussions(cx);
+                        if to_review {
+                            this.load_pending(cx);
+                        } else {
+                            this.load_discussions(cx);
+                        }
                     }
                     Err(err) => {
                         log::warn!("posting a comment: {err}");
+                        let title = if to_review {
+                            tr().draft_failed.clone()
+                        } else {
+                            tr().comment_failed.clone()
+                        };
                         window.push_notification(
-                            Notification::error(err.to_string()).title(tr().comment_failed.clone()),
+                            Notification::error(err.to_string()).title(title),
                             cx,
                         );
                     }
@@ -1934,19 +1990,28 @@ impl ReviewView {
         let Some(ctx) = self.mr.clone() else {
             return;
         };
+        if !self.resolving.insert(resolve_id.clone()) {
+            return;
+        }
+        cx.notify();
         cx.spawn_in(window, async move |this, cx| {
+            let id = resolve_id.clone();
             let result = net_runtime::spawn(async move {
                 ctx.client
-                    .set_resolved(&ctx.project, ctx.request.number, &resolve_id, resolved)
+                    .set_resolved(&ctx.project, ctx.request.number, &id, resolved)
                     .await
             })
             .await;
-            let _ = this.update_in(cx, |this, window, cx| match result {
-                Ok(_) => this.load_discussions(cx),
-                Err(err) => window.push_notification(
-                    Notification::error(err.to_string()).title(tr().comment_failed.clone()),
-                    cx,
-                ),
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.resolving.remove(&resolve_id);
+                match result {
+                    Ok(_) => this.load_discussions(cx),
+                    Err(err) => window.push_notification(
+                        Notification::error(err.to_string()).title(tr().resolve_failed.clone()),
+                        cx,
+                    ),
+                }
+                cx.notify();
             });
         })
         .detach();

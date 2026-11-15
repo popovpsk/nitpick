@@ -19,7 +19,9 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab / G
 - `repo.rs` — `Repo`: open, branches, current branch, default target, resolve, `compare`,
   commits, `first_parent_or_empty_tree` (a commit's first parent, the empty tree for a root
   commit), remotes, upstream remote; `blob` / `blob_size` (`cat-file blob` / `-s`: an
-  object's raw bytes and size by id, for the image preview and find in file).
+  object's raw bytes and size by id, for the image preview and find in file); `has_blobs`
+  (one `cat-file --batch-check` for many ids, in order; ids that are not hex count as
+  missing without reaching git, so none can be read as an option).
 - `diff.rs` — `changed_files` (one `--raw --numstat -z` run) and `diff` (the patch text).
 - `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
   `working_tree_diff`), untracked files included, `head_or_empty_tree` and the empty tree id
@@ -39,8 +41,11 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab / G
 
 ## Invariants
 
-- Every invocation is `git -C <root> -c core.quotepath=false -c color.ui=false …` with
-  `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0`, stdin null, stdout and stderr captured, and the
+- Every invocation is `git -C <root> -c core.quotepath=false -c color.ui=false
+  -c core.fsmonitor=false …` (a repository's own config could otherwise name a command that
+  runs on every work-tree read) with
+  `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0`, stdin null (piped only for `run_with_input`, written
+  from a scoped thread while the output is read, so neither side can block the other), stdout and stderr captured, and the
   `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`-style variables removed so an inherited
   environment cannot redirect it to another repository. On Windows no console window opens.
   A failure carries git's stderr in `GitError::Command`.

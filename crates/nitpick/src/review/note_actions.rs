@@ -240,6 +240,15 @@ impl ReviewView {
         if self.approval_busy {
             return;
         }
+        if approve && self.github_review_pending() {
+            self.open_review_sheet(window, cx);
+            if let Some(form) = self.drafts.form.as_mut()
+                && form.verdicts.contains(&forge::Verdict::Approve)
+            {
+                form.verdict = forge::Verdict::Approve;
+            }
+            return;
+        }
         self.approval_busy = true;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {

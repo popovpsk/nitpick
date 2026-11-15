@@ -410,3 +410,75 @@ fn a_blank_description_is_none(#[case] text: Option<&str>, #[case] expected: Opt
     pr.body = text.map(str::to_string);
     assert_eq!(github_request(&pr).description.as_deref(), expected);
 }
+
+#[test]
+fn a_gitlab_general_draft_has_no_position() {
+    let draft: gitlab::DraftNote = serde_json::from_value(json!({
+        "id": 41, "note": "Overall", "discussion_id": null, "resolve_discussion": false,
+        "position": {"base_sha": null, "start_sha": null, "head_sha": null, "old_path": null,
+                     "new_path": null, "position_type": "text", "old_line": null,
+                     "new_line": null}
+    }))
+    .unwrap();
+
+    let draft = crate::convert::gitlab_draft(&draft);
+
+    assert_eq!(draft.id, "41");
+    assert_eq!(draft.position, None);
+}
+
+#[test]
+fn a_gitlab_line_draft_keeps_its_line() {
+    let draft: gitlab::DraftNote = serde_json::from_value(json!({
+        "id": 42, "note": "Rename", "resolve_discussion": false,
+        "position": {"base_sha": "b", "start_sha": "s", "head_sha": "h", "old_path": "a.rs",
+                     "new_path": "a.rs", "position_type": "text", "new_line": 3}
+    }))
+    .unwrap();
+
+    let draft = crate::convert::gitlab_draft(&draft);
+
+    let position = draft.position.unwrap();
+    assert_eq!(
+        (position.new_line, position.head_sha.as_deref()),
+        (Some(3), Some("h"))
+    );
+}
+
+#[rstest]
+#[case::right("RIGHT", None, Some(7), None)]
+#[case::left("LEFT", None, None, Some(7))]
+fn github_drafts_map_their_side(
+    #[case] side: &str,
+    #[case] reply: Option<u64>,
+    #[case] new_line: Option<u32>,
+    #[case] old_line: Option<u32>,
+) {
+    let comment: github::ReviewComment = serde_json::from_value(json!({
+        "id": 3, "node_id": "C3", "in_reply_to_id": reply, "body": "b", "path": "a.rs",
+        "line": 7, "side": side, "commit_id": "h"
+    }))
+    .unwrap();
+
+    let draft = crate::convert::github_draft(&comment);
+
+    assert_eq!(draft.id, "C3");
+    let position = draft.position.unwrap();
+    assert_eq!((position.new_line, position.old_line), (new_line, old_line));
+}
+
+#[test]
+fn a_github_draft_reply_names_its_thread() {
+    let comment: github::ReviewComment = serde_json::from_value(json!({
+        "id": 4, "node_id": "C4", "in_reply_to_id": 3, "body": "b", "path": "a.rs",
+        "line": 7, "side": "RIGHT", "commit_id": "h"
+    }))
+    .unwrap();
+
+    let draft = crate::convert::github_draft(&comment);
+
+    assert_eq!(
+        (draft.reply_to.as_deref(), draft.position),
+        (Some("3"), None)
+    );
+}

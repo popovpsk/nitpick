@@ -14,7 +14,7 @@ mod request_url_tests;
 pub use client::Client;
 pub use error::Error;
 pub use models::{
-    Approval, DiffRefs, Discussion, ForgeKind, GITHUB_DEFAULT_URL, NewPosition, Note, Position,
-    Request, RequestState, User,
+    Approval, DiffRefs, Discussion, Draft, DraftTarget, ForgeKind, GITHUB_DEFAULT_URL, NewPosition,
+    Note, PendingReview, Position, Request, RequestState, ReviewHandle, User, Verdict,
 };
 pub use request_url::{RequestUrl, parse_reference, parse_request_url};

@@ -1192,7 +1192,15 @@ impl Render for SettingsView {
                     s.code_text_size.clone(),
                     SettingField::render(|_, _, cx| code_size_control(cx)),
                 )
-                .description(s.code_text_size_desc.clone()),
+                .description(SharedString::from(
+                    s.code_text_size_desc(
+                        &["window.zoom_in", "window.zoom_out", "window.zoom_reset"]
+                            .iter()
+                            .filter_map(|id| crate::keymap::shown_key(id, cx))
+                            .collect::<Vec<_>>()
+                            .join(" / "),
+                    ),
+                )),
             );
         let review =
             SettingGroup::new()

@@ -84,7 +84,47 @@ pub struct Strings {
     pub comment_line_unavailable: SharedString,
     pub comment_line_far_from_change: SharedString,
     pub comment_placeholder: SharedString,
-    pub comment_hint: SharedString,
+    pub draft_failed: SharedString,
+    pub start_review: SharedString,
+    pub add_to_review: SharedString,
+    pub comment_now: SharedString,
+    pub resolve_thread: SharedString,
+    pub draft_tag: SharedString,
+    pub review_button: SharedString,
+    pub review_tooltip: SharedString,
+    pub review_title: SharedString,
+    pub review_summary_placeholder: SharedString,
+    pub review_empty: SharedString,
+    pub verdict_comment: SharedString,
+    pub verdict_approve: SharedString,
+    pub verdict_request_changes: SharedString,
+    pub submit_review: SharedString,
+    pub discard_review: SharedString,
+    pub discard_review_title: SharedString,
+    pub discard_review_desc: SharedString,
+    pub review_submitted: SharedString,
+    pub review_failed: SharedString,
+    pub discard_failed: SharedString,
+    pub delete_draft_title: SharedString,
+    pub delete_draft_desc: SharedString,
+    pub draft_general: SharedString,
+    pub draft_reply: SharedString,
+    pub draft_outdated: SharedString,
+    pub finish_comment_first: SharedString,
+    pub discard_comment_title: SharedString,
+    pub discard_comment_desc: SharedString,
+    pub discard: SharedString,
+    pub keep_editing: SharedString,
+    pub send_hint_t: SharedString,
+    pub review_hint_t: SharedString,
+    pub pushed_banner: SharedString,
+    pub pushed_banner_desc: SharedString,
+    pub resolve_failed: SharedString,
+    pub no_changes_request: SharedString,
+    pub no_changes_worktree: SharedString,
+    pub request_draft: SharedString,
+    pub remote_prefix: SharedString,
+    pub code_text_size_desc_t: SharedString,
     pub comment: SharedString,
     pub cancel: SharedString,
     pub reply: SharedString,
@@ -152,7 +192,6 @@ pub struct Strings {
     pub cmd_zoom_reset: SharedString,
     pub interface_size: SharedString,
     pub code_text_size: SharedString,
-    pub code_text_size_desc: SharedString,
     pub tree_mode_tree: SharedString,
     pub tree_mode_list: SharedString,
     pub compact_folders: SharedString,
@@ -303,6 +342,7 @@ pub struct Strings {
     pub editor_presets: SharedString,
     pub editor_failed: SharedString,
     pub file_not_on_disk_t: SharedString,
+    pub file_outside_checkout_t: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -339,8 +379,24 @@ impl Strings {
         fill(&self.merge_base_t, &[base, &commits.to_string()])
     }
 
+    pub fn send_hint(&self, keys: &str) -> String {
+        fill(&self.send_hint_t, &[keys])
+    }
+
+    pub fn review_hint(&self, keys: &str) -> String {
+        fill(&self.review_hint_t, &[keys])
+    }
+
+    pub fn code_text_size_desc(&self, keys: &str) -> String {
+        fill(&self.code_text_size_desc_t, &[keys])
+    }
+
     pub fn file_not_on_disk(&self, path: &str) -> String {
         fill(&self.file_not_on_disk_t, &[path])
+    }
+
+    pub fn file_outside_checkout(&self, path: &str) -> String {
+        fill(&self.file_outside_checkout_t, &[path])
     }
 
     pub fn pull_branch(&self, branch: &str) -> String {
@@ -627,6 +683,10 @@ mod tests {
                 &s.renamed_from_t,
                 &s.reset_progress_desc_t,
                 &s.file_not_on_disk_t,
+                &s.file_outside_checkout_t,
+                &s.send_hint_t,
+                &s.review_hint_t,
+                &s.code_text_size_desc_t,
                 &s.approved_by_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");

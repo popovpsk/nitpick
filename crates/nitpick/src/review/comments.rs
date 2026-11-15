@@ -1,11 +1,12 @@
 use gpui::{
     AnyElement, App, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient,
-    prelude::FluentBuilder as _, px, rems,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop,
+    linear_gradient, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     diff::{DiffAnnotation, DiffGutterMarker, DiffLineRange},
     h_flex,
     input::Textarea,
@@ -15,7 +16,9 @@ use gpui_component::{
 };
 use ui_resources::Icons;
 
-use super::{Busy, ComposerTarget, DiscussionView, NoteView, ReviewView, avatars, note_actions};
+use super::{
+    Busy, ComposerTarget, DiscussionView, NoteView, ReviewView, avatars, note_actions, pending,
+};
 use crate::localization::tr;
 
 const COLLAPSED_REMS: f32 = 14.;
@@ -38,6 +41,11 @@ pub fn render_annotation(
                 None => div().into_any_element(),
             }
         }
+        ElementId::NamedInteger(name, ix) if name.as_ref() == "pending-draft" => div()
+            .px_3()
+            .py_1p5()
+            .child(pending::render_draft(view, *ix as usize, cx))
+            .into_any_element(),
         ElementId::NamedInteger(name, _) if name.as_ref() == "draft" => div()
             .px_3()
             .py_1p5()
@@ -63,6 +71,10 @@ pub(super) fn render_discussion(
     let reply_view = view.clone();
     let resolve_view = view.clone();
     let collapsed = view.read(cx).thread_collapsed(discussion);
+    let resolving = discussion
+        .resolve_id
+        .as_ref()
+        .is_some_and(|id| view.read(cx).resolving.contains(id));
     let toggle = {
         let toggle_view = view.clone();
         let id = discussion.id.clone();
@@ -165,6 +177,13 @@ pub(super) fn render_discussion(
                 .iter()
                 .map(|note| render_note(view, &discussion.id, note, cx)),
         )
+        .children(
+            view.read(cx)
+                .drafts
+                .replies_to(&discussion.id)
+                .iter()
+                .map(|&draft| pending::render_draft(view, draft, cx)),
+        )
         .when(replying, |el| el.child(render_composer(view, cx)))
         .child(
             h_flex()
@@ -197,6 +216,8 @@ pub(super) fn render_discussion(
                             } else {
                                 s.resolve.clone()
                             })
+                            .loading(resolving)
+                            .disabled(resolving)
                             .on_click(move |_, window, cx| {
                                 resolve_view.update(cx, |this, cx| {
                                     if let Some(id) =
@@ -274,7 +295,7 @@ fn render_note(
                     }),
             )
     });
-    let body = div().text_sm().child(TextView::markdown(
+    let body = div().text_sm().child(remote_markdown(
         ElementId::NamedInteger("note".into(), note.id),
         note.body.clone(),
     ));
@@ -416,9 +437,25 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
         return div().into_any_element();
     };
     let posting = this.busy == Some(Busy::Posting);
+    let to_review = this.can_draft(&composer.target);
+    let resolvable = this.can_resolve_on_submit(&composer.target);
+    let started = this.drafts.has_review();
     let input = composer.input.clone();
     let cancel_view = view.clone();
-    let submit_view = view.clone();
+    let now_view = view.clone();
+    let primary_view = view.clone();
+    let resolve_view = view.clone();
+    let direct = !this.direct_blocked(&composer.target);
+    let hint = if to_review {
+        composer.review_hint.clone()
+    } else {
+        composer.send_hint.clone()
+    };
+    let primary_label = match (to_review, started) {
+        (false, _) => s.comment.clone(),
+        (true, false) => s.start_review.clone(),
+        (true, true) => s.add_to_review.clone(),
+    };
     v_flex()
         .max_w(px(820.))
         .gap_2()
@@ -432,33 +469,64 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
             h_flex()
                 .gap_2()
                 .justify_end()
+                .items_center()
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(s.comment_hint.clone()),
+                        .child(hint),
                 )
+                .when(resolvable, |el| {
+                    el.child(
+                        Checkbox::new("composer-resolve")
+                            .small()
+                            .label(s.resolve_thread.clone())
+                            .checked(composer.resolve)
+                            .on_click(move |_, _, cx| {
+                                resolve_view.update(cx, |this, cx| this.toggle_composer_resolve(cx))
+                            }),
+                    )
+                })
                 .child(
                     Button::new("composer-cancel")
                         .ghost()
                         .small()
                         .label(s.cancel.clone())
                         .disabled(posting)
-                        .on_click(move |_, _, cx| {
-                            cancel_view.update(cx, |this, cx| this.cancel_composer(cx))
+                        .on_click(move |_, window, cx| {
+                            cancel_view
+                                .update(cx, |this, cx| this.request_cancel_composer(window, cx))
                         }),
                 )
+                .when(to_review && direct, |el| {
+                    el.child(
+                        Button::new("composer-now")
+                            .outline()
+                            .small()
+                            .label(s.comment_now.clone())
+                            .disabled(posting)
+                            .on_click(move |_, window, cx| {
+                                now_view
+                                    .update(cx, |this, cx| this.submit_composer(false, window, cx))
+                            }),
+                    )
+                })
                 .child(
                     Button::new("composer-submit")
                         .primary()
                         .small()
-                        .icon(Icon::new(Icons::Send))
-                        .label(s.comment.clone())
+                        .icon(Icon::new(if to_review {
+                            Icons::ClipboardCheck
+                        } else {
+                            Icons::Send
+                        }))
+                        .label(primary_label)
                         .loading(posting)
                         .disabled(posting)
                         .on_click(move |_, window, cx| {
-                            submit_view.update(cx, |this, cx| this.submit_composer(window, cx))
+                            primary_view.update(cx, |this, cx| this.submit_primary(window, cx))
                         }),
                 ),
         )
@@ -485,8 +553,6 @@ pub fn render_comment_marker(
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .opacity(0.)
-        .group_hover("diff-line", |style| style.opacity(1.))
         .child(
             Icon::new(Icons::MessageSquarePlus)
                 .xsmall()
@@ -496,4 +562,21 @@ pub fn render_comment_marker(
             view.update(cx, |this, cx| this.open_line_composer(&range, window, cx))
         })
         .into_any_element()
+}
+
+pub fn remote_markdown(id: impl Into<ElementId>, text: SharedString) -> TextView {
+    TextView::markdown(id, text)
+        .image_source(|uri| uri.clone().into())
+        .on_link_click(|url, event, _, cx| {
+            if (event.standard_click() || event.is_middle_click()) && opens_in_browser(url) {
+                cx.open_url(url);
+            }
+        })
+}
+
+pub fn opens_in_browser(url: &str) -> bool {
+    let scheme = url
+        .split_once(':')
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
+    matches!(scheme.as_deref(), Some("http" | "https" | "mailto"))
 }

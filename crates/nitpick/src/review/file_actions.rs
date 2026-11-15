@@ -198,6 +198,121 @@ impl Invocation {
     }
 }
 
+const LAUNCHABLE: &[&str] = &[
+    "app",
+    "command",
+    "tool",
+    "terminal",
+    "workflow",
+    "pkg",
+    "mpkg",
+    "dmg",
+    "action",
+    "scpt",
+    "scptd",
+    "applescript",
+    "jar",
+    "desktop",
+    "appimage",
+    "run",
+    "bin",
+    "sh",
+    "bash",
+    "zsh",
+    "csh",
+    "fish",
+    "exe",
+    "com",
+    "bat",
+    "cmd",
+    "ps1",
+    "psm1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "msi",
+    "msp",
+    "scr",
+    "pif",
+    "cpl",
+    "lnk",
+    "url",
+    "reg",
+    "inf",
+    "application",
+    "gadget",
+    "msc",
+    "appref-ms",
+    "library-ms",
+    "searchconnector-ms",
+    "settingcontent-ms",
+    "fileloc",
+    "webloc",
+    "inetloc",
+    "prefpane",
+    "mobileconfig",
+    "py",
+    "pyw",
+    "pyc",
+    "website",
+    "chm",
+    "jnlp",
+    "appx",
+    "msix",
+    "appinstaller",
+    "xll",
+];
+
+pub fn reveal_instead(file: &Path, executable: bool, os: HostOs) -> bool {
+    os == HostOs::Windows || launchable(file, executable)
+}
+
+pub fn launchable(file: &Path, executable: bool) -> bool {
+    executable
+        || file
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                LAUNCHABLE
+                    .iter()
+                    .any(|known| ext.eq_ignore_ascii_case(known))
+            })
+}
+
+pub fn reveal_invocation(file: &str, os: HostOs) -> Invocation {
+    match os {
+        HostOs::Mac => Invocation::plain("open", &["-R", file]),
+        HostOs::Linux => {
+            let parent = Path::new(file)
+                .parent()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ".".to_string());
+            Invocation::plain("xdg-open", &[&parent])
+        }
+        HostOs::Windows => Invocation {
+            check_exit: false,
+            ..Invocation::plain("explorer.exe", &["/select,", file])
+        },
+    }
+}
+
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
 pub fn editor_invocation(
     template: &str,
     root: &str,
@@ -557,18 +672,35 @@ impl ReviewView {
                 .and_then(|branch| checkout_of(&repo, &branch))
                 .unwrap_or_else(|| repo.root().to_path_buf());
             let path: PathBuf = dir.join(&relative);
-            if !path.exists() {
+            let Ok(metadata) = std::fs::metadata(&path) else {
                 return (None, Launch::Failed(tr().file_not_on_disk(&relative)));
+            };
+            let inside = match (path.canonicalize(), dir.canonicalize()) {
+                (Ok(target), Ok(root)) => target.starts_with(root),
+                _ => false,
+            };
+            if !inside {
+                return (None, Launch::Failed(tr().file_outside_checkout(&relative)));
             }
             let shell = std::env::var("SHELL").ok();
-            let invocation = editor_invocation(
-                &template,
-                &dir.to_string_lossy(),
-                &path.to_string_lossy(),
-                line,
-                HostOs::current(),
-                shell.as_deref(),
-            );
+            let file = path.to_string_lossy();
+            let invocation = if template.trim().is_empty()
+                && reveal_instead(
+                    &path.canonicalize().unwrap_or(path.clone()),
+                    is_executable(&metadata),
+                    HostOs::current(),
+                ) {
+                reveal_invocation(&file, HostOs::current())
+            } else {
+                editor_invocation(
+                    &template,
+                    &dir.to_string_lossy(),
+                    &file,
+                    line,
+                    HostOs::current(),
+                    shell.as_deref(),
+                )
+            };
             let shown = invocation.display();
             let check_exit = invocation.check_exit;
             log::info!("open in editor: {shown}");

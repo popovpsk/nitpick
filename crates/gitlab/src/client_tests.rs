@@ -7,7 +7,7 @@ use crate::client::MAX_PAGES;
 use crate::models_tests::{
     DIFF_DISCUSSION, GENERAL_DISCUSSION, MERGE_REQUEST, SYSTEM_DISCUSSION, json_list,
 };
-use crate::{Client, Error, MrQuery, MrState, NewPosition, ProjectRef};
+use crate::{Client, DraftTarget, Error, MrQuery, MrState, NewPosition, ProjectRef};
 
 const TOKEN: &str = "glpat-test-token";
 
@@ -609,4 +609,104 @@ async fn foreign_redirects_are_not_followed() {
     let error = client(&server).current_user().await.unwrap_err();
 
     assert!(matches!(error, Error::Status { status: 302, .. }));
+}
+
+const DRAFT_NOTE: &str = r#"{
+  "id": 41,
+  "author_id": 1,
+  "merge_request_id": 377,
+  "resolve_discussion": true,
+  "discussion_id": "6a9c1750b3",
+  "note": "Draft reply",
+  "commit_id": null,
+  "line_code": null,
+  "position": {"base_sha": null, "start_sha": null, "head_sha": null, "old_path": null,
+               "new_path": null, "position_type": "text", "old_line": null, "new_line": null,
+               "line_range": null}
+}"#;
+
+#[tokio::test]
+async fn draft_notes_are_listed() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{MR_PATH}/draft_notes")))
+        .respond_with(json_response(200, &format!("[{DRAFT_NOTE}]")))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let drafts = client(&server).draft_notes(&project(), 133).await.unwrap();
+
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].id, 41);
+    assert_eq!(drafts[0].note, "Draft reply");
+    assert_eq!(drafts[0].discussion_id.as_deref(), Some("6a9c1750b3"));
+    assert!(drafts[0].resolve_discussion);
+}
+
+#[rstest]
+#[case::line(
+    DraftTarget::Line(&position(None, Some(7))),
+    json!({"note": "n", "position": {"position_type": "text", "base_sha": "base",
+        "start_sha": "start", "head_sha": "head", "old_path": "src/old.rs",
+        "new_path": "src/new.rs", "new_line": 7}})
+)]
+#[case::general(DraftTarget::General, json!({"note": "n"}))]
+#[case::reply(
+    DraftTarget::Reply { discussion_id: "6a9c1750b3", resolve: true },
+    json!({"note": "n", "in_reply_to_discussion_id": "6a9c1750b3", "resolve_discussion": true})
+)]
+#[case::reply_open(
+    DraftTarget::Reply { discussion_id: "6a9c1750b3", resolve: false },
+    json!({"note": "n", "in_reply_to_discussion_id": "6a9c1750b3"})
+)]
+#[tokio::test]
+async fn create_draft_note_body(#[case] target: DraftTarget<'_>, #[case] expected: Value) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{MR_PATH}/draft_notes")))
+        .respond_with(json_response(201, DRAFT_NOTE))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .create_draft_note(&project(), 133, "n", target)
+        .await
+        .unwrap();
+
+    let sent: Value = received(&server).await[0].body_json().unwrap();
+    assert_eq!(sent, expected);
+}
+
+#[tokio::test]
+async fn drafts_are_edited_deleted_and_published() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{MR_PATH}/draft_notes/41")))
+        .and(body_json(json!({"note": "better"})))
+        .respond_with(json_response(200, DRAFT_NOTE))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{MR_PATH}/draft_notes/41")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{MR_PATH}/draft_notes/bulk_publish")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = client(&server);
+
+    client
+        .update_draft_note(&project(), 133, 41, "better")
+        .await
+        .unwrap();
+    client.delete_draft_note(&project(), 133, 41).await.unwrap();
+    client.publish_draft_notes(&project(), 133).await.unwrap();
 }

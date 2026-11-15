@@ -232,3 +232,16 @@ pub struct Approver {
     #[serde(default, deserialize_with = "null_default")]
     pub user: User,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DraftNote {
+    pub id: u64,
+    #[serde(default, deserialize_with = "null_default")]
+    pub note: String,
+    #[serde(default)]
+    pub discussion_id: Option<String>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub resolve_discussion: bool,
+    #[serde(default)]
+    pub position: Option<Position>,
+}

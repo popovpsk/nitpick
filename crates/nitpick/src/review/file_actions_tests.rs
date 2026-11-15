@@ -4,8 +4,8 @@ use review_core::{Change, LineKind};
 use rstest::rstest;
 
 use super::{
-    HostOs, Invocation, ProjectWeb, blob_url, change_line, editor_invocation, pick_line,
-    project_web_from_mr, project_web_from_remotes,
+    HostOs, Invocation, ProjectWeb, blob_url, change_line, editor_invocation, launchable,
+    pick_line, project_web_from_mr, project_web_from_remotes, reveal_instead, reveal_invocation,
 };
 
 fn remote(name: &str, url: &str) -> Remote {
@@ -412,4 +412,44 @@ fn presets_open_the_repository_as_a_project(#[case] os: HostOs, #[case] goland: 
     assert_eq!(find("GoLand"), Some(goland));
     assert_eq!(find("VS Code"), Some("code {root} -g {file}:{line}"));
     assert_eq!(find("Zed"), Some("zed {root} {file}:{line}"));
+}
+
+#[rstest]
+#[case::source("src/main.rs", false, false)]
+#[case::markdown("README.md", false, false)]
+#[case::script_bit("tools/check", true, true)]
+#[case::command("tools/run.command", false, true)]
+#[case::bundle("Calculator.app", false, true)]
+#[case::batch("setup.BAT", false, true)]
+#[case::shortcut("docs.lnk", false, true)]
+#[case::location("open.fileloc", false, true)]
+#[case::python("tool.py", false, true)]
+fn launchable_files_are_revealed(
+    #[case] path: &str,
+    #[case] executable: bool,
+    #[case] expected: bool,
+) {
+    assert_eq!(launchable(std::path::Path::new(path), executable), expected);
+}
+
+#[rstest]
+#[case::mac(HostOs::Mac, "open", &["-R", "/r/x.app"])]
+#[case::windows(HostOs::Windows, "explorer.exe", &["/select,", "/r/x.app"])]
+#[case::linux(HostOs::Linux, "xdg-open", &["/r"])]
+fn reveal_opens_the_folder(#[case] os: HostOs, #[case] program: &str, #[case] args: &[&str]) {
+    let invocation = reveal_invocation("/r/x.app", os);
+    assert_eq!(invocation.program, program);
+    assert_eq!(invocation.args, args);
+}
+
+#[rstest]
+#[case::mac_source(HostOs::Mac, "src/main.rs", false)]
+#[case::mac_script(HostOs::Mac, "run.command", true)]
+#[case::windows_source(HostOs::Windows, "src/main.rs", true)]
+#[case::linux_source(HostOs::Linux, "src/main.rs", false)]
+fn windows_always_reveals(#[case] os: HostOs, #[case] path: &str, #[case] expected: bool) {
+    assert_eq!(
+        reveal_instead(std::path::Path::new(path), false, os),
+        expected
+    );
 }

@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
@@ -11,13 +11,12 @@ use gpui_component::{
     h_flex,
     tab::{Tab, TabBar},
     tag::Tag,
-    text::TextView,
     v_flex,
 };
 use review_core::FileStatus;
 use ui_resources::Icons;
 
-use super::comments::{render_composer, render_discussion};
+use super::comments::{remote_markdown, render_composer, render_discussion};
 use super::model::LoadedReview;
 use super::{ComposerTarget, DiscussionView, ReviewView};
 use crate::localization::tr;
@@ -165,9 +164,27 @@ pub fn open_comments_sheet(
         }
     }
     let view = cx.entity();
-    window.open_sheet(cx, move |sheet, _window, cx| {
+    let body = cx.new(|cx: &mut Context<CommentsSheet>| CommentsSheet {
+        _observe: cx.observe(&view, |_, _, cx| cx.notify()),
+        view,
+    });
+    window.open_sheet(cx, move |sheet, _window, _cx| {
+        sheet
+            .title(tr().comments.clone())
+            .size(px(560.))
+            .child(body.clone().cached(StyleRefinement::default().size_full()))
+    });
+}
+
+pub struct CommentsSheet {
+    view: Entity<ReviewView>,
+    _observe: Subscription,
+}
+
+impl Render for CommentsSheet {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = self.view.clone();
         let review = view.read(cx);
-        let title = tr().comments.clone();
         let description = review.description.clone();
         let tabs_shown: &[CommentsTab] = if description.is_some() {
             &[
@@ -211,22 +228,20 @@ pub fn open_comments_sheet(
             (CommentsTab::Description, Some(text)) => div()
                 .text_sm()
                 .pb_4()
-                .child(TextView::markdown("mr-description", text))
+                .child(remote_markdown("mr-description", text))
                 .into_any_element(),
             (CommentsTab::General, _) => render_general_list(&view, cx),
             _ => render_code_list(&view, cx),
         };
-        sheet.title(title).size(px(560.)).child(
-            v_flex().size_full().gap_3().child(tabs).child(
-                div()
-                    .id("comments-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(body),
-            ),
+        v_flex().size_full().gap_3().child(tabs).child(
+            div()
+                .id("comments-list")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(body),
         )
-    });
+    }
 }
 
 fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {

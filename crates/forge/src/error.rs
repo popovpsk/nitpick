@@ -8,6 +8,8 @@ pub enum Error {
     InvalidPosition,
     #[error("comment {0} takes no replies")]
     CannotReply(String),
+    #[error("draft {0} is not known")]
+    UnknownDraft(String),
     #[error("{0} is not supported here")]
     Unsupported(&'static str),
 }

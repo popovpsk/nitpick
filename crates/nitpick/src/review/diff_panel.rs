@@ -13,7 +13,10 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _, DropdownButton},
-    diff::{Diff, DiffChangeIndicator, DiffHoverHighlight, DiffMode},
+    diff::{
+        Diff, DiffChangeIndicator, DiffGutterMarker, DiffHoverHighlight, DiffLinePosition,
+        DiffMode, DiffSide,
+    },
     h_flex,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     progress::Progress as ProgressBar,
@@ -25,10 +28,10 @@ use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    AddComment, Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState,
-    LoadedReview, NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh,
-    ReviewSource, ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comment_list,
-    comments, file_actions,
+    AddComment, Busy, COMMENT_LANE, COMMENT_MARKER, CrossHint, FindFile, FindInFile, FocusDiff,
+    FocusTree, LoadState, LoadedReview, NextChange, NextFile, PreviousChange, PreviousFile,
+    PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed,
+    comment_list, comments, file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -174,6 +177,16 @@ impl ReviewView {
                     }),
             )
         });
+        let review_button = self.drafts.has_review().then(|| {
+            Button::new("pending-review")
+                .primary()
+                .small()
+                .icon(Icon::new(Icons::ClipboardCheck))
+                .label(self.drafts.button_label.clone())
+                .loading(self.drafts.submitting)
+                .tooltip(s.review_tooltip.clone())
+                .on_click(cx.listener(|this, _, window, cx| this.open_review_sheet(window, cx)))
+        });
         let comments_button = self.mr.as_ref().map(|_| {
             let count = self.comments_count();
             Button::new("general-comments")
@@ -207,6 +220,7 @@ impl ReviewView {
                     )
                 },
             )
+            .children(review_button)
             .children(approve_button)
             .children(comments_button)
             .child(
@@ -680,7 +694,12 @@ impl ReviewView {
         };
         let diff_focus = self.diff.read(cx).focus_handle(cx);
         if review.files.is_empty() {
-            return focus_holder(&diff_focus, empty_state(tr().no_changes.clone(), cx));
+            let text = match self.source {
+                ReviewSource::Branches { .. } => tr().no_changes.clone(),
+                ReviewSource::MergeRequest { .. } => tr().no_changes_request.clone(),
+                ReviewSource::WorkingTree => tr().no_changes_worktree.clone(),
+            };
+            return focus_holder(&diff_focus, empty_state(text, cx));
         }
         if self.nav_order.is_empty() && self.current_file.is_none() {
             return focus_holder(&diff_focus, empty_state(tr().all_files_hidden.clone(), cx));
@@ -721,8 +740,13 @@ impl ReviewView {
                 .clamp(SPLIT_RATIO_RANGE.0, SPLIT_RATIO_RANGE.1)
         };
         let split_mode = self.diff.read(cx).mode() == DiffMode::Split;
-        self.refresh_comment_markers(split_mode);
-        let comment_markers = self.comment_markers.clone();
+        let comment_lane = shown.filter(|_| can_comment).map(|file| {
+            DiffGutterMarker::new(
+                COMMENT_LANE,
+                DiffLinePosition::new(file.path.clone(), DiffSide::Modified, 0),
+            )
+        });
+        let comment_marker = self.comment_marker().filter(|_| can_comment).cloned();
         let marker_view = view.clone();
         let resizable = split_mode
             && shown.is_some_and(|f| !f.binary && f.additions + f.deletions > 0)
@@ -744,9 +768,9 @@ impl ReviewView {
             .min_h_0()
             .when(current_viewed, |el| el.bg(viewed_bg))
             .on_scroll(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
-            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                if !hovered {
-                    this.leave_diff();
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !hovered && this.leave_diff() {
+                    cx.notify();
                 }
             }))
             .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.note_manual_scroll(cx)))
@@ -805,25 +829,33 @@ impl ReviewView {
                         })
                         .when(can_comment, |diff| {
                             diff.on_line_hover(move |position, _, cx| {
-                                hover_view.update(cx, |this, _| this.set_hovered_line(position))
+                                hover_view.update(cx, |this, cx| {
+                                    if this.set_hovered_line(position) {
+                                        cx.notify();
+                                    }
+                                })
                             })
                         })
                         .when_some(find_decorations, |diff, decorations| {
                             diff.decorations(decorations.iter().cloned())
                         })
-                        .when(blame.is_some() || !comment_markers.is_empty(), |diff| {
+                        .when(blame.is_some() || comment_lane.is_some(), |diff| {
                             let shown_blame = blame.clone();
                             let blame_markers = blame
                                 .as_ref()
                                 .map(|marks| marks.markers(split_mode))
                                 .unwrap_or_default();
                             diff.gutter_markers(
-                                blame_markers.iter().chain(comment_markers.iter()).cloned(),
+                                blame_markers
+                                    .iter()
+                                    .cloned()
+                                    .chain(comment_marker)
+                                    .chain(comment_lane),
                             )
                             .render_gutter_marker(
                                 move |marker, window, cx| match (&shown_blame, marker.id()) {
-                                    (_, ElementId::NamedInteger(name, _))
-                                        if name.as_ref() == "comment-line" =>
+                                    (_, ElementId::Name(name))
+                                        if name.as_ref() == COMMENT_MARKER =>
                                     {
                                         comments::render_comment_marker(&marker_view, marker, cx)
                                     }
@@ -1321,7 +1353,9 @@ impl Render for ReviewView {
             TreeSide::Left => body.children(tree_panel).child(diff),
             TreeSide::Right => body.child(diff).children(tree_panel),
         };
+        let banner = self.render_push_banner(cx);
         root.child(header)
+            .children(banner)
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
     }

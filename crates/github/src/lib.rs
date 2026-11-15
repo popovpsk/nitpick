@@ -18,4 +18,4 @@ pub use models::{
     group_threads,
 };
 pub use pr_url::{PrUrl, parse_pr_reference, parse_pr_url, parse_pr_url_with_base};
-pub use request::{NewReviewComment, RepoRef, Side};
+pub use request::{NewReviewComment, RepoRef, ReviewVerdict, Side};

@@ -396,6 +396,17 @@ pub fn keys(command: &Command, cx: &App) -> Vec<String> {
     }
 }
 
+pub fn chord(key: &str, cx: &App) -> String {
+    match Keystroke::parse_with_os(key, cx.platform_info().os) {
+        Ok(keystroke) => gpui_component::kbd::Kbd::format(&keystroke),
+        Err(_) => key.to_string(),
+    }
+}
+
+pub fn shown_key(id: &str, cx: &App) -> Option<String> {
+    keys(command(id)?, cx).first().map(|key| chord(key, cx))
+}
+
 pub fn is_customized(command: &Command, cx: &App) -> bool {
     settings(cx).keybindings.contains_key(command.id)
 }

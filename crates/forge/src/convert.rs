@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::models::{
-    Approval, DiffRefs, Discussion, ForgeKind, NewPosition, Note, Position, Request, RequestState,
-    User,
+    Approval, DiffRefs, Discussion, Draft, ForgeKind, NewPosition, Note, Position, Request,
+    RequestState, User, Verdict,
 };
 
 const ISSUE_PREFIX: &str = "issue-";
@@ -312,5 +312,58 @@ pub(crate) fn github_comment_kind(discussion_id: &str, note_id: u64) -> GithubCo
         GithubComment::Issue(note_id)
     } else {
         GithubComment::Review(note_id)
+    }
+}
+
+pub(crate) fn gitlab_draft(draft: &gitlab::DraftNote) -> Draft {
+    let position = draft
+        .position
+        .as_ref()
+        .filter(|p| p.new_path.is_some() || p.old_path.is_some())
+        .map(|p| Position {
+            base_sha: p.base_sha.clone(),
+            start_sha: p.start_sha.clone(),
+            head_sha: p.head_sha.clone(),
+            old_path: p.old_path.clone(),
+            new_path: p.new_path.clone(),
+            old_line: p.old_line,
+            new_line: p.new_line,
+        });
+    Draft {
+        id: draft.id.to_string(),
+        body: draft.note.clone(),
+        position,
+        reply_to: draft.discussion_id.clone(),
+        resolve: draft.resolve_discussion,
+    }
+}
+
+pub(crate) fn github_draft(comment: &github::ReviewComment) -> Draft {
+    let line = comment.line.or(comment.original_line);
+    let left = comment.side == Some(github::Side::Left);
+    let path = (!comment.path.is_empty()).then(|| comment.path.clone());
+    let position = comment.in_reply_to_id.is_none().then(|| Position {
+        base_sha: None,
+        start_sha: None,
+        head_sha: Some(comment.commit_id.clone()).filter(|sha| !sha.is_empty()),
+        old_path: path.clone(),
+        new_path: path.clone(),
+        old_line: line.filter(|_| left),
+        new_line: line.filter(|_| !left),
+    });
+    Draft {
+        id: comment.node_id.clone(),
+        body: comment.body.clone(),
+        position,
+        reply_to: comment.in_reply_to_id.map(|id| id.to_string()),
+        resolve: false,
+    }
+}
+
+pub(crate) fn github_verdict(verdict: Verdict) -> github::ReviewVerdict {
+    match verdict {
+        Verdict::Comment => github::ReviewVerdict::Comment,
+        Verdict::Approve => github::ReviewVerdict::Approve,
+        Verdict::RequestChanges => github::ReviewVerdict::RequestChanges,
     }
 }

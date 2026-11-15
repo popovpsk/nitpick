@@ -172,13 +172,33 @@ impl Repo {
             .is_ok_and(|output| output.status.success())
     }
 
-    pub fn has_blob(&self, id: &str) -> bool {
-        let Ok(id) = checked_arg(id) else {
-            return false;
+    pub fn has_blobs(&self, ids: &[String]) -> Vec<bool> {
+        let valid = |id: &str| !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit());
+        let input: String = ids
+            .iter()
+            .filter(|id| valid(id))
+            .map(|id| format!("{id}\n"))
+            .collect();
+        let found = if input.is_empty() {
+            Vec::new()
+        } else {
+            command::run_with_input(
+                &self.root,
+                &["cat-file", "--batch-check=%(objecttype)"],
+                input.as_bytes(),
+            )
+            .map(|out| {
+                String::from_utf8_lossy(&out)
+                    .lines()
+                    .map(|line| line == "blob")
+                    .collect()
+            })
+            .unwrap_or_default()
         };
-        let spec = format!("{id}^{{blob}}");
-        command::output(&self.root, &["cat-file", "-e", spec.as_str()])
-            .is_ok_and(|output| output.status.success())
+        let mut found = found.into_iter();
+        ids.iter()
+            .map(|id| valid(id) && found.next().unwrap_or(false))
+            .collect()
     }
 
     pub fn blob(&self, id: &str) -> Result<Vec<u8>, GitError> {

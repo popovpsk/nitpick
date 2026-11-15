@@ -83,3 +83,27 @@ pub(crate) struct GraphQlRequest<'a, V: Serialize> {
     pub query: &'a str,
     pub variables: V,
 }
+
+#[derive(Serialize)]
+pub(crate) struct ReviewSubmit<'a> {
+    pub event: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub body: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReviewVerdict {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+impl ReviewVerdict {
+    pub(crate) fn event(self) -> &'static str {
+        match self {
+            ReviewVerdict::Comment => "COMMENT",
+            ReviewVerdict::Approve => "APPROVE",
+            ReviewVerdict::RequestChanges => "REQUEST_CHANGES",
+        }
+    }
+}

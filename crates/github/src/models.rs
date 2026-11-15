@@ -47,6 +47,8 @@ pub struct BranchRef {
 pub struct PullRequest {
     pub number: u64,
     #[serde(default, deserialize_with = "null_default")]
+    pub node_id: String,
+    #[serde(default, deserialize_with = "null_default")]
     pub title: String,
     #[serde(default)]
     pub body: Option<String>,
@@ -282,7 +284,31 @@ pub(crate) struct ResolvedThread {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Review {
     #[serde(default, deserialize_with = "null_default")]
+    pub id: u64,
+    #[serde(default, deserialize_with = "null_default")]
+    pub node_id: String,
+    #[serde(default, deserialize_with = "null_default")]
     pub user: User,
     #[serde(default, deserialize_with = "null_default")]
     pub state: String,
 }
+
+#[derive(Deserialize)]
+pub(crate) struct AddReviewData {
+    #[serde(rename = "addPullRequestReview")]
+    pub result: Option<AddReviewPayload>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AddReviewPayload {
+    #[serde(rename = "pullRequestReview")]
+    pub review: Option<NodeId>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct NodeId {
+    pub id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Ignored {}

@@ -7,7 +7,14 @@ use crate::GitError;
 
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 
-const BASE_CONFIG: [&str; 4] = ["-c", "core.quotepath=false", "-c", "color.ui=false"];
+const BASE_CONFIG: [&str; 6] = [
+    "-c",
+    "core.quotepath=false",
+    "-c",
+    "color.ui=false",
+    "-c",
+    "core.fsmonitor=false",
+];
 
 const SCRUBBED_ENV: [&str; 7] = [
     "GIT_DIR",
@@ -59,6 +66,25 @@ pub(crate) fn output<S: AsRef<OsStr>>(root: &Path, args: &[S]) -> Result<Output,
 
 pub(crate) fn run<S: AsRef<OsStr>>(root: &Path, args: &[S]) -> Result<Vec<u8>, GitError> {
     let output = output(root, args)?;
+    check(output, args)
+}
+
+pub(crate) fn run_with_input<S: AsRef<OsStr>>(
+    root: &Path,
+    args: &[S],
+    input: &[u8],
+) -> Result<Vec<u8>, GitError> {
+    log::debug!("git {} (stdin)", display_args(args));
+    let mut child = command(root, args).stdin(Stdio::piped()).spawn()?;
+    let mut stdin = child.stdin.take();
+    let output = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            if let Some(stdin) = stdin.as_mut() {
+                let _ = std::io::Write::write_all(stdin, input);
+            }
+        });
+        child.wait_with_output()
+    })?;
     check(output, args)
 }
 
