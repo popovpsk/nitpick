@@ -70,7 +70,8 @@ wraps `gitlab` and `github`; nothing here names those crates).
   which closes the sheet and `reveal_discussion` opens the file, at the line when the thread
   is drawn in the diff) and General (discussions without a file, with the new-comment
   composer). `build_code_threads` precomputes the rows; it opens on General when there is no
-  code thread, and on Description when there is no comment at all.
+  code thread, and on Description when there is no comment at all, until the user picks a tab
+  (`comments_tab_chosen`); from then on it opens on that tab for this review.
 - `review_tests.rs` — comment times in a fixed time zone; which file Viewed advances to.
 - `comment_list_tests.rs` — previews and row order.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
@@ -280,13 +281,24 @@ wraps `gitlab` and `github`; nothing here names those crates).
   last move by a detached task, so closing the review right after a drag still saves it.
 - The comment composer survives file switches and reloads; only Cancel or a successful post
   of that same composer closes it.
-- Starting a line comment (`can_comment_lines`): the `Diff`'s add button is passed only
-  while lines are selected (a click on a line number), so it sits at the selection's end and
-  never trails the pointer over the code; `AddComment` (C) comments the selection, else the
-  line under the pointer (`hovered_line`, from `on_line_hover`, stored without a redraw;
+- Starting a line comment (`can_comment_lines`): no `on_add_annotation` button (it trails
+  the pointer over the code and is lost when a press clears the selection it hangs on).
+  Instead every commentable line gets a gutter marker (`comment_markers`, rebuilt by
+  `refresh_comment_markers` only when the review, file or layout changes): a faint comment
+  icon in the marker lane, right of the line number (the lane is the only slot the component
+  offers), invisible until the row is hovered (`group_hover("diff-line")`), no fill; a click
+  opens the composer. Unified rows carry one marker (the new side of a context line), split
+  rows one per side. Blame markers go first, so a line with a blame chip shows the chip.
+  Lines GitHub would reject (`line_commentable`) get no icon, and a click on their number
+  explains the 3-line rule in an info notice.
+  A line-number gesture opens the composer when the mouse is released: `SelectionStarted`
+  sets `gutter_gesture` and the next `SelectionEnded` takes it, so a Shift-arrow selection,
+  which ends without starting, opens nothing. `AddComment` (C) comments the selection, else
+  the line under the pointer (`hovered_line`, from `on_line_hover`, stored without a redraw;
   a line's `None` is ignored since leaving one line reports after entering the next, and the
-  diff area's own hover clears it).
-  Opening the composer clears the selection. The On code tab's empty state names both ways.
+  diff area's own hover clears it). Opening the composer clears the selection; a composer
+  that already holds text is moved to the new target instead of being replaced. The On code
+  tab's empty state names both ways.
 - Notifications go to the review's own window (`window_handle`) through `cx.defer`, never to
   whichever window happens to be active, and never inside that window's own update.
 - The review observes the settings: a new diff layout applies at once, a change of "ignore

@@ -6,7 +6,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    diff::DiffAnnotation,
+    diff::{DiffAnnotation, DiffGutterMarker, DiffLineRange},
     h_flex,
     input::Textarea,
     tag::Tag,
@@ -462,5 +462,38 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
                         }),
                 ),
         )
+        .into_any_element()
+}
+
+pub fn render_comment_marker(
+    view: &Entity<ReviewView>,
+    marker: &DiffGutterMarker,
+    cx: &App,
+) -> AnyElement {
+    let position = marker.position();
+    let range = DiffLineRange::new(
+        position.path().clone(),
+        position.side(),
+        position.line(),
+        position.line(),
+    );
+    let view = view.clone();
+    div()
+        .id(marker.id().clone())
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .opacity(0.)
+        .group_hover("diff-line", |style| style.opacity(1.))
+        .child(
+            Icon::new(Icons::MessageSquarePlus)
+                .xsmall()
+                .text_color(cx.theme().muted_foreground.opacity(0.6)),
+        )
+        .on_click(move |_, window, cx| {
+            view.update(cx, |this, cx| this.open_line_composer(&range, window, cx))
+        })
         .into_any_element()
 }
