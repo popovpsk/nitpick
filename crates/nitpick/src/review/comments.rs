@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Styled as _, Window, div, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px,
-    rems,
+    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
@@ -62,9 +62,31 @@ pub(super) fn render_discussion(
     );
     let reply_view = view.clone();
     let resolve_view = view.clone();
-    v_flex()
+    let collapsed = view.read(cx).thread_collapsed(discussion);
+    let toggle = {
+        let toggle_view = view.clone();
+        let id = discussion.id.clone();
+        Button::new(ElementId::NamedInteger("thread-toggle".into(), ix as u64))
+            .ghost()
+            .xsmall()
+            .icon(if collapsed {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
+            })
+            .tooltip(if collapsed {
+                s.expand_thread.clone()
+            } else {
+                s.collapse_thread.clone()
+            })
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                toggle_view.update(cx, |this, cx| this.toggle_thread(&id, cx));
+            })
+    };
+    let card = h_flex()
         .max_w(px(820.))
-        .gap_2()
+        .gap_1()
         .p_2()
         .rounded(theme.radius_lg)
         .border_1()
@@ -74,7 +96,69 @@ pub(super) fn render_discussion(
             theme.warning.opacity(0.5)
         })
         .bg(theme.popover)
-        .text_color(theme.popover_foreground)
+        .text_color(theme.popover_foreground);
+    if collapsed {
+        let first = &discussion.notes[0];
+        let expand_view = view.clone();
+        let id = discussion.id.clone();
+        return card
+            .id(ElementId::NamedInteger(
+                "thread-collapsed".into(),
+                ix as u64,
+            ))
+            .items_center()
+            .gap_2()
+            .py_1()
+            .cursor_pointer()
+            .child(toggle)
+            .child(avatars::render(
+                first.avatar.as_ref(),
+                &first.initials,
+                first.tint,
+                px(16.),
+                cx,
+            ))
+            .child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .font_semibold()
+                    .child(first.author.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(discussion.preview.clone()),
+            )
+            .when_some(discussion.replies.clone(), |el, replies| {
+                el.child(
+                    h_flex()
+                        .flex_none()
+                        .gap_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::new(Icons::MessageSquare).xsmall())
+                        .child(replies),
+                )
+            })
+            .when(resolved, |el| {
+                el.child(Tag::success().xsmall().child(s.resolved.clone()))
+            })
+            .on_click(move |_, _, cx| {
+                expand_view.update(cx, |this, cx| this.toggle_thread(&id, cx));
+            })
+            .into_any_element();
+    }
+    let body = v_flex()
+        .flex_1()
+        .min_w_0()
+        .gap_2()
         .children(
             discussion
                 .notes
@@ -127,7 +211,10 @@ pub(super) fn render_discussion(
                 .when(resolved, |el| {
                     el.child(Tag::success().small().child(s.resolved.clone()))
                 }),
-        )
+        );
+    card.items_start()
+        .child(toggle)
+        .child(body)
         .into_any_element()
 }
 

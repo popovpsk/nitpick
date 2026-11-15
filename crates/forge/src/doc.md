@@ -14,7 +14,8 @@ tokens (the app, `secret_store`).
 
 - `lib.rs` — module list and the public re-exports.
 - `models.rs` — `ForgeKind` (reference `!5` / `#5`, refspecs, `comment_context`,
-  `web_url`), `User` (with `avatar_url`), `Request` (reviewers, assignees, `comments` — GitLab's
+  `web_url`, `new_token_url`: GitLab's `/-/user_settings/personal_access_tokens?name=&scopes=api`,
+  GitHub's `/settings/tokens/new?description=&scopes=repo`), `User` (with `avatar_url`), `Request` (reviewers, assignees, `comments` — GitLab's
   `user_notes_count`, `None` on GitHub, whose list has no count — and `updated_at`), `Approval`,
   `RequestState`, `DiffRefs`, `Discussion`, `Note`, `Position`, `NewPosition`,
   `GITHUB_DEFAULT_URL`.

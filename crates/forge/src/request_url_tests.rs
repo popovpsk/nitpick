@@ -57,3 +57,30 @@ fn an_unset_gitlab_server_still_parses_gitlab_urls() {
 fn references_accept_either_mark(#[case] text: &str, #[case] expected: Option<u64>) {
     assert_eq!(parse_reference(text), expected);
 }
+
+#[rstest]
+#[case::gitlab(
+    crate::ForgeKind::GitLab,
+    "https://gitlab.example.com/",
+    Some(
+        "https://gitlab.example.com/-/user_settings/personal_access_tokens?name=Nitpick&scopes=api"
+    )
+)]
+#[case::gitlab_unset(crate::ForgeKind::GitLab, "  ", None)]
+#[case::github_default(
+    crate::ForgeKind::GitHub,
+    "",
+    Some("https://github.com/settings/tokens/new?description=Nitpick&scopes=repo")
+)]
+#[case::github_enterprise(
+    crate::ForgeKind::GitHub,
+    "https://ghe.example.com",
+    Some("https://ghe.example.com/settings/tokens/new?description=Nitpick&scopes=repo")
+)]
+fn new_token_pages_come_prefilled(
+    #[case] kind: crate::ForgeKind,
+    #[case] url: &str,
+    #[case] expected: Option<&str>,
+) {
+    assert_eq!(kind.new_token_url(url).as_deref(), expected);
+}

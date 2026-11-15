@@ -9,7 +9,7 @@ use gpui_component::{
 };
 use ui_resources::Icons;
 
-use super::{Screen, Workspace};
+use super::{AddRepositories, NewReview, OpenRepository, Screen, ShowSettings, Workspace};
 use crate::localization::tr;
 
 impl Workspace {
@@ -54,7 +54,11 @@ impl Workspace {
                 .small()
                 .icon(Icon::new(icon))
                 .label(label)
-                .tooltip(s.choose_review_tooltip.clone())
+                .tooltip_with_action(
+                    s.choose_review_tooltip.clone(),
+                    &NewReview,
+                    Some("Workspace"),
+                )
                 .selected(self.screen == Screen::Start)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.screen == Screen::Start {
@@ -81,16 +85,34 @@ impl Workspace {
                     }),
             )
             .child(
-                h_flex().pr_2().gap_1().child(
-                    Button::new("open-settings")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Settings)
-                        .tooltip(s.settings.clone())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.show_settings(window, cx)),
-                        ),
-                ),
+                h_flex()
+                    .pr_2()
+                    .gap_1()
+                    .children(updater::handle(cx).and_then(|updater| {
+                        let note = updater.read(cx).ready_note()?.clone();
+                        Some(
+                            Button::new("restart-to-update")
+                                .small()
+                                .primary()
+                                .label(s.restart_to_update.clone())
+                                .tooltip(note)
+                                .on_click(|_, _, cx| updater::apply_and_restart(cx)),
+                        )
+                    }))
+                    .child(
+                        Button::new("open-settings")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Settings)
+                            .tooltip_with_action(
+                                s.settings.clone(),
+                                &ShowSettings,
+                                Some("Workspace"),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_settings(window, cx)),
+                            ),
+                    ),
             )
     }
 }
@@ -110,6 +132,11 @@ pub(super) fn repo_picker_footer(
                     .small()
                     .icon(IconName::FolderOpen)
                     .label(s.open_repository_ellipsis.clone())
+                    .tooltip_with_action(
+                        s.open_repository_ellipsis.clone(),
+                        &OpenRepository,
+                        Some("Workspace"),
+                    )
                     .on_click(move |_, window, cx| {
                         let _ = open_view.update(cx, |this, cx| {
                             this.close_repo_picker(cx);
@@ -123,6 +150,11 @@ pub(super) fn repo_picker_footer(
                     .small()
                     .icon(IconName::Plus)
                     .label(s.add_repositories_ellipsis.clone())
+                    .tooltip_with_action(
+                        s.add_repositories_ellipsis.clone(),
+                        &AddRepositories,
+                        Some("Workspace"),
+                    )
                     .on_click(move |_, window, cx| {
                         let _ = add_view.update(cx, |this, cx| {
                             this.close_repo_picker(cx);

@@ -40,6 +40,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   (the active window's repository from `window_registry`) and `CloseWindow` fallbacks for when
   nothing in a window is focused. Like `Workspace`, the view refocuses itself on the next frame
   when its window is active and nothing is focused, so Escape and shortcuts keep working.
+- `settings_view_tests.rs` — the order of the per-repository hidden-file blocks.
 - `settings_view.rs` — the settings view, three pages: Settings, Hidden files and
   Shortcuts (the shortcut groups stay out of the general page). `reveal` opens a page by
   re-creating gpui-component's `Settings` under a new id with that page selected: its
@@ -50,12 +51,19 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   previews), Zed theme import, review options (the editor command is saved 400 ms
   after typing stops by a detached task, and reloads when the saved value differs from the
   one it last loaded or saved and the field is not focused), hidden-file patterns (all
-  repositories, and the window's repository when it has one; saved 400 ms after typing
+  repositories, then one block per repository — the window it was opened from first, then
+  every other open repository and every repository that has rules, by name, each with its
+  path under the title (`hidden_roots`, `RepoRules`; a block whose repository lost its rules
+  or its window stays until the screen reopens, so clearing a field never removes it under
+  the cursor); saved 400 ms after typing
   stops by a detached task, invalid lines named under the field; an empty field shows its
   own dimmed example over the textarea, because the component paints placeholders in
   `muted_foreground`, which reads as typed text on some themes), GitLab and GitHub groups
   (`ForgeForm`: URL + token, "Save and check" saves both fields and shows "Connected as
-  @user" or the error). A save applies the difference between the list the field was loaded
+  @user" or the error; "Create…" next to the token opens the host's new-token page with the
+  name and scopes filled in, `ForgeKind::new_token_url`, as JetBrains' Generate does). Text fields with a description (editor command, server URL, token)
+  use the vertical item layout, capped at `FIELD_MAX_WIDTH`: in a horizontal item the
+  component gives the text up to 60% of the row, so a fixed-width field overflowed. A save applies the difference between the list the field was loaded
   from and what was typed (`review_core::hidden::merge_patterns`), so a pattern added from a
   tree menu meanwhile, in any window, survives; a field that is not focused reloads when the
   settings change, and `set_repository` reloads both each time the screen opens.

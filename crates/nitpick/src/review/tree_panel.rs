@@ -7,7 +7,6 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
-    StyledExt as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     h_flex,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
@@ -18,6 +17,7 @@ use gpui_component::{
 use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
+use super::diff_panel::ProgressFit;
 use super::{
     CollapseSelected, ExpandSelected, FindFile, HiddenFile, NextFile, OpenSelected, PreviousFile,
     ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow, file_actions,
@@ -272,7 +272,7 @@ const INDENT: f32 = 14.;
 impl ReviewView {
     pub(super) fn render_tree(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let s = tr();
@@ -303,6 +303,10 @@ impl ReviewView {
         };
         let search_field = self.render_search_field(cx);
         let results = self.render_search_results(cx);
+        let (viewed, total) = self.progress();
+        let label_chars = digits(viewed) + digits(total) + 1;
+        let fit = ProgressFit::for_width(px(self.tree_width), window.rem_size(), label_chars);
+        let progress = self.render_viewed_progress(fit, cx);
         let theme = cx.theme();
         let header = v_flex()
             .flex_none()
@@ -315,11 +319,11 @@ impl ReviewView {
                     .gap_1()
                     .items_center()
                     .child(
-                        div()
+                        h_flex()
                             .flex_1()
-                            .text_sm()
-                            .font_semibold()
-                            .child(s.files.clone()),
+                            .min_w_0()
+                            .overflow_hidden()
+                            .children(progress),
                     )
                     .child(
                         Button::new("tree-find-file")
@@ -570,7 +574,7 @@ impl ReviewView {
                             } else {
                                 Icons::SquareCheck
                             }))
-                            .tooltip(toggle_tooltip)
+                            .tooltip_with_action(toggle_tooltip, &ToggleViewed, Some("ReviewTree"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.toggle_row_viewed(ix, cx);
@@ -627,4 +631,8 @@ impl ReviewView {
             _ => {}
         }
     }
+}
+
+fn digits(value: usize) -> usize {
+    value.checked_ilog10().map_or(1, |log| log as usize + 1)
 }

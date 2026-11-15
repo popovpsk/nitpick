@@ -21,6 +21,11 @@ Not here: which URLs are wanted and the in-memory URL → image map the UI reads
   requests with it do not follow redirects by themselves; each hop is checked again, so a
   redirect to object storage or a CDN is fetched without the token. Requests without it
   follow redirects as usual. At most five hops.
+- A non-2xx status is an error before the body is read (a GitLab that requires signing in
+  answers an uploaded avatar with 401 and an `image/png` content type around a text body:
+  `/uploads` takes only a browser session, never a token, and the API has no endpoint for
+  the file). A `text/html` 2xx answer is `WebPage`. `Error::is_temporary` (network, 5xx, 429)
+  says whether trying again later can help.
 - A body over `MAX_BYTES` (2 MB) is refused, by `Content-Length` and while streaming. A
   picture over `MAX_PIXELS` is refused from its header before decoding, so a small file with
   huge dimensions never allocates the bitmap. The picture is cropped to its centred square

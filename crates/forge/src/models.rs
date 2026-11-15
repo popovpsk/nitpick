@@ -56,6 +56,21 @@ impl ForgeKind {
         }
     }
 
+    pub fn new_token_url(self, configured: &str) -> Option<String> {
+        let base = self.web_url(configured);
+        if base.is_empty() {
+            return None;
+        }
+        Some(match self {
+            ForgeKind::GitLab => {
+                format!("{base}/-/user_settings/personal_access_tokens?name=Nitpick&scopes=api")
+            }
+            ForgeKind::GitHub => {
+                format!("{base}/settings/tokens/new?description=Nitpick&scopes=repo")
+            }
+        })
+    }
+
     pub fn web_url(self, configured: &str) -> String {
         let url = configured.trim().trim_end_matches('/');
         match self {

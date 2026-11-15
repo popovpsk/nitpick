@@ -9,7 +9,8 @@ use gpui_component::{
     h_flex,
 };
 
-use super::NewWindow;
+use super::{CloseWindow, NewWindow};
+use crate::localization::tr;
 
 pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     let current = window.window_handle().window_id();
@@ -78,6 +79,13 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                                 .ghost()
                                 .xsmall()
                                 .icon(IconName::Close)
+                                .when(active, |button| {
+                                    button.tooltip_with_action(
+                                        tr().close_window.clone(),
+                                        &CloseWindow,
+                                        Some("Workspace"),
+                                    )
+                                })
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     if active {
@@ -107,6 +115,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                 .ghost()
                 .xsmall()
                 .icon(IconName::Plus)
+                .tooltip_with_action(tr().new_window.clone(), &NewWindow, Some("Workspace"))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(NewWindow), cx)),
         ),
     )

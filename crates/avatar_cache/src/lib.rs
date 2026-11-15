@@ -31,6 +31,10 @@ pub enum Error {
     TooLarge,
     #[error("too many redirects")]
     TooManyRedirects,
+    #[error(
+        "the server sent a web page, not a picture (status {0}); it may need a signed-in session"
+    )]
+    WebPage(u16),
     #[error("not an image: {0}")]
     Image(#[from] image::ImageError),
     #[error("the image is too large to decode")]
@@ -39,6 +43,16 @@ pub enum Error {
     Setup(String),
     #[error("avatar cache: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl Error {
+    pub fn is_temporary(&self) -> bool {
+        match self {
+            Error::Http(_) | Error::Io(_) | Error::Setup(_) => true,
+            Error::Status(code) => *code >= 500 || *code == 429,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -126,6 +140,14 @@ impl Downloader {
             if !status.is_success() {
                 return Err(Error::Status(status.as_u16()));
             }
+            let html = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|kind| kind.starts_with("text/html"));
+            if html {
+                return Err(Error::WebPage(status.as_u16()));
+            }
             return read_capped(response).await;
         }
         Err(Error::TooManyRedirects)
@@ -193,7 +215,7 @@ impl Cache {
         async move {
             let (png, fetched_at) = found
                 .await
-                .inspect_err(|err| log::debug!("avatar cache: {err}"))
+                .inspect_err(|err| log::warn!("avatar cache: {err}"))
                 .ok()??;
             Some(Cached {
                 png,
@@ -211,7 +233,7 @@ impl Cache {
         let stored = self.db.put_avatar(url, png, now);
         async move {
             if let Err(err) = stored.await {
-                log::debug!("avatar cache: {err}");
+                log::warn!("avatar cache: {err}");
             }
         }
     }

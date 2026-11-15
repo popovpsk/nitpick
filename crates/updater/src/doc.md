@@ -33,9 +33,9 @@ no Settings switch yet: `nitpick` calls `init` with auto-update on.
   errors. Once `Ready`, polls do nothing; a manual check re-shows the toast.
 - Toasts go to the window the app's `ToastWindow` global picks, or to the active window when
   it sets none (`nitpick` sets none).
-- The "ready" toast is persistent, so it is not missed while the app sits in the background,
-  and clicking it is the apply: it calls `apply_and_restart`. `has_staged_update` is there for
-  a future header button.
+- A staged update shows no toast: `ready_note` ("Nitpick X is ready to install") turns on the
+  app's "Restart to Update" title-bar button, whose click is the apply (`apply_and_restart`),
+  as in Zed. A manual check toasts the note once, since Settings has no title bar.
 - Apply: macOS replaced the bundle during the download, so apply is `install::relaunch` then
   `cx.quit()`. Linux likewise replaced the AppImage: apply sets the restart path to
   `$APPIMAGE` and calls `cx.restart()`. Windows: `apply_and_restart` only sets `apply_on_quit`

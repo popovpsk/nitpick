@@ -176,6 +176,18 @@ pub struct DiscussionView {
     pub resolved: bool,
     pub position: Option<forge::Position>,
     pub location: Option<SharedString>,
+    pub preview: SharedString,
+    pub replies: Option<SharedString>,
+}
+
+fn note_time<Tz: chrono::TimeZone>(created_at: &str, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    match chrono::DateTime::parse_from_rfc3339(created_at.trim()) {
+        Ok(at) => at.with_timezone(zone).format("%Y-%m-%d %H:%M").to_string(),
+        Err(_) => created_at.get(..16).unwrap_or(created_at).replace('T', " "),
+    }
 }
 
 const LONG_NOTE_LINES: usize = 10;
@@ -195,11 +207,7 @@ impl DiscussionView {
             .iter()
             .filter(|n| !n.system)
             .map(|note| {
-                let time = note
-                    .created_at
-                    .get(..16)
-                    .unwrap_or(&note.created_at)
-                    .replace('T', " ");
+                let time = note_time(&note.created_at, &chrono::Local);
                 NoteView {
                     id: note.id,
                     author: note.author.name.clone().into(),
@@ -221,6 +229,8 @@ impl DiscussionView {
             .as_ref()
             .and_then(|p| p.new_path.clone().or_else(|| p.old_path.clone()))
             .map(SharedString::from);
+        let preview = comment_list::preview(&notes[0].body);
+        let replies = (notes.len() > 1).then(|| SharedString::from((notes.len() - 1).to_string()));
         Some(Self {
             id: discussion.id.clone(),
             notes,
@@ -229,6 +239,8 @@ impl DiscussionView {
             resolved: discussion.resolved,
             position,
             location,
+            preview,
+            replies,
         })
     }
 }
@@ -255,8 +267,9 @@ pub struct ReviewView {
     code_threads: Rc<Vec<comment_list::CodeThread>>,
     comments_tab: comment_list::CommentsTab,
     comment_tab_labels: (SharedString, SharedString),
+    code_section_labels: (SharedString, SharedString),
     expanded_notes: HashSet<u64>,
-    open_thread: Option<usize>,
+    thread_collapse: HashMap<String, bool>,
     me: Option<String>,
     editing: Option<note_actions::NoteEdit>,
     note_busy: bool,
@@ -377,8 +390,9 @@ impl ReviewView {
             code_threads: Rc::default(),
             comments_tab: comment_list::CommentsTab::default(),
             comment_tab_labels: (SharedString::default(), SharedString::default()),
+            code_section_labels: (SharedString::default(), SharedString::default()),
             expanded_notes: HashSet::new(),
-            open_thread: None,
+            thread_collapse: HashMap::new(),
             me: None,
             editing: None,
             note_busy: false,
@@ -1412,7 +1426,6 @@ impl ReviewView {
                         }) {
                             this.editing = None;
                         }
-                        this.open_thread = None;
                         let me = this.me.clone();
                         this.discussions = Rc::new(
                             discussions
@@ -1495,6 +1508,12 @@ impl ReviewView {
                 .collect(),
         );
         let s = tr();
+        let resolved = self.code_threads.iter().filter(|t| t.resolved).count();
+        let open = self.code_threads.len() - resolved;
+        self.code_section_labels = (
+            format!("{} · {open}", s.comments_active).into(),
+            format!("{} · {resolved}", s.comments_resolved).into(),
+        );
         self.comment_tab_labels = (
             format!("{} · {}", s.comments_code, self.code_threads.len()).into(),
             format!("{} · {}", s.comments_general, self.general_only.len()).into(),
@@ -1547,12 +1566,31 @@ impl ReviewView {
         cx.notify();
     }
 
-    pub fn toggle_open_thread(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.open_thread = if self.open_thread == Some(ix) {
-            None
-        } else {
-            Some(ix)
-        };
+    pub fn thread_collapsed(&self, discussion: &DiscussionView) -> bool {
+        let replying = matches!(
+            self.composer.as_ref().map(|c| &c.target),
+            Some(ComposerTarget::Reply(id)) if *id == discussion.id
+        );
+        let editing = self
+            .editing
+            .as_ref()
+            .is_some_and(|e| e.discussion_id == discussion.id);
+        if replying || editing {
+            return false;
+        }
+        self.thread_collapse
+            .get(&discussion.id)
+            .copied()
+            .unwrap_or(discussion.resolved)
+    }
+
+    pub fn toggle_thread(&mut self, id: &str, cx: &mut Context<Self>) {
+        let collapsed = self
+            .discussions
+            .iter()
+            .find(|d| d.id == id)
+            .is_some_and(|d| self.thread_collapsed(d));
+        self.thread_collapse.insert(id.to_string(), !collapsed);
         cx.notify();
     }
 
@@ -1839,11 +1877,6 @@ impl ReviewView {
         cx.notify();
     }
 
-    pub fn set_auto_mark(&mut self, on: bool, cx: &mut Context<Self>) {
-        update_settings(cx, |s| s.auto_mark_viewed = on);
-        cx.notify();
-    }
-
     pub fn resize_tree(&mut self, width: f32, cx: &mut Context<Self>) {
         let (min, max) = TREE_WIDTH_RANGE;
         let width = width.clamp(min, max).round();
@@ -2031,3 +2064,7 @@ async fn load_review(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "review_tests.rs"]
+mod tests;

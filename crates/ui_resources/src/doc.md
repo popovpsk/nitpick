@@ -14,7 +14,10 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`nitpick/sr
 
 - `assets.rs` — `Assets`, the `AssetSource`: own SVGs in `assets/icons/**` first, then the
   Lucide icons picked from `gpui-kit-assets` with `icon_assets!` (`ExtraIcons`), then
-  `gpui-kit-assets`' default component icons. `Icons` re-exports the shared `IconName`.
+  `gpui-kit-assets`' default component icons. `Icons` re-exports the shared `IconName`. An
+  empty path is `Ok(None)` (nothing to draw): gpui-component draws `Icon::empty()` in menus,
+  and an error there would be logged on every frame. A missing named icon stays an error.
+- `assets_tests.rs` — empty, missing and present paths.
 - `themes.rs` — `themes_dir`; `register_bundled_themes`: writes `themes/*.json` to the data
   dir's `themes/` and registers that folder with `ThemeRegistry`; `zed_theme_files` (theme
   JSON in Zed's installed extensions and its user themes folder); `import_zed_theme`

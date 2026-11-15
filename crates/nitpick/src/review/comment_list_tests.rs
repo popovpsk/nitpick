@@ -22,18 +22,29 @@ fn note(body: &str) -> NoteView {
 }
 
 fn discussion(path: Option<&str>, line: Option<u32>, replies: usize) -> DiscussionView {
+    resolved_discussion(path, line, replies, false)
+}
+
+fn resolved_discussion(
+    path: Option<&str>,
+    line: Option<u32>,
+    replies: usize,
+    resolved: bool,
+) -> DiscussionView {
     DiscussionView {
         id: String::new(),
         notes: (0..=replies).map(|_| note("text")).collect(),
         can_reply: true,
         resolve_id: None,
-        resolved: false,
+        resolved,
         position: path.map(|path| forge::Position {
             new_path: Some(path.to_string()),
             new_line: line,
             ..Default::default()
         }),
         location: None,
+        preview: SharedString::default(),
+        replies: None,
     }
 }
 
@@ -77,24 +88,25 @@ fn threads_follow_the_tree_order_then_the_line_and_mark_each_file_once() {
         discussion(Some("src/b.rs"), Some(5), 2),
         discussion(Some("src/a.rs"), Some(3), 0),
         discussion(Some("gone.rs"), Some(1), 0),
+        resolved_discussion(Some("src/a.rs"), Some(1), 0, true),
     ];
     let by_file: HashMap<SharedString, Vec<usize>> =
-        [(a.clone(), vec![0, 3]), (b.clone(), vec![2])].into();
+        [(a.clone(), vec![0, 3, 5]), (b.clone(), vec![2])].into();
     let threads = build_code_threads(&discussions, &files, &[1, 0], &by_file, None);
-    let order: Vec<(usize, bool, bool)> = threads
+    let order: Vec<(usize, bool, bool, bool)> = threads
         .iter()
-        .map(|t| (t.discussion, t.first_in_file, t.placed))
+        .map(|t| (t.discussion, t.first_in_section, t.first_in_file, t.placed))
         .collect();
     assert_eq!(
         order,
         vec![
-            (2, true, true),
-            (3, true, true),
-            (0, false, true),
-            (4, true, false),
+            (2, true, true, true),
+            (3, false, true, true),
+            (0, false, false, true),
+            (4, false, true, false),
+            (5, true, true, true),
         ]
     );
-    assert_eq!(threads[0].replies.as_ref().map(|r| r.as_ref()), Some("2"));
     assert_eq!(threads[0].status, Some(FileStatus::Added));
     assert_eq!(
         threads[1].line_label.as_ref().map(|l| l.as_ref()),

@@ -134,6 +134,7 @@ fn other_hosts_get_no_token() {
 #[rstest]
 #[case::too_large(ResponseTemplate::new(200).set_body_bytes(vec![0u8; MAX_BYTES + 1]), "larger")]
 #[case::not_found(ResponseTemplate::new(404), "404")]
+#[case::sign_in_page(ResponseTemplate::new(200).set_body_raw("<html>", "text/html; charset=utf-8"), "web page")]
 fn failed_downloads_are_errors(#[case] response: ResponseTemplate, #[case] message: &str) {
     runtime().block_on(async {
         let server = MockServer::start().await;
@@ -165,4 +166,15 @@ fn auth_applies_to_its_own_origin_only() {
     assert!(!auth.applies_to("http://gitlab.example.com/uploads/a.png"));
     assert!(!auth.applies_to("https://gitlab.example.com:8443/uploads/a.png"));
     assert!(!auth.applies_to("https://cdn.example.com/a.png"));
+}
+
+#[rstest]
+#[case::server_error(Error::Status(503), true)]
+#[case::rate_limited(Error::Status(429), true)]
+#[case::needs_a_session(Error::Status(401), false)]
+#[case::gone(Error::Status(404), false)]
+#[case::sign_in_page(Error::WebPage(200), false)]
+#[case::too_large(Error::TooLarge, false)]
+fn only_temporary_failures_are_retried(#[case] err: Error, #[case] temporary: bool) {
+    assert_eq!(err.is_temporary(), temporary);
 }

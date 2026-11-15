@@ -62,6 +62,7 @@ git_repo = { path = "../git_repo" }
 forge = { path = "../forge" }
 avatar_cache = { path = "../avatar_cache" }
 app_db = { path = "../app_db" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 review_core = { path = "../review_core" }
 secret_store = { path = "../secret_store" }
 net_runtime = { path = "../net_runtime" }

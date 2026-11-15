@@ -17,7 +17,12 @@ use crate::settings_store::settings;
 enum Slot {
     Loading,
     Ready(Arc<Image>),
-    Missing,
+    Missing { retry: bool },
+}
+
+enum Loaded {
+    Png(Vec<u8>),
+    Missing { retry: bool },
 }
 
 struct Avatars {
@@ -63,7 +68,7 @@ pub fn request(urls: impl IntoIterator<Item = SharedString>, cx: &mut App) {
     for url in urls {
         if matches!(
             cx.global::<Avatars>().slots.get(&url),
-            Some(Slot::Loading | Slot::Ready(_))
+            Some(Slot::Loading | Slot::Ready(_) | Slot::Missing { retry: false })
         ) {
             continue;
         }
@@ -74,11 +79,13 @@ pub fn request(urls: impl IntoIterator<Item = SharedString>, cx: &mut App) {
         let cache = cache.clone();
         let downloader = downloader.clone();
         cx.spawn(async move |cx| {
-            let png = load(url.to_string(), auth, cache, downloader, cx).await;
+            let loaded = load(url.to_string(), auth, cache, downloader, cx).await;
             cx.update(|cx| {
-                let slot = match png {
-                    Some(png) => Slot::Ready(Arc::new(Image::from_bytes(ImageFormat::Png, png))),
-                    None => Slot::Missing,
+                let slot = match loaded {
+                    Loaded::Png(png) => {
+                        Slot::Ready(Arc::new(Image::from_bytes(ImageFormat::Png, png)))
+                    }
+                    Loaded::Missing { retry } => Slot::Missing { retry },
                 };
                 let avatars = cx.global_mut::<Avatars>();
                 avatars.slots.insert(url, slot);
@@ -105,18 +112,22 @@ async fn load(
     cache: Option<Cache>,
     downloader: Option<Arc<Downloader>>,
     cx: &mut gpui::AsyncApp,
-) -> Option<Vec<u8>> {
+) -> Loaded {
     let cached = match &cache {
         Some(cache) => cache.read(&url, now()).await,
         None => None,
     };
     let stale = match cached {
-        Some(cached) if cached.fresh => return Some(cached.png),
+        Some(cached) if cached.fresh => return Loaded::Png(cached.png),
         Some(cached) => Some(cached.png),
         None => None,
     };
+    let fallback = |stale: Option<Vec<u8>>, retry: bool| match stale {
+        Some(png) => Loaded::Png(png),
+        None => Loaded::Missing { retry },
+    };
     let Some(downloader) = downloader else {
-        return stale;
+        return fallback(stale, false);
     };
     let fetched = net_runtime::spawn({
         let url = url.clone();
@@ -126,8 +137,8 @@ async fn load(
     let raw = match fetched {
         Ok(raw) => raw,
         Err(err) => {
-            log::debug!("avatar {url}: {err}");
-            return stale;
+            log::warn!("avatar {url}: {err}");
+            return fallback(stale, err.is_temporary());
         }
     };
     let normalized = cx
@@ -138,11 +149,11 @@ async fn load(
             if let Some(cache) = &cache {
                 cache.write(&url, png.clone(), now()).await;
             }
-            Some(png)
+            Loaded::Png(png)
         }
         Err(err) => {
-            log::debug!("avatar {url}: {err}");
-            stale
+            log::warn!("avatar {url}: {err}");
+            fallback(stale, false)
         }
     }
 }
@@ -174,7 +185,7 @@ pub fn render(
         .and_then(|url| cx.try_global::<Avatars>()?.slots.get(url))
         .and_then(|slot| match slot {
             Slot::Ready(image) => Some(image.clone()),
-            Slot::Loading | Slot::Missing => None,
+            Slot::Loading | Slot::Missing { .. } => None,
         });
     if let Some(image) = image {
         return img(image)

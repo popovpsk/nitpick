@@ -5,13 +5,14 @@ use gpui::{
     Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context,
     CursorStyle, DragMoveEvent, ElementId, Empty, Entity, FocusHandle, Focusable as _,
     HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledText, Window, canvas, div, ease_out_quint, prelude::FluentBuilder as _, px,
+    MouseDownEvent, ParentElement as _, Pixels, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledText, Window, canvas, div, ease_out_quint,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     StyledExt as _, WindowExt as _,
-    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _},
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _, DropdownButton},
     diff::{Diff, DiffChangeIndicator, DiffHoverHighlight, DiffMode},
     h_flex,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
@@ -32,7 +33,8 @@ use super::{
 use crate::localization::tr;
 use crate::picker::Picker;
 use crate::settings_store::{
-    DiffLayout, SPLIT_MIN_COLUMN, SPLIT_RATIO_RANGE, TreeSide, WrapLines, fit_split_ratio, settings,
+    DiffLayout, SPLIT_MIN_COLUMN, SPLIT_RATIO_RANGE, TreeSide, WrapLines, fit_split_ratio,
+    settings, update_settings,
 };
 
 impl ReviewView {
@@ -62,53 +64,7 @@ impl ReviewView {
         };
         self.refresh_header_text();
         let commits = self.render_commits_button(cx);
-        let (progress_label, progress_tooltip) = self
-            .header_text
-            .as_ref()
-            .map(|text| (text.progress.clone(), text.progress_tooltip.clone()))
-            .unwrap_or_default();
         let theme = cx.theme();
-        let (viewed, total) = self.progress();
-        let progress = (total > 0).then(|| {
-            let complete = viewed == total;
-            let view = cx.entity();
-            Button::new("viewed-progress")
-                .ghost()
-                .small()
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(if complete {
-                                    theme.success
-                                } else {
-                                    theme.muted_foreground
-                                })
-                                .child(progress_label),
-                        )
-                        .child(
-                            ProgressBar::new("viewed-progress-bar")
-                                .xsmall()
-                                .w(px(56.))
-                                .value(viewed as f32 * 100. / total as f32)
-                                .when(complete, |bar| bar.color(theme.success)),
-                        ),
-                )
-                .tooltip(progress_tooltip)
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let view = view.clone();
-                    menu.item(
-                        PopupMenuItem::new(tr().reset_progress_ellipsis.clone())
-                            .icon(Icon::new(Icons::RotateCcw))
-                            .on_click(move |_, window, cx| {
-                                confirm_reset_progress(&view, window, cx)
-                            }),
-                    )
-                })
-        });
         let mut left = h_flex().flex_1().min_w_0().gap_2().items_center();
         match (&self.source, &self.mr) {
             (_, Some(ctx)) => {
@@ -253,7 +209,6 @@ impl ReviewView {
             )
             .children(approve_button)
             .children(comments_button)
-            .children(progress)
             .child(
                 Button::new("refresh-review")
                     .ghost()
@@ -264,6 +219,64 @@ impl ReviewView {
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
             .into_any_element()
+    }
+
+    pub(super) fn render_viewed_progress(
+        &mut self,
+        fit: ProgressFit,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.refresh_header_text();
+        let (progress_label, progress_tooltip) = self
+            .header_text
+            .as_ref()
+            .map(|text| (text.progress.clone(), text.progress_tooltip.clone()))
+            .unwrap_or_default();
+        let theme = cx.theme();
+        let (viewed, total) = self.progress();
+        (total > 0).then(|| {
+            let complete = viewed == total;
+            let view = cx.entity();
+            Button::new("viewed-progress")
+                .ghost()
+                .small()
+                .child(
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .when(fit.label, |el| {
+                            el.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if complete {
+                                        theme.success
+                                    } else {
+                                        theme.muted_foreground
+                                    })
+                                    .child(progress_label),
+                            )
+                        })
+                        .child(
+                            ProgressBar::new("viewed-progress-bar")
+                                .xsmall()
+                                .w(fit.bar)
+                                .value(viewed as f32 * 100. / total as f32)
+                                .when(complete, |bar| bar.color(theme.success)),
+                        ),
+                )
+                .tooltip(progress_tooltip)
+                .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
+                    let view = view.clone();
+                    menu.item(
+                        PopupMenuItem::new(tr().reset_progress_ellipsis.clone())
+                            .icon(Icon::new(Icons::RotateCcw))
+                            .on_click(move |_, window, cx| {
+                                confirm_reset_progress(&view, window, cx)
+                            }),
+                    )
+                })
+                .into_any_element()
+        })
     }
 
     fn refresh_header_text(&mut self) {
@@ -396,6 +409,7 @@ impl ReviewView {
         let full_path = label.path.clone();
         let renamed_from = label.renamed_from.clone();
         let view = cx.entity();
+        let open_view = view.clone();
         Some(
             h_flex()
                 .min_w_0()
@@ -450,6 +464,18 @@ impl ReviewView {
                             })
                         })
                 }))
+                .child({
+                    let view = open_view;
+                    Button::new("open-file")
+                        .ghost()
+                        .xsmall()
+                        .flex_none()
+                        .icon(Icon::new(Icons::SquareArrowOutUpRight))
+                        .tooltip(tr().open_file.clone())
+                        .dropdown_menu(move |menu, _, cx| {
+                            file_actions::open_file_menu(menu, &view, cx)
+                        })
+                })
                 .into_any_element(),
         )
     }
@@ -472,7 +498,6 @@ impl ReviewView {
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
-        let auto_mark = settings(cx).auto_mark_viewed;
         let theme = cx.theme();
         h_flex()
             .flex_none()
@@ -565,51 +590,60 @@ impl ReviewView {
                     })),
             )
             .child(
-                Button::new("auto-mark")
-                    .ghost()
+                DropdownButton::new("viewed")
                     .small()
-                    .icon(Icon::new(Icons::CheckCheck))
-                    .label(s.auto_mark_label.clone())
-                    .selected(auto_mark)
-                    .tooltip(if auto_mark {
-                        s.auto_mark_on.clone()
-                    } else {
-                        s.auto_mark_off.clone()
-                    })
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.set_auto_mark(!auto_mark, cx)),
-                    ),
-            )
-            .child(
-                Button::new("mark-viewed")
-                    .small()
-                    .when(current_viewed, |b| b.ghost())
-                    .when(!current_viewed, |b| b.outline())
-                    .icon(Icon::new(if current_viewed {
-                        Icons::Undo2
-                    } else {
-                        Icons::SquareCheck
-                    }))
-                    .label(if current_viewed {
-                        s.mark_unviewed.clone()
-                    } else {
-                        s.mark_viewed.clone()
-                    })
-                    .disabled(self.current_file.is_none())
-                    .tooltip_with_action(
+                    .map(|button| {
                         if current_viewed {
-                            s.mark_unviewed.clone()
+                            button.success()
                         } else {
-                            s.mark_viewed.clone()
-                        },
-                        &ToggleViewed,
-                        Some("Review"),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(file) = this.current_file {
-                            this.toggle_file_viewed(file, cx);
+                            button.outline()
                         }
-                    })),
+                    })
+                    .button(
+                        Button::new("mark-viewed")
+                            .disabled(self.current_file.is_none())
+                            .icon(Icon::new(if current_viewed {
+                                Icons::SquareCheck
+                            } else {
+                                Icons::Square
+                            }))
+                            .label(s.viewed_short.clone())
+                            .tooltip_with_action(
+                                if current_viewed {
+                                    s.mark_unviewed.clone()
+                                } else {
+                                    s.mark_viewed.clone()
+                                },
+                                &ToggleViewed,
+                                Some("Review"),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(file) = this.current_file {
+                                    this.toggle_file_viewed(file, cx);
+                                }
+                            })),
+                    )
+                    .menu_accessibility_label(s.viewed_options.clone())
+                    .dropdown_menu(move |menu, _, cx| {
+                        let s = tr();
+                        let current = settings(cx);
+                        let (auto_mark, advance) =
+                            (current.auto_mark_viewed, current.advance_on_viewed);
+                        menu.item(
+                            PopupMenuItem::new(s.auto_mark_viewed.clone())
+                                .checked(auto_mark)
+                                .on_click(move |_, _, cx| {
+                                    update_settings(cx, |s| s.auto_mark_viewed = !auto_mark)
+                                }),
+                        )
+                        .item(
+                            PopupMenuItem::new(s.advance_on_viewed.clone())
+                                .checked(advance)
+                                .on_click(move |_, _, cx| {
+                                    update_settings(cx, |s| s.advance_on_viewed = !advance)
+                                }),
+                        )
+                    }),
             )
             .child(self.render_blame_toggle(cx))
             .child(
@@ -941,6 +975,37 @@ fn branch_chip(
         .into_any_element()
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ProgressFit {
+    pub label: bool,
+    pub bar: Pixels,
+}
+
+const PROGRESS_BAR_REMS: f32 = 3.5;
+const PROGRESS_BAR_MIN_REMS: f32 = 0.75;
+const TREE_HEADER_FIXED_REMS: f32 = 7.25;
+const PROGRESS_BUTTON_PADDING_REMS: f32 = 1.0;
+const PROGRESS_LABEL_CHAR_REMS: f32 = 0.45;
+const PROGRESS_LABEL_GAP_REMS: f32 = 0.375;
+
+impl ProgressFit {
+    pub(super) fn for_width(width: Pixels, rem: Pixels, label_chars: usize) -> Self {
+        let full = rem * PROGRESS_BAR_REMS;
+        let room = width - rem * (TREE_HEADER_FIXED_REMS + PROGRESS_BUTTON_PADDING_REMS);
+        let label = rem * (PROGRESS_LABEL_CHAR_REMS * label_chars as f32 + PROGRESS_LABEL_GAP_REMS);
+        if room - label >= full {
+            return Self {
+                label: true,
+                bar: full,
+            };
+        }
+        Self {
+            label: false,
+            bar: room.min(full).max(rem * PROGRESS_BAR_MIN_REMS),
+        }
+    }
+}
+
 fn confirm_reset_progress(view: &Entity<ReviewView>, window: &mut Window, cx: &mut App) {
     let viewed = view.read(cx).viewed_count();
     if viewed == 0 {
@@ -1236,3 +1301,7 @@ impl Render for ReviewView {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "diff_panel_tests.rs"]
+mod tests;

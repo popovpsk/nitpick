@@ -671,7 +671,6 @@ fn file_items(
     menu: PopupMenu,
     view: &Entity<ReviewView>,
     target: MenuTarget,
-    with_keys: bool,
     cx: &App,
 ) -> PopupMenu {
     let s = tr();
@@ -679,11 +678,7 @@ fn file_items(
     let copy = PopupMenuItem::new(s.copy_path.clone()).on_click(move |_, _, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()))
     });
-    let mut menu = menu.item(if with_keys {
-        copy.action(Box::new(CopyPath))
-    } else {
-        copy
-    });
+    let mut menu = menu.item(copy.action(Box::new(CopyPath)));
     let Some(file) = target.file else {
         return menu;
     };
@@ -692,11 +687,7 @@ fn file_items(
         let open = PopupMenuItem::new(s.open_in_editor.clone()).on_click(move |_, _, cx| {
             editor_view.update(cx, |this, cx| this.open_in_editor(file, cx))
         });
-        menu = menu.item(if with_keys {
-            open.action(Box::new(OpenInEditor))
-        } else {
-            open
-        });
+        menu = menu.item(open.action(Box::new(OpenInEditor)));
     }
     if let Some(label) = view.read(cx).web_label() {
         let browser_view = view.clone();
@@ -716,14 +707,50 @@ pub(super) fn row_menu(
     cx: &App,
 ) -> PopupMenu {
     match view.read(cx).menu_target(node) {
-        Some(target) => file_items(menu, view, target, false, cx).separator(),
+        Some(target) => file_items(menu, view, target, cx).separator(),
         None => menu,
     }
 }
 
+pub(super) fn open_file_menu(menu: PopupMenu, view: &Entity<ReviewView>, cx: &App) -> PopupMenu {
+    let Some(target) = view.read(cx).shown_target() else {
+        return menu;
+    };
+    let s = tr();
+    let mut menu = menu;
+    if let Some(file) = target.file {
+        if target.status != FileStatus::Deleted {
+            let editor_view = view.clone();
+            menu = menu.item(
+                PopupMenuItem::new(s.open_in_editor.clone())
+                    .action(Box::new(OpenInEditor))
+                    .on_click(move |_, _, cx| {
+                        editor_view.update(cx, |this, cx| this.open_in_editor(file, cx))
+                    }),
+            );
+        }
+        if let Some(label) = view.read(cx).web_label() {
+            let browser_view = view.clone();
+            menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                if let Some(url) = browser_view.read(cx).web_url(file, cx) {
+                    cx.open_url(&url);
+                }
+            }));
+        }
+    }
+    let path = target.path.clone();
+    menu.separator().item(
+        PopupMenuItem::new(s.copy_path.clone())
+            .action(Box::new(CopyPath))
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()))
+            }),
+    )
+}
+
 pub(super) fn shown_file_menu(menu: PopupMenu, view: &Entity<ReviewView>, cx: &App) -> PopupMenu {
     match view.read(cx).shown_target() {
-        Some(target) => file_items(menu, view, target, true, cx),
+        Some(target) => file_items(menu, view, target, cx),
         None => menu,
     }
 }

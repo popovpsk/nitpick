@@ -47,6 +47,8 @@ gpui_kit_assets::icon_assets!(
         Pencil,
         Trash,
         ThumbsUp,
+        Square,
+        SquareArrowOutUpRight,
     ]
 );
 
@@ -54,6 +56,9 @@ pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path.is_empty() {
+            return Ok(None);
+        }
         if let Some(file) = OwnIcons::get(path) {
             return Ok(Some(file.data));
         }
@@ -78,3 +83,7 @@ impl AssetSource for Assets {
         Ok(paths)
     }
 }
+
+#[cfg(test)]
+#[path = "assets_tests.rs"]
+mod tests;

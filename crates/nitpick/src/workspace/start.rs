@@ -17,6 +17,7 @@ use gpui_component::{
 };
 use ui_resources::Icons;
 
+use super::ShowSettings;
 use crate::localization::tr;
 use crate::picker::{Picker, PickerEvent, branch_entries};
 use crate::review::ReviewSource;
@@ -484,6 +485,7 @@ impl StartView {
                         .small()
                         .icon(IconName::Settings)
                         .label(s.settings.clone())
+                        .tooltip_with_action(s.settings.clone(), &ShowSettings, Some("Workspace"))
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(StartEvent::OpenSettings))),
                 )
                 .into_any_element(),

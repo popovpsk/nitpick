@@ -18,7 +18,7 @@ use ui_resources::Icons;
 
 use super::comments::{render_composer, render_discussion};
 use super::model::LoadedReview;
-use super::{ComposerTarget, DiscussionView, ReviewView, avatars};
+use super::{ComposerTarget, DiscussionView, ReviewView};
 use crate::localization::tr;
 
 const PREVIEW_CHARS: usize = 160;
@@ -39,10 +39,9 @@ pub struct CodeThread {
     pub line_label: Option<SharedString>,
     pub placed: bool,
     pub outdated: bool,
-    pub preview: SharedString,
-    pub replies: Option<SharedString>,
     pub resolved: bool,
     pub first_in_file: bool,
+    pub first_in_section: bool,
 }
 
 pub struct FilePaths<'a> {
@@ -94,8 +93,6 @@ pub fn build_code_threads(
                 .iter()
                 .position(|f| f.new_path == path || f.old_path == path);
             let line = position.new_line.or(position.old_line);
-            let note = discussion.notes.first()?;
-            let replies = discussion.notes.len().saturating_sub(1);
             let thread = CodeThread {
                 discussion: ix,
                 file,
@@ -108,10 +105,9 @@ pub fn build_code_threads(
                 outdated: head_sha.is_some_and(|head| {
                     position.head_sha.as_deref().is_some_and(|sha| sha != head)
                 }),
-                preview: preview(&note.body),
-                replies: (replies > 0).then(|| SharedString::from(replies.to_string())),
                 resolved: discussion.resolved,
                 first_in_file: false,
+                first_in_section: false,
             };
             let order = file
                 .and_then(|f| rank.get(f).copied())
@@ -120,20 +116,28 @@ pub fn build_code_threads(
         })
         .collect();
     threads.sort_by(|a, b| {
-        (a.0, &a.2.path, a.1, a.2.discussion).cmp(&(b.0, &b.2.path, b.1, b.2.discussion))
+        (a.2.resolved, a.0, &a.2.path, a.1, a.2.discussion).cmp(&(
+            b.2.resolved,
+            b.0,
+            &b.2.path,
+            b.1,
+            b.2.discussion,
+        ))
     });
-    let mut previous: Option<SharedString> = None;
+    let mut previous: Option<(bool, SharedString)> = None;
     threads
         .into_iter()
         .map(|(_, _, mut thread)| {
-            thread.first_in_file = previous.as_ref() != Some(&thread.path);
-            previous = Some(thread.path.clone());
+            thread.first_in_section = previous.as_ref().is_none_or(|p| p.0 != thread.resolved);
+            thread.first_in_file =
+                thread.first_in_section || previous.as_ref().is_some_and(|p| p.1 != thread.path);
+            previous = Some((thread.resolved, thread.path.clone()));
             thread
         })
         .collect()
 }
 
-fn preview(body: &str) -> SharedString {
+pub fn preview(body: &str) -> SharedString {
     let line = body
         .lines()
         .map(|line| line.trim().trim_start_matches(['#', '>', '-', '*', ' ']))
@@ -203,6 +207,7 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
     let review = view.read(cx);
     let threads = review.code_threads.clone();
     let discussions = review.discussions.clone();
+    let (open_label, resolved_label) = review.code_section_labels.clone();
     if threads.is_empty() {
         return div()
             .text_sm()
@@ -211,23 +216,36 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
             .into_any_element();
     }
     let theme = cx.theme();
-    let mut list = v_flex().gap_0p5().pb_4();
+    let mut list = v_flex().gap_2().pb_4();
     for (row, thread) in threads.iter().enumerate() {
         let Some(discussion) = discussions.get(thread.discussion) else {
             continue;
         };
-        let Some(note) = discussion.notes.first() else {
-            continue;
-        };
+        if thread.first_in_section {
+            list = list.child(
+                div()
+                    .when(row > 0, |el| el.pt_3())
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(theme.muted_foreground)
+                    .child(if thread.resolved {
+                        resolved_label.clone()
+                    } else {
+                        open_label.clone()
+                    }),
+            );
+        }
         if thread.first_in_file {
             list = list.child(
                 h_flex()
-                    .pt(if row == 0 { px(0.) } else { px(10.) })
-                    .pb_1()
+                    .pt_1()
                     .gap_1p5()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(Icon::new(status_icon(thread.status)).xsmall())
+                    .text_sm()
+                    .child(
+                        Icon::new(status_icon(thread.status))
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -240,104 +258,40 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
         }
         let ix = thread.discussion;
         let jump_view = view.clone();
-        let placed = thread.placed;
-        let open = review.open_thread == Some(ix);
         list = list.child(
-            h_flex()
-                .id(ElementId::NamedInteger("code-thread".into(), ix as u64))
-                .gap_2()
-                .px_2()
-                .py_1p5()
-                .rounded(theme.radius)
-                .cursor_pointer()
-                .hover(|style| style.bg(theme.list_hover))
-                .when(thread.resolved, |el| el.opacity(0.6))
-                .child(avatars::render(
-                    note.avatar.as_ref(),
-                    &note.initials,
-                    note.tint,
-                    px(18.),
-                    cx,
-                ))
+            v_flex()
+                .gap_1()
                 .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .text_xs()
-                                .child(div().font_semibold().child(note.author.clone()))
-                                .when_some(thread.line_label.clone(), |el, line| {
-                                    el.child(div().text_color(theme.muted_foreground).child(line))
-                                })
-                                .when(thread.outdated, |el| {
-                                    el.child(Tag::warning().xsmall().child(tr().outdated.clone()))
-                                })
-                                .when(thread.resolved, |el| {
-                                    el.child(Tag::success().xsmall().child(tr().resolved.clone()))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .child(thread.preview.clone()),
-                        ),
-                )
-                .when_some(thread.replies.clone(), |el, replies| {
-                    el.child(
-                        h_flex()
-                            .flex_none()
-                            .gap_0p5()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(Icon::new(Icons::MessageSquare).xsmall())
-                            .child(replies),
-                    )
-                })
-                .when(open, |el| el.bg(theme.list_active))
-                .on_click(move |_, window, cx| {
-                    if placed {
-                        window.close_sheet(cx);
-                        jump_view.update(cx, |this, cx| this.reveal_discussion(ix, window, cx));
-                    } else {
-                        jump_view.update(cx, |this, cx| this.toggle_open_thread(ix, cx));
-                    }
-                }),
-        );
-        if open {
-            let file_view = view.clone();
-            list = list.child(
-                v_flex()
-                    .gap_1()
-                    .pl_6()
-                    .pb_2()
-                    .child(render_discussion(view, ix, discussion, cx))
-                    .when(thread.file.is_some(), |el| {
-                        el.child(
-                            h_flex().child(
+                    h_flex()
+                        .gap_1p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .when_some(thread.line_label.clone(), |el, line| el.child(line))
+                        .when(thread.outdated, |el| {
+                            el.child(Tag::warning().xsmall().child(s.outdated.clone()))
+                        })
+                        .child(div().flex_1())
+                        .when(thread.file.is_some(), |el| {
+                            el.child(
                                 Button::new(ElementId::NamedInteger(
-                                    "open-thread-file".into(),
+                                    "go-to-code".into(),
                                     ix as u64,
                                 ))
                                 .ghost()
                                 .xsmall()
-                                .icon(Icon::new(Icons::FileDiff))
-                                .label(tr().open.clone())
+                                .icon(Icon::new(Icons::ArrowUpRight))
+                                .label(s.go_to_code.clone())
                                 .on_click(move |_, window, cx| {
                                     window.close_sheet(cx);
-                                    file_view.update(cx, |this, cx| {
+                                    jump_view.update(cx, |this, cx| {
                                         this.reveal_discussion(ix, window, cx)
                                     });
                                 }),
-                            ),
-                        )
-                    }),
-            );
-        }
+                            )
+                        }),
+                )
+                .child(render_discussion(view, ix, discussion, cx)),
+        );
     }
     list.into_any_element()
 }

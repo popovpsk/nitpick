@@ -58,6 +58,7 @@ pub struct Workspace {
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
     _picker_subscriptions: Vec<Subscription>,
+    _updater: Option<Subscription>,
 }
 
 impl Workspace {
@@ -106,6 +107,8 @@ impl Workspace {
             focus: cx.focus_handle(),
             _subscriptions: Vec::new(),
             _picker_subscriptions: picker_subscriptions,
+            _updater: updater::handle(cx)
+                .map(|updater| cx.observe(&updater, |_, _, cx| cx.notify())),
         };
         if let Some(path) = repo {
             this.open_repo(&path, true, window, cx);
@@ -439,6 +442,11 @@ impl Workspace {
                             .primary()
                             .icon(IconName::FolderOpen)
                             .label(s.open_repository.clone())
+                            .tooltip_with_action(
+                                s.open_repository.clone(),
+                                &OpenRepository,
+                                Some("Workspace"),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.prompt_open_repository(window, cx)
                             })),
@@ -448,6 +456,11 @@ impl Workspace {
                             .outline()
                             .icon(IconName::Plus)
                             .label(s.add_repositories_ellipsis.clone())
+                            .tooltip_with_action(
+                                s.add_repositories_ellipsis.clone(),
+                                &AddRepositories,
+                                Some("Workspace"),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.prompt_add_repositories(window, cx)
                             })),

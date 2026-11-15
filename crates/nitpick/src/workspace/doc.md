@@ -12,9 +12,11 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   window title, the folder prompts (open one, add all from a folder), the repository
   picker's entries, window-level actions and bindings.
 - `title_bar.rs` — the repository picker trigger and its footer (open, add from folder), the
-  review button, the settings button.
+  review button, the "Restart to Update" button once the updater has an update staged
+  (`updater::ready_note`; the workspace observes the updater), the settings button.
 - `window_tabs.rs` — the strip of native window tabs (title centred, the close button at the
-  tab's right edge on hover, as in Zed), and next/previous tab.
+  tab's right edge on hover, as in Zed; its tooltip names `CloseWindow`'s key on the active tab
+  only, the new-tab button shows `NewWindow`'s), and next/previous tab.
 - `start.rs` — `StartView`: target/source branch pickers (fuzzy `Picker`s) for a
   comparison, the uncommitted-changes review, and the open merge requests (GitLab) or pull
   requests (GitHub) of the repository's remote on a configured host (list, filter, URL,
@@ -46,6 +48,9 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
 - "Add Repositories from Folder…" (welcome screen, picker footer, File menu): the folder is
   scanned with `git_repo::find_repositories` on the background executor, every new path is
   added to `recent.json` without opening it, and a notification gives the count.
+- Buttons that run a keymap command name its key in their tooltip (`tooltip_with_action`,
+  context `Workspace`): the welcome and start screens' open, add and settings buttons as well as
+  the title bar's.
 - The review button shows only the review's title; viewed progress lives in the review
   header.
 - Leaving the start or review screen closes its pickers: a popover's state lives in element

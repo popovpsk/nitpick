@@ -1,15 +1,15 @@
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 use forge::ForgeKind;
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
-    actions, div, prelude::FluentBuilder as _, px, rems,
+    Anchor, AnyElement, App, AppContext as _, Axis, Context, ElementId, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
@@ -30,8 +30,8 @@ use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
 use crate::review::{HostOs, editor_presets};
 use crate::settings_store::{
-    DiffLayout, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines,
-    apply_saved_theme, apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
+    LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines, apply_saved_theme,
+    apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
     syntax_palette_names, update_settings,
 };
 use crate::shortcut_dialog::{self, keystroke_element, where_label};
@@ -40,6 +40,7 @@ use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 
 actions!(settings_view, [CloseSettings]);
 
+const FIELD_MAX_WIDTH: f32 = 440.;
 const HIDDEN_SAVE_DELAY: Duration = Duration::from_millis(400);
 const HIDDEN_MIN_ROWS: usize = 10;
 const HIDDEN_MAX_ROWS: usize = 30;
@@ -269,6 +270,58 @@ impl HiddenRules {
     }
 }
 
+struct RepoRules {
+    root: PathBuf,
+    name: SharedString,
+    path: SharedString,
+    rules: HiddenRules,
+    _subscription: Subscription,
+}
+
+impl RepoRules {
+    fn new(root: PathBuf, window: &mut Window, cx: &mut Context<SettingsView>) -> Self {
+        let input =
+            cx.new(|cx| TextareaState::new(window, cx).auto_grow(HIDDEN_MIN_ROWS, HIDDEN_MAX_ROWS));
+        let save_root = root.clone();
+        let subscription = cx.subscribe(&input, move |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.schedule_hidden_save(Some(save_root.clone()), cx);
+            }
+        });
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        Self {
+            path: root.to_string_lossy().into_owned().into(),
+            root,
+            name: name.into(),
+            rules: HiddenRules::new(input),
+            _subscription: subscription,
+        }
+    }
+}
+
+fn hidden_roots(
+    opener: Option<&Path>,
+    open: &[PathBuf],
+    with_rules: impl Iterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
+    let mut rest: Vec<PathBuf> = open.iter().cloned().chain(with_rules).collect();
+    rest.sort_by_key(|root| {
+        root.file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    });
+    let mut roots: Vec<PathBuf> = opener.map(Path::to_path_buf).into_iter().collect();
+    for root in rest {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     HiddenFiles,
@@ -293,9 +346,9 @@ pub struct SettingsView {
     editor_baseline: String,
     _editor_subscription: Subscription,
     hidden_global: HiddenRules,
-    hidden_repo: HiddenRules,
+    repo_rules: Vec<RepoRules>,
     repo: Option<(PathBuf, SharedString)>,
-    _hidden_subscriptions: [Subscription; 2],
+    _hidden_subscription: Subscription,
     _settings_sync: Option<Subscription>,
     zed_files: Rc<Vec<ZedThemeFile>>,
     _zed_discovery: Task<()>,
@@ -345,19 +398,11 @@ impl SettingsView {
             cx.new(|cx| TextareaState::new(window, cx).auto_grow(HIDDEN_MIN_ROWS, HIDDEN_MAX_ROWS))
         };
         let global_input = hidden_input(window, cx);
-        let repo_input = hidden_input(window, cx);
-        let subscriptions = [
-            cx.subscribe(&global_input, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.schedule_hidden_save(false, cx);
-                }
-            }),
-            cx.subscribe(&repo_input, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.schedule_hidden_save(true, cx);
-                }
-            }),
-        ];
+        let global_subscription = cx.subscribe(&global_input, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.schedule_hidden_save(None, cx);
+            }
+        });
         let mut this = Self {
             focus: cx.focus_handle(),
             generation: 0,
@@ -369,9 +414,9 @@ impl SettingsView {
             editor_baseline: current.editor_command.clone(),
             _editor_subscription: editor_subscription,
             hidden_global: HiddenRules::new(global_input),
-            hidden_repo: HiddenRules::new(repo_input),
+            repo_rules: Vec::new(),
             repo: None,
-            _hidden_subscriptions: subscriptions,
+            _hidden_subscription: global_subscription,
             _settings_sync: None,
             zed_files: Rc::default(),
             _zed_discovery: zed_discovery,
@@ -439,12 +484,27 @@ impl SettingsView {
         let current = settings(cx).clone();
         self.hidden_global
             .load(&current.hidden_files, force, window, cx);
-        let repo = self
-            .repo
-            .as_ref()
-            .map(|(root, _)| current.repo_hidden(root).to_vec())
-            .unwrap_or_default();
-        self.hidden_repo.load(&repo, force, window, cx);
+        let roots = hidden_roots(
+            self.repo.as_ref().map(|(root, _)| root.as_path()),
+            &crate::window_registry::open_repos(cx),
+            current.repo_hidden_files.keys().map(PathBuf::from),
+        );
+        let mut kept: Vec<RepoRules> = Vec::with_capacity(roots.len());
+        for root in roots {
+            let entry = match self.repo_rules.iter().position(|r| r.root == root) {
+                Some(ix) => self.repo_rules.remove(ix),
+                None => RepoRules::new(root, window, cx),
+            };
+            kept.push(entry);
+        }
+        if !force {
+            kept.append(&mut self.repo_rules);
+        }
+        self.repo_rules = kept;
+        for entry in &mut self.repo_rules {
+            let list = current.repo_hidden(&entry.root).to_vec();
+            entry.rules.load(&list, force, window, cx);
+        }
     }
 
     fn reload_editor_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -483,12 +543,13 @@ impl SettingsView {
         .detach();
     }
 
-    fn schedule_hidden_save(&mut self, repository: bool, cx: &mut Context<Self>) {
-        let root = self.repo.as_ref().map(|(root, _)| root.clone());
-        let rules = if repository {
-            &mut self.hidden_repo
-        } else {
-            &mut self.hidden_global
+    fn schedule_hidden_save(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
+        let rules = match &root {
+            None => &mut self.hidden_global,
+            Some(root) => match self.repo_rules.iter_mut().find(|r| &r.root == root) {
+                Some(entry) => &mut entry.rules,
+                None => return,
+            },
         };
         let value = rules.input.read(cx).value();
         rules.empty = value.is_empty();
@@ -509,11 +570,12 @@ impl SettingsView {
             }
             let saved = typed.clone();
             cx.update(|cx| {
-                update_settings(cx, move |s| match (repository, root) {
-                    (false, _) => {
+                let root = root.clone();
+                update_settings(cx, move |s| match root {
+                    None => {
                         review_core::hidden::merge_patterns(&mut s.hidden_files, &baseline, &typed)
                     }
-                    (true, Some(root)) => {
+                    Some(root) => {
                         let key = repo_key(&root);
                         let list = s.repo_hidden_files.entry(key.clone()).or_default();
                         review_core::hidden::merge_patterns(list, &baseline, &typed);
@@ -521,14 +583,14 @@ impl SettingsView {
                             s.repo_hidden_files.remove(&key);
                         }
                     }
-                    (true, None) => {}
                 })
             });
-            let _ = this.update(cx, |this, _| {
-                if repository {
-                    this.hidden_repo.baseline = saved;
-                } else {
-                    this.hidden_global.baseline = saved;
+            let _ = this.update(cx, |this, _| match &root {
+                None => this.hidden_global.baseline = saved,
+                Some(root) => {
+                    if let Some(entry) = this.repo_rules.iter_mut().find(|r| &r.root == root) {
+                        entry.rules.baseline = saved;
+                    }
                 }
             });
         })
@@ -673,23 +735,47 @@ fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> Set
     SettingGroup::new()
         .title(kind.name())
         .description(description)
-        .item(SettingItem::new(
-            s.server_url.clone(),
-            SettingField::render(move |_, _, cx| {
-                div()
-                    .w(px(320.))
-                    .child(Input::new(&url_view.read(cx).form(kind).url).small())
-            }),
-        ))
+        .item(
+            SettingItem::new(
+                s.server_url.clone(),
+                SettingField::render(move |_, _, cx| {
+                    div()
+                        .w_full()
+                        .max_w(px(FIELD_MAX_WIDTH))
+                        .child(Input::new(&url_view.read(cx).form(kind).url).small())
+                }),
+            )
+            .layout(Axis::Vertical),
+        )
         .item(
             SettingItem::new(
                 s.access_token.clone(),
                 SettingField::render(move |_, _, cx| {
-                    div()
-                        .w(px(320.))
-                        .child(Input::new(&token_view.read(cx).form(kind).token).small())
+                    let form = token_view.read(cx).form(kind);
+                    let typed_url = form.url.read(cx).value();
+                    h_flex()
+                        .w_full()
+                        .max_w(px(FIELD_MAX_WIDTH))
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&form.token).small()),
+                        )
+                        .children(kind.new_token_url(&typed_url).map(|url| {
+                            Button::new(match kind {
+                                ForgeKind::GitLab => "gitlab-new-token",
+                                ForgeKind::GitHub => "github-new-token",
+                            })
+                            .small()
+                            .label(tr().create_token.clone())
+                            .tooltip(tr().create_token_tooltip.clone())
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                        }))
                 }),
             )
+            .layout(Axis::Vertical)
             .description(token_description),
         )
         .item(SettingItem::render(move |_, _, cx| {
@@ -699,8 +785,21 @@ fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> Set
             h_flex()
                 .w_full()
                 .gap_2()
-                .justify_end()
+                .justify_start()
                 .items_center()
+                .child(
+                    Button::new(match kind {
+                        ForgeKind::GitLab => "gitlab-save",
+                        ForgeKind::GitHub => "github-save",
+                    })
+                    .primary()
+                    .small()
+                    .icon(IconName::Check)
+                    .label(tr().save_and_check.clone())
+                    .on_click(move |_, _, cx| {
+                        save_view.update(cx, |this, cx| this.save_forge(kind, cx))
+                    }),
+                )
                 .child(match status {
                     ForgeStatus::Idle => div().into_any_element(),
                     ForgeStatus::Checking => div()
@@ -719,19 +818,6 @@ fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> Set
                         .child(text)
                         .into_any_element(),
                 })
-                .child(
-                    Button::new(match kind {
-                        ForgeKind::GitLab => "gitlab-save",
-                        ForgeKind::GitHub => "github-save",
-                    })
-                    .primary()
-                    .small()
-                    .icon(IconName::Check)
-                    .label(tr().save_and_check.clone())
-                    .on_click(move |_, _, cx| {
-                        save_view.update(cx, |this, cx| this.save_forge(kind, cx))
-                    }),
-                )
         }))
 }
 
@@ -1131,21 +1217,6 @@ impl Render for SettingsView {
                         )
                     }),
                 ))
-                .item(SettingItem::new(
-                    s.diff_layout.clone(),
-                    SettingField::render(|_, _, cx| {
-                        let s = tr();
-                        choice_buttons(
-                            "diff-layout-setting",
-                            vec![
-                                (s.split_view.clone(), DiffLayout::Split),
-                                (s.unified_view.clone(), DiffLayout::Unified),
-                            ],
-                            settings(cx).diff_layout,
-                            |st, v| st.diff_layout = v,
-                        )
-                    }),
-                ))
                 .item(
                     SettingItem::new(
                         s.show_whole_file.clone(),
@@ -1182,54 +1253,33 @@ impl Render for SettingsView {
                     )
                     .description(s.ignore_whitespace_desc.clone()),
                 )
-                .item(
-                    SettingItem::new(
-                        s.advance_on_viewed.clone(),
-                        SettingField::switch(
-                            |cx| settings(cx).advance_on_viewed,
-                            |value, cx| update_settings(cx, |s| s.advance_on_viewed = value),
-                        ),
-                    )
-                    .description(s.advance_on_viewed_desc.clone()),
-                )
-                .item(
-                    SettingItem::new(
-                        s.collapse_viewed_folders.clone(),
-                        SettingField::switch(
-                            |cx| settings(cx).collapse_viewed_folders,
-                            |value, cx| update_settings(cx, |s| s.collapse_viewed_folders = value),
-                        ),
-                    )
-                    .description(s.collapse_viewed_folders_desc.clone()),
-                )
-                .item(
-                    SettingItem::new(
-                        s.auto_mark_viewed.clone(),
-                        SettingField::switch(
-                            |cx| settings(cx).auto_mark_viewed,
-                            |value, cx| update_settings(cx, |s| s.auto_mark_viewed = value),
-                        ),
-                    )
-                    .description(s.auto_mark_viewed_desc.clone()),
-                )
+                .item(SettingItem::new(
+                    s.collapse_viewed_folders.clone(),
+                    SettingField::switch(
+                        |cx| settings(cx).collapse_viewed_folders,
+                        |value, cx| update_settings(cx, |s| s.collapse_viewed_folders = value),
+                    ),
+                ))
                 .item(
                     SettingItem::new(
                         s.editor_command.clone(),
                         SettingField::render(move |_, _, cx| {
                             h_flex()
+                                .w_full()
+                                .max_w(px(FIELD_MAX_WIDTH))
                                 .gap_1()
-                                .child(div().w(px(320.)).child(
+                                .child(div().flex_1().min_w_0().child(
                                     Input::new(&editor_view.read(cx).editor_command).small(),
                                 ))
                                 .child(editor_presets_button())
                         }),
                     )
+                    .layout(Axis::Vertical)
                     .description(s.editor_command_desc.clone()),
                 );
         let gitlab = forge_group(&view, ForgeKind::GitLab, s);
         let github = forge_group(&view, ForgeKind::GitHub, s);
         let global_view = view.clone();
-        let repo_view = view.clone();
         let mut hidden = SettingGroup::new()
             .title(s.hidden_files_setting.clone())
             .description(s.hidden_files_setting_desc.clone())
@@ -1242,16 +1292,17 @@ impl Render for SettingsView {
                     cx,
                 )
             }));
-        if let Some((_, name)) = &self.repo {
-            let title: SharedString = s.hidden_files_repo(name).into();
+        for (ix, entry) in self.repo_rules.iter().enumerate() {
+            let title: SharedString = s.hidden_files_repo(&entry.name).into();
+            let repo_view = view.clone();
             hidden = hidden.item(SettingItem::render(move |_, _, cx| {
                 let this = repo_view.read(cx);
-                hidden_rules_item(
-                    title.clone(),
-                    tr().hidden_files_repo_desc.clone(),
-                    &this.hidden_repo,
-                    cx,
-                )
+                match this.repo_rules.get(ix) {
+                    Some(entry) => {
+                        hidden_rules_item(title.clone(), entry.path.clone(), &entry.rules, cx)
+                    }
+                    None => div().into_any_element(),
+                }
             }));
         }
         v_flex()
@@ -1295,3 +1346,7 @@ impl Render for SettingsView {
             )
     }
 }
+
+#[cfg(test)]
+#[path = "settings_view_tests.rs"]
+mod tests;

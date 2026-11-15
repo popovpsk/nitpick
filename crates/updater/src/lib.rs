@@ -29,15 +29,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 actions!(updater, [CheckForUpdates]);
 
-struct UpdateToast;
-
 struct StatusToast;
 
 enum Status {
     Idle,
     Checking,
     Downloading,
-    Ready { version: Version },
+    Ready,
 }
 
 pub struct AutoUpdater {
@@ -48,6 +46,7 @@ pub struct AutoUpdater {
     in_flight: bool,
     enabled: bool,
     apply_on_quit: bool,
+    ready_note: Option<SharedString>,
 }
 
 struct GlobalUpdater(Entity<AutoUpdater>);
@@ -85,6 +84,7 @@ pub fn init(cx: &mut App, current_version: &str, enabled: bool) {
         in_flight: false,
         enabled,
         apply_on_quit: false,
+        ready_note: None,
     });
     cx.set_global(GlobalUpdater(updater.clone()));
 
@@ -194,6 +194,10 @@ impl AutoUpdater {
         self.staged.is_some()
     }
 
+    pub fn ready_note(&self) -> Option<&SharedString> {
+        self.ready_note.as_ref()
+    }
+
     fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.enabled = enabled;
         if enabled {
@@ -221,10 +225,9 @@ impl AutoUpdater {
         if self.in_flight {
             return;
         }
-        if let Status::Ready { version } = &self.status {
-            if manual {
-                let version = version.clone();
-                toast_ready(cx, &version);
+        if let Status::Ready = &self.status {
+            if manual && let Some(note) = self.ready_note.clone() {
+                toast(cx, note, NotificationType::Info);
             }
             return;
         }
@@ -243,14 +246,20 @@ impl AutoUpdater {
             .ok();
             match outcome {
                 Ok(Some((version, staged))) => {
-                    let toast_version = version.clone();
+                    let note = SharedString::from(
+                        ui_resources::i18n::strings().update_ready(&version.to_string()),
+                    );
+                    let toast_note = note.clone();
                     this.update(cx, move |this, cx| {
                         this.staged = Some(Arc::new(staged));
-                        this.status = Status::Ready { version };
+                        this.status = Status::Ready;
+                        this.ready_note = Some(note);
                         cx.notify();
                     })
                     .ok();
-                    cx.update(|cx| toast_ready(cx, &toast_version));
+                    if manual {
+                        cx.update(|cx| toast(cx, toast_note, NotificationType::Info));
+                    }
                 }
                 Ok(None) => {
                     this.update(cx, |this, cx| {
@@ -320,25 +329,6 @@ async fn check_and_stage(
     .await?;
 
     Ok(Some((found.version, staged)))
-}
-
-fn toast_ready(cx: &mut App, version: &Version) {
-    let Some(handle) = toast_window(cx) else {
-        return;
-    };
-    let message =
-        SharedString::from(ui_resources::i18n::strings().update_ready(&version.to_string()));
-    let _ = handle.update(cx, |_, window, cx| {
-        window.push_notification(
-            Notification::new()
-                .id::<UpdateToast>()
-                .message(message)
-                .with_type(NotificationType::Success)
-                .autohide(false)
-                .on_click(|_, _, cx| apply_and_restart(cx)),
-            cx,
-        );
-    });
 }
 
 fn toast(cx: &mut App, message: impl Into<SharedString>, kind: NotificationType) {

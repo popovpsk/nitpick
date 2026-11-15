@@ -22,7 +22,12 @@ pub(crate) fn own_avatar(url: Option<&str>) -> Option<String> {
     let url = url?.trim();
     let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
     let gravatar = host == "gravatar.com" || host.ends_with(".gravatar.com");
-    (!gravatar).then(|| url.to_string())
+    if gravatar {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| log::info!("avatars: not loading Gravatar pictures ({host})"));
+        return None;
+    }
+    Some(url.to_string())
 }
 
 pub(crate) fn gitlab_request(mr: &gitlab::MergeRequest) -> Request {

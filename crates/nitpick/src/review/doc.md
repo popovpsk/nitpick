@@ -30,9 +30,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   filled from `app_db` in the background; each mark is written to the database at once.
 - `tree_panel.rs` — the file tree panel (`uniform_list` of precomputed `TreeRow`s) and its
   keyboard handling.
+- `diff_panel_tests.rs` — where the tree header drops the count and shrinks the bar.
 - `diff_panel.rs` — the review header (branch pickers with pull buttons, the MR, or the work
-  tree; the commits button; viewed progress), the file toolbar (change and file navigation, the shown file's
-  label as a cached `FileLabel`, viewed and layout controls) and the `Diff` element with its
+  tree; the commits button), the viewed progress widget the tree header shows
+  (`render_viewed_progress`), the file toolbar (change and file navigation, the shown file's
+  label as a cached `FileLabel`, open-file, viewed and layout controls) and the `Diff` element with its
   movable split divider; the sliding, resizable tree panel; `Render for ReviewView`.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
@@ -44,24 +46,31 @@ wraps `gitlab` and `github`; nothing here names those crates).
   `avatar_cache`, else a download on `net_runtime` with the matching forge's token, a stale
   entry when that fails); `render` draws the picture or, until it is there, initials on the
   author's tint (blame's `tint`, seeded by the username). Finished loads refresh the windows
-  once per 100 ms batch; a missing picture is tried again the next time discussions load.
-- `comments.rs` — discussion cards and the composer as `Diff` annotations. Each note: avatar,
-  name, meta, and for the user's own notes (`NoteView::own`, matched on the username from
+  once per 100 ms batch. A picture that failed for a temporary reason is tried again the
+  next time discussions load; any other failure (401 from a sign-in-only GitLab, not a
+  picture) stays initials until the next launch, logged once.
+- `comments.rs` — discussion cards and the composer as `Diff` annotations, also used on the
+  sheet. A card's top-left chevron collapses it to one line (avatar, author, preview of the
+  first note, reply count, resolved tag); resolved threads start collapsed, open ones
+  expanded, and `thread_collapse` keeps the user's explicit choice per thread, so resolving
+  or unresolving doesn't flip a card the user set. A card with its reply composer or a note
+  editor open is never drawn collapsed, so the focused textarea stays on screen. Each note: avatar,
+  name, meta (`@username · time`, the time converted from the host's RFC 3339 stamp to the
+  system time zone by `note_time`), and for the user's own notes (`NoteView::own`, matched on the username from
   `current_user`) edit and delete buttons at the right end of the header, shown on hover of
   that note; editing swaps the body for a textarea with Cancel / Save (⌘/Ctrl-Enter). A long
   body (`NoteView::long`: over 10 lines counting a wrap every 90 chars) is cut to about ten
   lines with a fade and a Show more / Show less toggle (`expanded_notes`). Starting another
   edit replaces the open one; a reload that no longer has the edited note drops the editor.
 - `comment_list.rs` — the comments sheet (`comments_title`) with two tabs: On code (every
-  discussion with a file position, outdated ones included, as one-line rows grouped by file in
-  tree order then line: avatar, author, `L<line>`, outdated (its `head_sha` is not the
-  review's head) / resolved tags, first meaningful line of the first note, reply count). A
-  click on a thread drawn in the diff closes the sheet and `reveal_discussion` opens the file
-  at the line; any other thread (outdated, commit mode, file not in the review) expands in
-  place as the full card (`open_thread`, reset on reload) with Reply / Resolve and an Open
-  button for its file. General (discussions without a file, with the new-comment
+  discussion with a file position, outdated ones included, as full cards: open threads first,
+  then resolved, each section grouped by file in tree order then line; above each card its
+  `L<line>`, an outdated tag when its `head_sha` is not the review's head, and Go to code,
+  which closes the sheet and `reveal_discussion` opens the file, at the line when the thread
+  is drawn in the diff) and General (discussions without a file, with the new-comment
   composer). `build_code_threads` precomputes the rows; it opens on General when there is no
   code thread.
+- `review_tests.rs` — comment times in a fixed time zone.
 - `comment_list_tests.rs` — previews and row order.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
   own notes, then a discussion reload; `ApprovalView` (label, tooltip with who approved) and
@@ -78,7 +87,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   version (`seen_before`), loading and installing the `Interdiff`, the toolbar toggle and
   the tree badge.
 - `file_actions.rs` — `CopyPath`, `OpenInEditor`: the file items of the tree row menu and the
-  toolbar path menu (copy path, open in editor, open in GitLab / on GitHub), the editor
+  toolbar path menu (copy path, open in editor, open in GitLab / on GitHub; the items carry
+  their action only so the menu shows its key — gpui-component runs an item's own click
+  handler instead of the action, so the row menu still acts on the row), the editor
   launch, the project's web address (`WebLink`), and their pure parts (`editor_invocation`,
   `substitute_shell`, `find_program`, `project_web_from_mr`, `project_web_from_remotes`,
   `blob_url`, `change_line`, `pick_line`).
@@ -130,7 +141,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   does, instead of the top of the file. Wrapping (`wrap_lines`): split
   view only (the default, as before), always, or never; with no wrapping in split view each
   column clips and both scroll together.
-- Progress reset: the header's progress opens a menu with "Reset viewed progress…"; after a
+- Progress reset: the tree header's progress opens a menu with "Reset viewed progress…"; after a
   confirmation every viewed tracked file of the review (the ones the progress counts) is unmarked and forgotten as "kept unviewed",
   so auto-mark works on them again.
 - What a branch review shows is `git_repo::Repo::compare`: the merge base of the source with
@@ -167,7 +178,14 @@ wraps `gitlab` and `github`; nothing here names those crates).
   then the file: status icon in the tree's colors, the path with the directory muted and the
   name in the foreground color, ellipsized from the start so the name stays, `+a`/`−d` when
   non-zero, and a "new file" / "deleted" / "renamed" tag (the renamed tag's tooltip names the
-  old path); the cross-file hint follows it. Viewed and layout controls sit on the right.
+  old path), then Open file right after them, as part of what names the file (a menu: open in
+  editor and copy path with their keys, open in GitLab / on GitHub); the cross-file hint
+  follows. On the right: the Viewed split button (a
+  checkbox-style toggle, green once viewed, with `ToggleViewed`'s key in its tooltip; its caret
+  holds the two marking behaviours as checkable items: mark on leave (`auto_mark_viewed`) and
+  go to the next file (`advance_on_viewed`), which live nowhere else), blame, and the
+  split / unified layout, the only place to change it. Every button whose action has a key
+  shows it in its tooltip (`tooltip_with_action`).
   The whole path has one font weight and the name stands out by color only: GPUI measures
   truncation with the base font, so a bolder run would be clipped and a lighter one would
   leave a gap before the counts.
@@ -373,8 +391,14 @@ wraps `gitlab` and `github`; nothing here names those crates).
   commit changed alone. A pick during a pull or a post loads without taking `busy`, so it
   never clears theirs. The unchanged-reload check also compares the commit list and the
   merge base, since in commit mode a grown range keeps the same pair and files.
-- The review header shows viewed progress before the refresh button (`viewed/total` and a
-  thin bar, the count in the tooltip), read from `progress()`; the title bar does not.
+- Viewed progress leads the tree header (`viewed/total` and a thin bar, the count in the
+  tooltip), read from `progress()`: it belongs with the files it counts, and the review
+  header is left to the request (approvals, comments). The header has no "Files" title —
+  the list says what it is. Its menu opens from its left edge. With the tree hidden it is
+  not shown. As the tree narrows (`ProgressFit::for_width`, in rems so it follows the
+  interface size, the count's width from its digits) the count goes first (the tooltip
+  still has it), then the bar shrinks to a small floor; the progress box clips rather than
+  overlap the header buttons.
   The tree's view options popover opens toward the diff (from the button's left edge when
   the tree is on the left), so the files stay visible while the options change.
 - File actions: the tree row menu starts with Copy path, Open in editor, Open in GitLab (or

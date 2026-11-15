@@ -48,6 +48,23 @@ pub fn repo_of(id: WindowId, cx: &App) -> Option<Option<PathBuf>> {
         .map(|(_, repo)| repo.clone())
 }
 
+pub fn open_repos(cx: &App) -> Vec<PathBuf> {
+    let Some(registry) = cx.try_global::<WindowRepos>() else {
+        return Vec::new();
+    };
+    let mut repos: Vec<PathBuf> = Vec::new();
+    for repo in registry
+        .windows
+        .values()
+        .filter_map(|(_, repo)| repo.clone())
+    {
+        if !repos.contains(&repo) {
+            repos.push(repo);
+        }
+    }
+    repos
+}
+
 pub fn has_windows(cx: &App) -> bool {
     cx.try_global::<WindowRepos>()
         .is_some_and(|registry| !registry.windows.is_empty())
