@@ -238,7 +238,7 @@ impl AutoUpdater {
         let current = self.current_version.clone();
 
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let outcome = check_and_stage(current, this.clone(), cx).await;
+            let outcome = check_and_stage(current, manual, this.clone(), cx).await;
             this.update(cx, |this, cx| {
                 this.in_flight = false;
                 cx.notify();
@@ -303,6 +303,7 @@ impl AutoUpdater {
 
 async fn check_and_stage(
     current: Version,
+    manual: bool,
     this: WeakEntity<AutoUpdater>,
     cx: &mut AsyncApp,
 ) -> Result<Option<(Version, Staged)>> {
@@ -314,13 +315,26 @@ async fn check_and_stage(
         return Ok(None);
     }
 
+    let app_bundle = cx.update(|cx| cx.app_path().ok());
+    if !install::can_install(app_bundle.as_deref()) {
+        log::info!(
+            "updater: {} is available, but this copy is not an installed app",
+            found.version
+        );
+        anyhow::ensure!(
+            !manual,
+            "{} is available, but this copy is not an installed app",
+            found.version
+        );
+        return Ok(None);
+    }
+
     this.update(cx, |this, cx| {
         this.status = Status::Downloading;
         cx.notify();
     })
     .ok();
 
-    let app_bundle = cx.update(|cx| cx.app_path().ok());
     let staged = net_runtime::spawn(install::download_and_stage(
         found.url,
         found.digest,

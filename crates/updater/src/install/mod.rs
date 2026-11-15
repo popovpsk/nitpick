@@ -17,6 +17,14 @@ pub struct Staged {
     installer: PathBuf,
 }
 
+pub fn can_install(app_bundle: Option<&Path>) -> bool {
+    if cfg!(target_os = "macos") {
+        app_bundle.is_some_and(|bundle| bundle.extension().is_some_and(|ext| ext == "app"))
+    } else {
+        true
+    }
+}
+
 pub async fn download_and_stage(
     url: String,
     digest: Option<String>,

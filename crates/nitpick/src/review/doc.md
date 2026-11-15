@@ -86,9 +86,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   stays busy until the reloaded approval arrives, so a second click can't repeat the call.
 - `pending.rs` — the review in progress (`Drafts`): the host's pending review loaded with
   the discussions (`load_pending`), drafts indexed by file and by the thread they answer
-  (`index_drafts`; a line draft whose head is not the loaded one is listed as "the line
-  changed" and not drawn), the draft card (`render_draft`, edit and delete), the review sheet
-  (drafts with go-to and delete, the summary, the verdict tabs, Submit and Discard), and the
+  (`index_drafts`; a line draft whose head is not the loaded one is listed as outdated and
+  not drawn), the draft card (`render_draft`, edit and delete), the review sheet (drafts as
+  full cards grouped by file in tree order, then line, general ones first — `Drafts::sheet`,
+  built with the index; each with its line, the thread it answers, go-to, edit and delete;
+  the summary, the verdict tabs, Submit and Discard), and the
   composer's guards (`can_draft`, `submit_primary`, `has_unsent_comment`, `reveal_composer`,
   `request_cancel_composer`, `confirm_discard_comment`).
 - `push_watch.rs` — `PushWatch`: whether the request got new commits since it was loaded,
@@ -306,6 +308,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   typed review summary (`has_unsent_comment`). While the composer holds text another line
   or Reply does not open a second one: `reveal_composer` scrolls to it (a reply to a thread
   not drawn in the diff opens the comments sheet on its tab), focuses it and says why.
+- A merged or closed request is read-only (`request_open`): the header tags its state, and
+  no composer, reply, resolve, own-note edit, draft or new-push check is offered; its
+  discussions still show.
 - Review drafts (`pending.rs`): where the host takes a draft for the target (`can_draft`:
   any line; a reply to a thread that takes replies; a general comment only on GitLab), the
   composer's primary button and ⌘/Ctrl-Enter add it to the review ("Start a review" before
@@ -335,7 +340,12 @@ wraps `gitlab` and `github`; nothing here names those crates).
   Instead the hovered line gets one gutter marker (`comment_marker`, set by
   `set_hovered_line` when the hovered line changes, which then redraws): a faint comment icon
   in the marker lane, right of the line number (the lane is the only slot the component
-  offers), no fill; a click opens the composer. Not a marker per line: the component rebuilds
+  offers), no fill; a click opens the composer. The icon shows only while the pointer is on
+  the row's left padding, line numbers or lane, not over the code: the marker spans that
+  strip with a transparent group element (`comment_hot_zone` repeats the component's gutter
+  geometry, sized for at least `GUTTER_DIGITS` digits since the file's widest number is not exposed; it takes no input, so line-number
+  presses still reach the gutter) and the icon is drawn on that group's hover. The marker
+  itself stays on the hovered line, so the lane is never empty when the icon is wanted. Not a marker per line: the component rebuilds
   its marker map from the list on every frame. A `COMMENT_LANE` marker at line 0 (no such
   row) keeps the lane while nothing is hovered, so the code does not shift under the
   pointer. Blame markers go first, so a line with a blame chip shows the chip. Lines GitHub

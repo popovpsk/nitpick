@@ -21,6 +21,7 @@ use gpui_component::{
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     progress::Progress as ProgressBar,
     spinner::Spinner,
+    tag::Tag,
     tooltip::Tooltip,
     v_flex,
 };
@@ -88,6 +89,21 @@ impl ReviewView {
                             .font_semibold()
                             .child(format!("{} {}", request.reference(), request.title)),
                     )
+                    .map(|el| match request.state {
+                        forge::RequestState::Open => el,
+                        forge::RequestState::Merged => el.child(
+                            Tag::info()
+                                .xsmall()
+                                .flex_none()
+                                .child(s.request_merged.clone()),
+                        ),
+                        forge::RequestState::Closed => el.child(
+                            Tag::danger()
+                                .xsmall()
+                                .flex_none()
+                                .child(s.request_closed.clone()),
+                        ),
+                    })
                     .child(
                         div()
                             .flex_none()
@@ -857,7 +873,15 @@ impl ReviewView {
                                     (_, ElementId::Name(name))
                                         if name.as_ref() == COMMENT_MARKER =>
                                     {
-                                        comments::render_comment_marker(&marker_view, marker, cx)
+                                        let (hot, lane) =
+                                            comment_hot_zone(marker, split_mode, window, cx);
+                                        comments::render_comment_marker(
+                                            &marker_view,
+                                            marker,
+                                            hot,
+                                            lane,
+                                            cx,
+                                        )
                                     }
                                     (Some(marks), _) => marks.render_chip(marker, window, cx),
                                     (None, _) => Empty.into_any_element(),
@@ -933,6 +957,7 @@ impl ReviewView {
 }
 
 const DIFF_BORDER: f32 = 1.;
+const GUTTER_DIGITS: f32 = 5.;
 const SPLIT_HANDLE: f32 = 8.;
 const SPLIT_GRIP: f32 = 2.;
 
@@ -1364,3 +1389,18 @@ impl Render for ReviewView {
 #[cfg(test)]
 #[path = "diff_panel_tests.rs"]
 mod tests;
+
+fn comment_hot_zone(
+    marker: &DiffGutterMarker,
+    split_mode: bool,
+    window: &Window,
+    cx: &App,
+) -> (Pixels, Pixels) {
+    let rem = window.rem_size();
+    let font = rem * (f32::from(cx.theme().mono_font_size) / 16.);
+    let lane = font * 1.6;
+    let digits = marker.position().line().max(1).ilog10() as f32 + 1.;
+    let gutter = font * 0.7 * digits.max(GUTTER_DIGITS) + rem;
+    let gutters = if split_mode { 1. } else { 2. };
+    (rem / 2. + gutter * gutters + lane, lane)
+}

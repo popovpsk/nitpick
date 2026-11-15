@@ -340,7 +340,7 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
     list.into_any_element()
 }
 
-fn status_icon(status: Option<FileStatus>) -> Icons {
+pub(super) fn status_icon(status: Option<FileStatus>) -> Icons {
     match status {
         Some(FileStatus::Added) => Icons::FilePlus,
         Some(FileStatus::Deleted) => Icons::FileMinus,
@@ -358,11 +358,12 @@ fn render_general_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
     let discussions = review.discussions.clone();
     let general = review.general_only.clone();
     let new_view = view.clone();
+    let open = review.request_open();
     v_flex()
         .gap_3()
         .pb_4()
         .when(composing, |el| el.child(render_composer(view, cx)))
-        .when(!composing, |el| {
+        .when(!composing && open, |el| {
             el.child(
                 Button::new("new-general-comment")
                     .outline()

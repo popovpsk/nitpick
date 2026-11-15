@@ -35,7 +35,9 @@ Not here: when to check, which asset, toasts (`../doc.md`); the feature-off stan
 
 - The new bundle is rsynced from the mounted dmg over the running one (`app_path()`) during
   the download, so it is already new at `Ready` and the running process carries on. The bundle
-  must be writable by the user.
+  must be writable by the user. Only a `.app` is replaced (`can_install`): a bare binary's
+  `app_path()` is its folder (`cargo run` gives `target/release`), which `rsync --delete`
+  must never touch, so such a copy skips the update.
 - `relaunch` is a detached `bash` that waits for our pid to go, then for `lsappinfo find
   pid=…` to come back empty (LaunchServices has let go; capped at 5 s), then `open`s the
   bundle. `apply_and_restart` calls it, then `cx.quit()`.

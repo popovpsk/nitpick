@@ -220,7 +220,7 @@ fn is_long(body: &str) -> bool {
 }
 
 impl DiscussionView {
-    fn from_forge(discussion: &forge::Discussion, me: Option<&str>) -> Option<Self> {
+    fn from_forge(discussion: &forge::Discussion, me: Option<&str>, open: bool) -> Option<Self> {
         let notes: Vec<NoteView> = discussion
             .notes
             .iter()
@@ -234,7 +234,7 @@ impl DiscussionView {
                     initials: review_core::blame::initials(&note.author.name).into(),
                     tint: review_core::blame::tint_index(&note.author.username, blame::TINT_COUNT),
                     long: is_long(&note.body),
-                    own: me.is_some_and(|me| me == note.author.username),
+                    own: open && me.is_some_and(|me| me == note.author.username),
                     meta: format!("@{} · {time}", note.author.username).into(),
                     body: note.body.clone().into(),
                 }
@@ -253,8 +253,8 @@ impl DiscussionView {
         Some(Self {
             id: discussion.id.clone(),
             notes,
-            can_reply: discussion.can_reply,
-            resolve_id: discussion.resolve_id.clone(),
+            can_reply: open && discussion.can_reply,
+            resolve_id: discussion.resolve_id.clone().filter(|_| open),
             resolved: discussion.resolved,
             position,
             location,
@@ -1492,10 +1492,11 @@ impl ReviewView {
                             this.editing = None;
                         }
                         let me = this.me.clone();
+                        let open = this.request_open();
                         this.discussions = Rc::new(
                             discussions
                                 .iter()
-                                .filter_map(|d| DiscussionView::from_forge(d, me.as_deref()))
+                                .filter_map(|d| DiscussionView::from_forge(d, me.as_deref(), open))
                                 .collect(),
                         );
                         let urls: Vec<SharedString> = this
@@ -1720,8 +1721,14 @@ impl ReviewView {
         self.annotations = Rc::new(annotations);
     }
 
+    pub(super) fn request_open(&self) -> bool {
+        self.mr
+            .as_ref()
+            .is_some_and(|ctx| ctx.request.state == forge::RequestState::Open)
+    }
+
     pub(super) fn can_comment_lines(&self) -> bool {
-        self.mr.is_some()
+        self.request_open()
             && self.interdiff.is_none()
             && self
                 .review
@@ -1801,6 +1808,9 @@ impl ReviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.request_open() {
+            return;
+        }
         if self.composer_has_text(cx) {
             self.reveal_composer(window, cx);
             return;
@@ -1845,6 +1855,9 @@ impl ReviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.request_open() {
+            return;
+        }
         let (Some(composer), Some(ctx), Some(review)) =
             (self.composer.as_ref(), self.mr.clone(), self.review.clone())
         else {

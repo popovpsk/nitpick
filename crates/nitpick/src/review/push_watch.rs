@@ -42,7 +42,8 @@ impl ReviewView {
             return;
         };
         let watch = &self.push_watch;
-        if watch.pushed
+        if !self.request_open()
+            || watch.pushed
             || watch.checking
             || self.busy.is_some()
             || watch.last_check.is_some_and(|at| at.elapsed() < POLL_EVERY)

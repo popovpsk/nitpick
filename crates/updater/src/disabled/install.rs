@@ -2,6 +2,10 @@ use anyhow::Result;
 
 pub struct Staged;
 
+pub fn can_install(_app_bundle: Option<&std::path::Path>) -> bool {
+    false
+}
+
 pub async fn download_and_stage(
     _url: String,
     _digest: Option<String>,

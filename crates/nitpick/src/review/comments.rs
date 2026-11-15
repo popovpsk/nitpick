@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop,
-    linear_gradient, prelude::FluentBuilder as _, px, rems,
+    Pixels, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
@@ -22,6 +22,7 @@ use super::{
 use crate::localization::tr;
 
 const COLLAPSED_REMS: f32 = 14.;
+const COMMENT_HOT_ZONE: &str = "comment-hot-zone";
 
 pub fn render_annotation(
     view: &Entity<ReviewView>,
@@ -408,7 +409,7 @@ fn render_note_editor(
                 .justify_end()
                 .child(
                     Button::new(ElementId::NamedInteger("note-edit-cancel".into(), note.id))
-                        .ghost()
+                        .outline()
                         .small()
                         .label(s.cancel.clone())
                         .on_click(move |_, _, cx| {
@@ -491,7 +492,7 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
                 })
                 .child(
                     Button::new("composer-cancel")
-                        .ghost()
+                        .outline()
                         .small()
                         .label(s.cancel.clone())
                         .disabled(posting)
@@ -536,6 +537,8 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
 pub fn render_comment_marker(
     view: &Entity<ReviewView>,
     marker: &DiffGutterMarker,
+    hot_width: Pixels,
+    lane_width: Pixels,
     cx: &App,
 ) -> AnyElement {
     let position = marker.position();
@@ -547,20 +550,40 @@ pub fn render_comment_marker(
     );
     let view = view.clone();
     div()
-        .id(marker.id().clone())
         .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
+        .relative()
         .child(
-            Icon::new(Icons::MessageSquarePlus)
-                .xsmall()
-                .text_color(cx.theme().muted_foreground.opacity(0.6)),
+            div()
+                .id("comment-hot-zone")
+                .group(COMMENT_HOT_ZONE)
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right_0()
+                .w(hot_width)
+                .flex()
+                .justify_end()
+                .child(
+                    div()
+                        .id(marker.id().clone())
+                        .h_full()
+                        .w(lane_width)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .opacity(0.)
+                        .group_hover(COMMENT_HOT_ZONE, |style| style.opacity(1.))
+                        .child(
+                            Icon::new(Icons::MessageSquarePlus)
+                                .xsmall()
+                                .text_color(cx.theme().muted_foreground.opacity(0.6)),
+                        )
+                        .on_click(move |_, window, cx| {
+                            view.update(cx, |this, cx| this.open_line_composer(&range, window, cx))
+                        }),
+                ),
         )
-        .on_click(move |_, window, cx| {
-            view.update(cx, |this, cx| this.open_line_composer(&range, window, cx))
-        })
         .into_any_element()
 }
 
