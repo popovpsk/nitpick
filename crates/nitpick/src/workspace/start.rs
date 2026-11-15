@@ -12,6 +12,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     spinner::Spinner,
     tag::Tag,
+    tooltip::Tooltip,
     v_flex,
 };
 use ui_resources::Icons;
@@ -19,7 +20,8 @@ use ui_resources::Icons;
 use crate::localization::tr;
 use crate::picker::{Picker, PickerEvent, branch_entries};
 use crate::review::ReviewSource;
-use crate::settings_store::settings;
+use crate::review::avatars::{self, Face};
+use crate::settings_store::{SettingsStore, settings};
 
 pub enum StartEvent {
     Open(ReviewSource),
@@ -49,6 +51,7 @@ pub struct StartView {
     mr_input: Entity<InputState>,
     filter: Entity<InputState>,
     forge_project: Option<(ForgeKind, String)>,
+    forge_key: u64,
     merge_requests: Vec<MrRow>,
     filter_text: String,
     mr_state: MrListState,
@@ -57,32 +60,74 @@ pub struct StartView {
     _subscriptions: Vec<Subscription>,
 }
 
+const MAX_FACES: usize = 4;
+
 struct MrRow {
     iid: u64,
     title: SharedString,
     subtitle: SharedString,
     key: String,
     draft: bool,
+    author: Face,
+    people: Vec<Face>,
+    people_tooltip: Option<SharedString>,
+    comments: Option<SharedString>,
     source: ReviewSource,
 }
 
 impl MrRow {
-    fn new(request: &forge::Request, project: &str) -> Self {
-        let subtitle = format!(
+    fn new(request: &forge::Request, project: &str, now: i64) -> Self {
+        let mut subtitle = format!(
             "{} · {} · {} → {}",
             request.reference(),
             request.author.name,
             request.source_branch,
             request.target_branch
         );
-        let key =
-            format!("{} {} {}", request.title, subtitle, request.author.username).to_lowercase();
+        if let Some(updated) = request
+            .updated_at
+            .as_deref()
+            .and_then(review_core::parse_timestamp)
+        {
+            subtitle.push_str(" · ");
+            subtitle.push_str(&tr().relative_time(now - updated));
+        }
+        let mut people: Vec<&forge::User> = Vec::new();
+        for user in request.reviewers.iter().chain(&request.assignees) {
+            if user.username != request.author.username
+                && !people.iter().any(|p| p.username == user.username)
+            {
+                people.push(user);
+            }
+        }
+        let mut key = format!("{} {} {}", request.title, subtitle, request.author.username);
+        for user in &people {
+            key.push(' ');
+            key.push_str(&user.name);
+            key.push(' ');
+            key.push_str(&user.username);
+        }
+        let people_tooltip = (!people.is_empty()).then(|| {
+            let names: Vec<&str> = people.iter().map(|user| user.name.as_str()).collect();
+            SharedString::from(names.join(", "))
+        });
         Self {
             iid: request.number,
             title: request.title.clone().into(),
             subtitle: subtitle.into(),
-            key,
+            key: key.to_lowercase(),
             draft: request.draft,
+            author: Face::of(&request.author),
+            people: people
+                .iter()
+                .take(MAX_FACES)
+                .map(|user| Face::of(user))
+                .collect(),
+            people_tooltip,
+            comments: request
+                .comments
+                .filter(|&count| count > 0)
+                .map(|count| count.to_string().into()),
             source: ReviewSource::MergeRequest {
                 forge: request.kind,
                 project: project.to_string(),
@@ -143,6 +188,11 @@ impl StartView {
             }),
             cx.observe(&target, |_, _, cx| cx.notify()),
             cx.observe(&source, |_, _, cx| cx.notify()),
+            cx.observe_global::<SettingsStore>(|this, cx| {
+                if forge_key(cx) != this.forge_key {
+                    this.load_merge_requests(cx);
+                }
+            }),
         ];
         let mut this = Self {
             repo,
@@ -161,6 +211,7 @@ impl StartView {
             mr_input,
             filter,
             forge_project: None,
+            forge_key: 0,
             merge_requests: Vec::new(),
             filter_text: String::new(),
             mr_state: MrListState::Loading,
@@ -287,6 +338,7 @@ impl StartView {
     }
 
     fn load_merge_requests(&mut self, cx: &mut Context<Self>) {
+        self.forge_key = forge_key(cx);
         let forges = settings(cx).forge_hosts();
         let connected: Vec<(ForgeKind, String)> = forges
             .iter()
@@ -337,10 +389,23 @@ impl StartView {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(list) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |elapsed| elapsed.as_secs() as i64);
                         this.merge_requests = list
                             .iter()
-                            .map(|request| MrRow::new(request, &project))
+                            .map(|request| MrRow::new(request, &project, now))
                             .collect();
+                        let urls: Vec<SharedString> = this
+                            .merge_requests
+                            .iter()
+                            .flat_map(|row| {
+                                std::iter::once(&row.author)
+                                    .chain(&row.people)
+                                    .filter_map(|face| face.avatar.clone())
+                            })
+                            .collect();
+                        avatars::request(urls, cx);
                         this.mr_state = MrListState::Loaded;
                     }
                     Err(err) => this.mr_state = MrListState::Failed(err.to_string().into()),
@@ -454,11 +519,7 @@ impl StartView {
                             .rounded(theme.radius)
                             .cursor_pointer()
                             .hover(|style| style.bg(theme.list_hover))
-                            .child(
-                                Icon::new(Icons::GitPullRequest)
-                                    .small()
-                                    .text_color(theme.green),
-                            )
+                            .child(mr.author.render(px(24.), cx))
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -483,9 +544,42 @@ impl StartView {
                                         div()
                                             .text_xs()
                                             .text_color(theme.muted_foreground)
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
                                             .child(mr.subtitle.clone()),
                                     ),
                             )
+                            .when(!mr.people.is_empty(), |el| {
+                                let tooltip = mr.people_tooltip.clone().unwrap_or_default();
+                                el.child(
+                                    h_flex()
+                                        .id(("mr-people", mr.iid))
+                                        .flex_none()
+                                        .children(mr.people.iter().enumerate().map(|(ix, face)| {
+                                            div()
+                                                .when(ix > 0, |el| el.ml(px(-6.)))
+                                                .rounded_full()
+                                                .border_2()
+                                                .border_color(theme.background)
+                                                .child(face.render(px(20.), cx))
+                                        }))
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new(tooltip.clone()).build(window, cx)
+                                        }),
+                                )
+                            })
+                            .when_some(mr.comments.clone(), |el, comments| {
+                                el.child(
+                                    h_flex()
+                                        .flex_none()
+                                        .gap_0p5()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(Icon::new(Icons::MessageSquare).xsmall())
+                                        .child(comments),
+                                )
+                            })
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(StartEvent::Open(source.clone()))
                             })),
@@ -718,4 +812,15 @@ fn branch_hint(branch: &Branch) -> SharedString {
         &branch.sha[..branch.sha.len().min(8)]
     )
     .into()
+}
+
+fn forge_key(cx: &gpui::App) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let current = settings(cx);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for kind in [ForgeKind::GitLab, ForgeKind::GitHub] {
+        current.forge_url(kind).hash(&mut hasher);
+        current.forge_token(kind).hash(&mut hasher);
+    }
+    hasher.finish()
 }

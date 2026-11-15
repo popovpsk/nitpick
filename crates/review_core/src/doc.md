@@ -53,6 +53,9 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   expanded, and failed sub-matches are memoized so `*` runs never backtrack exponentially); a rooted
   path (a drive-like first component on Windows) never matches instead of panicking.
 - `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
+- `timestamp.rs` — `parse_timestamp`: an RFC 3339 / ISO 8601 date-time (`Z` or a `±HH:MM`
+  offset, fractional seconds ignored) to Unix seconds, for "updated 3 h ago".
+- `timestamp_tests.rs` — the formats GitLab and GitHub send, offsets, leap day, refusals.
 
 ## Spec
 

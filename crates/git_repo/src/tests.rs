@@ -13,7 +13,7 @@ use crate::blame::parse_porcelain;
 use crate::diff::parse_raw_numstat;
 use crate::{
     BlameLine, Branch, BranchKind, ChangeStatus, ChangedFile, DiffOptions, GitError, PullOutcome,
-    Remote, RemoteLocation, Repo, parse_remote_url,
+    Remote, RemoteLocation, Repo, Worktree, parse_remote_url, parse_worktrees, worktree_for,
 };
 
 type Change<'a> = (&'a str, Option<(&'a str, &'a [u8])>);
@@ -1549,4 +1549,79 @@ fn blame_porcelain_parsing_rejects_broken_output() {
     assert!(parse_porcelain(format!("{id} 1 2 1\nsummary s\n\tx\n").as_bytes()).is_err());
     assert!(parse_porcelain(b"not a header\n\tx\n").is_err());
     assert!(parse_porcelain(b"").unwrap().is_empty());
+}
+
+#[test]
+fn worktrees_list_each_checkout_with_its_branch() {
+    let fixture = Fixture::new();
+    let (repo, work, _) = fixture.with_origin();
+    fixture.git(&work, &["branch", "feature"]);
+    let linked = fixture.path("feature-worktree");
+    fixture.git(
+        &work,
+        &["worktree", "add", "-q", linked.to_str().unwrap(), "feature"],
+    );
+    let worktrees = repo.worktrees().unwrap();
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap();
+    let found: Vec<(PathBuf, Option<String>)> = worktrees
+        .iter()
+        .map(|w| (canonical(&w.path), w.branch.clone()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (canonical(&work), Some("main".to_string())),
+            (canonical(&linked), Some("feature".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn a_detached_worktree_has_no_branch() {
+    let listing = "worktree /r\nHEAD 1\nbranch refs/heads/main\n\nworktree /r-detached\nHEAD 2\ndetached\n\nworktree /r-bare\nbare\n";
+    assert_eq!(
+        parse_worktrees(listing),
+        vec![
+            Worktree {
+                path: "/r".into(),
+                branch: Some("main".into())
+            },
+            Worktree {
+                path: "/r-detached".into(),
+                branch: None
+            },
+            Worktree {
+                path: "/r-bare".into(),
+                branch: None
+            },
+        ]
+    );
+}
+
+#[rstest]
+#[case::local_branch("feature/x", Some("/wt-x"))]
+#[case::remote_branch("origin/feature/x", Some("/wt-x"))]
+#[case::other_remote("upstream/main", Some("/main"))]
+#[case::unknown_prefix_is_not_stripped("fork/main", None)]
+#[case::not_checked_out("feature/y", None)]
+fn the_worktree_for_a_branch(#[case] branch: &str, #[case] expected: Option<&str>) {
+    let worktrees = vec![
+        Worktree {
+            path: "/main".into(),
+            branch: Some("main".into()),
+        },
+        Worktree {
+            path: "/wt-x".into(),
+            branch: Some("feature/x".into()),
+        },
+        Worktree {
+            path: "/x".into(),
+            branch: Some("x".into()),
+        },
+    ];
+    let remotes = vec!["origin".to_string(), "upstream".to_string()];
+    assert_eq!(
+        worktree_for(&worktrees, branch, &remotes),
+        expected.map(Path::new)
+    );
 }

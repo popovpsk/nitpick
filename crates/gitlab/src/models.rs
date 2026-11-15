@@ -57,6 +57,8 @@ pub struct MergeRequest {
     pub draft: bool,
     pub updated_at: Option<String>,
     pub user_notes_count: u32,
+    pub reviewers: Vec<User>,
+    pub assignees: Vec<User>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +96,10 @@ struct RawMergeRequest {
     updated_at: Option<String>,
     #[serde(default, deserialize_with = "null_default")]
     user_notes_count: u32,
+    #[serde(default, deserialize_with = "null_default")]
+    reviewers: Vec<User>,
+    #[serde(default, deserialize_with = "null_default")]
+    assignees: Vec<User>,
 }
 
 impl From<RawMergeRequest> for MergeRequest {
@@ -116,6 +122,8 @@ impl From<RawMergeRequest> for MergeRequest {
             draft: raw.draft.or(raw.work_in_progress).unwrap_or(false),
             updated_at: raw.updated_at,
             user_notes_count: raw.user_notes_count,
+            reviewers: raw.reviewers,
+            assignees: raw.assignees,
         }
     }
 }
@@ -207,4 +215,20 @@ pub struct LineRangeEnd {
     pub old_line: Option<u32>,
     #[serde(default)]
     pub new_line: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct Approvals {
+    #[serde(default, deserialize_with = "null_default")]
+    pub approved_by: Vec<Approver>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub user_has_approved: bool,
+    #[serde(default)]
+    pub user_can_approve: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct Approver {
+    #[serde(default, deserialize_with = "null_default")]
+    pub user: User,
 }

@@ -37,11 +37,11 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .id(("window-tab", ix))
                 .group("window-tab")
+                .relative()
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .px_2()
-                .gap_1()
+                .px_7()
                 .items_center()
                 .justify_center()
                 .text_sm()
@@ -65,7 +65,12 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                         .child(tab.title.clone()),
                 )
                 .child(
-                    div()
+                    h_flex()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_1()
+                        .items_center()
                         .invisible()
                         .group_hover("window-tab", |s| s.visible())
                         .child(

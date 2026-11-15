@@ -1,10 +1,10 @@
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Styled as _, Window, div, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px,
+    rems,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     diff::DiffAnnotation,
     h_flex,
@@ -15,8 +15,10 @@ use gpui_component::{
 };
 use ui_resources::Icons;
 
-use super::{Busy, ComposerTarget, DiscussionView, NoteView, ReviewView};
+use super::{Busy, ComposerTarget, DiscussionView, NoteView, ReviewView, avatars, note_actions};
 use crate::localization::tr;
+
+const COLLAPSED_REMS: f32 = 14.;
 
 pub fn render_annotation(
     view: &Entity<ReviewView>,
@@ -45,7 +47,7 @@ pub fn render_annotation(
     }
 }
 
-fn render_discussion(
+pub(super) fn render_discussion(
     view: &Entity<ReviewView>,
     ix: usize,
     discussion: &DiscussionView,
@@ -73,7 +75,12 @@ fn render_discussion(
         })
         .bg(theme.popover)
         .text_color(theme.popover_foreground)
-        .children(discussion.notes.iter().map(|note| render_note(note, cx)))
+        .children(
+            discussion
+                .notes
+                .iter()
+                .map(|note| render_note(view, &discussion.id, note, cx)),
+        )
         .when(replying, |el| el.child(render_composer(view, cx)))
         .child(
             h_flex()
@@ -124,30 +131,198 @@ fn render_discussion(
         .into_any_element()
 }
 
-fn render_note(note: &NoteView, cx: &App) -> AnyElement {
+fn render_note(
+    view: &Entity<ReviewView>,
+    discussion_id: &str,
+    note: &NoteView,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
+    let this = view.read(cx);
+    if let Some(edit) = this.editing.as_ref().filter(|e| e.note_id == note.id) {
+        return render_note_editor(view, note, edit.input.clone(), this.note_busy, cx);
+    }
+    let collapsed = note.long && !this.expanded_notes.contains(&note.id);
+    let actions = note.own.then(|| {
+        let s = tr();
+        let id = note.id;
+        let edit_view = view.clone();
+        let delete_view = view.clone();
+        let edit_discussion = discussion_id.to_string();
+        let delete_discussion = discussion_id.to_string();
+        let body = note.body.clone();
+        h_flex()
+            .flex_none()
+            .gap_0p5()
+            .invisible()
+            .group_hover("note", |style| style.visible())
+            .child(
+                Button::new(ElementId::NamedInteger("note-edit".into(), id))
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(Icons::Pencil))
+                    .tooltip(s.edit_comment.clone())
+                    .on_click(move |_, window, cx| {
+                        let discussion = edit_discussion.clone();
+                        let body = body.clone();
+                        edit_view.update(cx, |this, cx| {
+                            this.start_edit(discussion, id, body, window, cx)
+                        });
+                    }),
+            )
+            .child(
+                Button::new(ElementId::NamedInteger("note-delete".into(), id))
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(Icons::Trash))
+                    .tooltip(s.delete_comment.clone())
+                    .on_click(move |_, window, cx| {
+                        note_actions::confirm_delete(
+                            &delete_view,
+                            delete_discussion.clone(),
+                            id,
+                            window,
+                            cx,
+                        );
+                    }),
+            )
+    });
+    let body = div().text_sm().child(TextView::markdown(
+        ElementId::NamedInteger("note".into(), note.id),
+        note.body.clone(),
+    ));
+    let body = if collapsed {
+        div()
+            .relative()
+            .max_h(rems(COLLAPSED_REMS))
+            .overflow_hidden()
+            .child(body)
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(32.))
+                    .bg(linear_gradient(
+                        180.,
+                        linear_color_stop(theme.popover.opacity(0.), 0.),
+                        linear_color_stop(theme.popover, 1.),
+                    )),
+            )
+            .into_any_element()
+    } else {
+        body.into_any_element()
+    };
+    let toggle = note.long.then(|| {
+        let toggle_view = view.clone();
+        let id = note.id;
+        Button::new(ElementId::NamedInteger("note-toggle".into(), id))
+            .ghost()
+            .xsmall()
+            .icon(if collapsed {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronUp
+            })
+            .label(if collapsed {
+                tr().show_more.clone()
+            } else {
+                tr().show_less.clone()
+            })
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                toggle_view.update(cx, |this, cx| this.toggle_note(id, cx));
+            })
+    });
     v_flex()
+        .group("note")
         .gap_1()
         .child(
             h_flex()
                 .gap_2()
-                .items_baseline()
+                .items_center()
+                .child(avatars::render(
+                    note.avatar.as_ref(),
+                    &note.initials,
+                    note.tint,
+                    px(20.),
+                    cx,
+                ))
                 .child(div().text_sm().font_semibold().child(note.author.clone()))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
                         .text_xs()
                         .text_color(theme.muted_foreground)
                         .child(note.meta.clone()),
-                ),
+                )
+                .children(actions),
         )
-        .child(div().text_sm().child(TextView::markdown(
-            ElementId::NamedInteger("note".into(), note.id),
-            note.body.clone(),
-        )))
+        .child(body)
+        .children(toggle)
         .into_any_element()
 }
 
-fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
+fn render_note_editor(
+    view: &Entity<ReviewView>,
+    note: &NoteView,
+    input: Entity<gpui_component::input::TextareaState>,
+    busy: bool,
+    cx: &App,
+) -> AnyElement {
+    let s = tr();
+    let cancel_view = view.clone();
+    let save_view = view.clone();
+    v_flex()
+        .gap_2()
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(avatars::render(
+                    note.avatar.as_ref(),
+                    &note.initials,
+                    note.tint,
+                    px(20.),
+                    cx,
+                ))
+                .child(div().text_sm().font_semibold().child(note.author.clone())),
+        )
+        .child(Textarea::new(&input))
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_end()
+                .child(
+                    Button::new(ElementId::NamedInteger("note-edit-cancel".into(), note.id))
+                        .ghost()
+                        .small()
+                        .label(s.cancel.clone())
+                        .on_click(move |_, _, cx| {
+                            cancel_view.update(cx, |this, cx| this.cancel_edit(cx))
+                        }),
+                )
+                .child(
+                    Button::new(ElementId::NamedInteger("note-edit-save".into(), note.id))
+                        .primary()
+                        .small()
+                        .label(s.save.clone())
+                        .loading(busy)
+                        .disabled(busy)
+                        .on_click(move |_, window, cx| {
+                            save_view.update(cx, |this, cx| this.save_edit(window, cx))
+                        }),
+                ),
+        )
+        .into_any_element()
+}
+
+pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
     let s = tr();
     let this = view.read(cx);
     let Some(composer) = this.composer.as_ref() else {
@@ -201,80 +376,4 @@ fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
                 ),
         )
         .into_any_element()
-}
-
-pub fn open_general_sheet(
-    _this: &mut ReviewView,
-    window: &mut Window,
-    cx: &mut Context<ReviewView>,
-) {
-    let view = cx.entity();
-    window.open_sheet(cx, move |sheet, _window, cx| {
-        let s = tr();
-        let review = view.read(cx);
-        let composing = matches!(
-            review.composer.as_ref().map(|c| &c.target),
-            Some(ComposerTarget::General)
-        );
-        let title = review.comments_title();
-        let (discussions, general) = review.general_discussions();
-        let empty = general.is_empty();
-        let mut list = v_flex().gap_3();
-        for &ix in general {
-            let Some(discussion) = discussions.get(ix) else {
-                continue;
-            };
-            list = list.child(
-                v_flex()
-                    .gap_1()
-                    .when_some(discussion.location.clone(), |el, location| {
-                        el.child(
-                            h_flex()
-                                .gap_1()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(Tag::warning().small().child(s.outdated.clone()))
-                                .child(location),
-                        )
-                    })
-                    .child(render_discussion(&view, ix, discussion, cx)),
-            );
-        }
-        let new_view = view.clone();
-        sheet.title(title).size(px(520.)).child(
-            div()
-                .id("general-comments")
-                .size_full()
-                .overflow_y_scroll()
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .pb_4()
-                        .when(composing, |el| el.child(render_composer(&view, cx)))
-                        .when(!composing, |el| {
-                            el.child(
-                                Button::new("new-general-comment")
-                                    .outline()
-                                    .small()
-                                    .icon(Icon::new(Icons::MessageSquarePlus))
-                                    .label(s.new_comment.clone())
-                                    .on_click(move |_, window, cx| {
-                                        new_view.update(cx, |this, cx| {
-                                            this.open_composer(ComposerTarget::General, window, cx)
-                                        })
-                                    }),
-                            )
-                        })
-                        .when(empty, |el| {
-                            el.child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(s.no_comments.clone()),
-                            )
-                        })
-                        .child(list),
-                ),
-        )
-    });
 }

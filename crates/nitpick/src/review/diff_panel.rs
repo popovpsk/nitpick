@@ -26,7 +26,8 @@ use ui_resources::Icons;
 use super::{
     Busy, CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview,
     NextChange, NextFile, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
-    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comments, file_actions,
+    ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed, comment_list, comments,
+    file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -186,20 +187,50 @@ impl ReviewView {
                     .child(forge.reference(*number));
             }
         }
-        let comments_button =
-            self.mr.as_ref().map(|_| {
-                let count = self.general_count();
-                Button::new("general-comments")
-                    .ghost()
+        let approve_button = self.approval.as_ref().and_then(|approval| {
+            let label = approval.label.clone()?;
+            let mine = approval.approved_by_me;
+            let actionable = approval.can_approve || approval.can_unapprove;
+            Some(
+                Button::new("approve")
                     .small()
-                    .icon(Icon::new(Icons::MessageSquareText))
-                    .label(count.to_string())
-                    .loading(self.discussions_loading)
-                    .tooltip(self.comments_title())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        comments::open_general_sheet(this, window, cx)
+                    .icon(Icon::new(if mine {
+                        Icons::CircleCheckBig
+                    } else {
+                        Icons::ThumbsUp
                     }))
-            });
+                    .label(label)
+                    .map(|button| {
+                        if mine {
+                            button.success()
+                        } else if approval.can_approve {
+                            button.outline()
+                        } else {
+                            button.ghost()
+                        }
+                    })
+                    .loading(self.approval_busy)
+                    .tooltip(approval.tooltip.clone())
+                    .when(actionable, |button| {
+                        button.on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_approval(window, cx)),
+                        )
+                    }),
+            )
+        });
+        let comments_button = self.mr.as_ref().map(|_| {
+            let count = self.comments_count();
+            Button::new("general-comments")
+                .ghost()
+                .small()
+                .icon(Icon::new(Icons::MessageSquareText))
+                .label(count.to_string())
+                .loading(self.discussions_loading)
+                .tooltip(self.comments_title())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    comment_list::open_comments_sheet(this, window, cx)
+                }))
+        });
         h_flex()
             .flex_none()
             .h(px(40.))
@@ -220,6 +251,7 @@ impl ReviewView {
                     )
                 },
             )
+            .children(approve_button)
             .children(comments_button)
             .children(progress)
             .child(

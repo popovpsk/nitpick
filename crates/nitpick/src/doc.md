@@ -13,7 +13,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 ## Files
 
 - `main.rs` — `main`, `build_window_options` (with the macOS `tabbing_identifier`),
-  `open_window`, restoring the windows open at the last quit, app-level action handlers.
+  `open_window`, restoring the windows open at the last quit, app-level action handlers. An
+  app-level handler that touches a window defers the work: gpui runs it while the window that
+  dispatched the action is still borrowed, so updating that window directly fails.
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
   GitHub tokens sealed by `secret_store`; `forge_url` (normalised by `ForgeKind::web_url`: an empty GitHub URL is github.com),
@@ -21,19 +23,27 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   `apply_theme`; syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
-  tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`; diff display (`show_whole_file`,
+  tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`; diff display (`show_whole_file`,
   `WrapLines`); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower).
 - `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub included)
   still loads; the GitHub host default and override; syntax
   palettes per appearance; fitting the split ratio to a width.
-- `settings_view.rs` — the settings screen, three pages: Settings, Hidden files and
+- `settings_window.rs` — the settings window: `open` raises the existing one or creates it
+  (centred on the opener's display; a floating window, as in Zed, so it stays above the
+  repository windows; no `tabbing_identifier`, because gpui adds any window that has one as a
+  native tab of the main window when macOS prefers tabs, whatever the identifier), `Opener` (the window and repository it was opened from; the
+  owner whose repository switches follow, `repository_changed`), the app-level `ShowSettings`
+  (the active window's repository from `window_registry`) and `CloseWindow` fallbacks for when
+  nothing in a window is focused. Like `Workspace`, the view refocuses itself on the next frame
+  when its window is active and nothing is focused, so Escape and shortcuts keep working.
+- `settings_view.rs` — the settings view, three pages: Settings, Hidden files and
   Shortcuts (the shortcut groups stay out of the general page). `reveal` opens a page by
   re-creating gpui-component's `Settings` under a new id with that page selected: its
-  selection lives in keyed state and only a fresh state takes `default_selected_index`. Back and Escape emit
-  `SettingsEvent::Close` to the window rather than dispatching an action, so they work
-  wherever focus is; the screen takes focus when it opens. Settings page: General (language, the version with a
+  selection lives in keyed state and only a fresh state takes `default_selected_index`, so a
+  new window starts on the first page. Escape and ⌘/Ctrl-W close the window; the view takes
+  focus when it opens. Settings page: General (language, the version with a
   "Check for Updates" button where the updater is built in), then theme and syntax colors (hover
   previews), Zed theme import, review options (the editor command is saved 400 ms
   after typing stops by a detached task, and reloads when the saved value differs from the
@@ -63,9 +73,13 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   merge request without `forge` is GitLab, a GitHub one round-trips.
 - `picker.rs` — `Picker`: the fuzzy picker every repository, branch and commit chooser uses, a
   `Popover` around gpui-component's searchable `List` with a `PickerDelegate`;
-  `PickerEntry`, `branch_entries`, `PickerEvent` (`Open`, `Confirm { entry, secondary }`).
+  `PickerEntry`, `branch_entries`, `PickerEvent` (`Open`, `Confirm { entry, secondary }`);
+  `with_row_action` puts an icon button on the hovered and the selected row that confirms it
+  as secondary, and drops the checkmark of the current entry.
 - `window_registry.rs` — which repository each open window shows, persisted into
-  `recent.json` as windows open, switch or close.
+  `recent.json` as windows open, switch or close; only repository windows are registered, so
+  `has_windows` (quit on the last one off macOS, reopen from the Dock on macOS) ignores the
+  settings window.
 - `workspace/`, `review/` — see their `doc.md`.
 
 ## Rules
@@ -159,7 +173,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 
 - One repository per window; switching repositories happens in the title bar, a new
   repository opens a new window (a native tab on macOS).
-- Settings are one screen inside the window, not a separate window.
+- Settings live in their own window, as in Zed: one for the app, opening it again raises it,
+  and the repository section follows the window it was last opened from.
 - Syntax colors default to the app theme's; the choices are the palettes of every registered
   theme of the current appearance, bundled or imported, one choice per appearance.
 - Zed themes are imported as files (converted once), not read from Zed at startup.

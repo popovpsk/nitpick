@@ -82,6 +82,7 @@ impl ForgeKind {
 pub struct User {
     pub username: String,
     pub name: String,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -120,6 +121,10 @@ pub struct Request {
     pub state: RequestState,
     pub draft: bool,
     pub diff_refs: Option<DiffRefs>,
+    pub reviewers: Vec<User>,
+    pub assignees: Vec<User>,
+    pub comments: Option<u32>,
+    pub updated_at: Option<String>,
 }
 
 impl Request {
@@ -131,6 +136,14 @@ impl Request {
         let tip = self.diff_refs.as_ref().map(|refs| refs.start_sha.as_str());
         self.kind.refspecs(self.number, tip)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Approval {
+    pub approvers: Vec<User>,
+    pub approved_by_me: bool,
+    pub can_approve: bool,
+    pub can_unapprove: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

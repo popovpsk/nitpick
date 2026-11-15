@@ -24,6 +24,9 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab / G
 - `worktree.rs` — the same two against the files on disk (`working_tree_changes`,
   `working_tree_diff`), untracked files included, `head_or_empty_tree` and the empty tree id
   (`hash-object -t tree` of nothing, so SHA-256 repositories get theirs).
+- `worktree_list.rs` — `worktrees` (`worktree list --porcelain`: each checkout's path and
+  branch, `None` when detached or bare), `parse_worktrees`, `worktree_for` (the checkout of a
+  branch; `<remote>/<name>` also matches a checkout of `<name>`, for a known remote only).
 - `blame.rs` — `blame(rev, path)`: one `blame --porcelain` run parsed into a `BlameLine` per
   line of the file at a commit or in the work tree.
 - `pull.rs` — `fetch` and the fast-forward-only `pull`.

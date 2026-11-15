@@ -36,9 +36,21 @@ pub fn remove(id: WindowId, cx: &mut App) {
     let registry = cx.default_global::<WindowRepos>();
     let removed = registry.windows.remove(&id).is_some();
     let quitting = registry.quitting;
-    if removed && !quitting && !cx.windows().is_empty() {
+    if removed && !quitting && has_windows(cx) {
         persist(cx);
     }
+}
+
+pub fn repo_of(id: WindowId, cx: &App) -> Option<Option<PathBuf>> {
+    cx.try_global::<WindowRepos>()?
+        .windows
+        .get(&id)
+        .map(|(_, repo)| repo.clone())
+}
+
+pub fn has_windows(cx: &App) -> bool {
+    cx.try_global::<WindowRepos>()
+        .is_some_and(|registry| !registry.windows.is_empty())
 }
 
 pub fn quitting(cx: &mut App) {

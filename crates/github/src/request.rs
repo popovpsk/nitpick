@@ -74,6 +74,11 @@ pub(crate) struct BodyOnly<'a> {
 }
 
 #[derive(Serialize)]
+pub(crate) struct ReviewEvent<'a> {
+    pub event: &'a str,
+}
+
+#[derive(Serialize)]
 pub(crate) struct GraphQlRequest<'a, V: Serialize> {
     pub query: &'a str,
     pub variables: V,

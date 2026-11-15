@@ -43,6 +43,10 @@ gpui_kit_assets::icon_assets!(
         GitCommitHorizontal,
         RotateCcw,
         FileClock,
+        ArrowUpRight,
+        Pencil,
+        Trash,
+        ThumbsUp,
     ]
 );
 

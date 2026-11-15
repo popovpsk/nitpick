@@ -10,10 +10,10 @@ use serde::de::DeserializeOwned;
 
 use crate::error::Error;
 use crate::models::{
-    GraphQlResponse, IssueComment, PullRequest, ResolveData, ReviewComment, ReviewThread,
+    GraphQlResponse, IssueComment, PullRequest, ResolveData, Review, ReviewComment, ReviewThread,
     ThreadState, ThreadsData, User, group_threads,
 };
-use crate::request::{BodyOnly, GraphQlRequest, NewReviewComment, RepoRef};
+use crate::request::{BodyOnly, GraphQlRequest, NewReviewComment, RepoRef, ReviewEvent};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const USER_AGENT: &str = "nitpick";
@@ -256,6 +256,64 @@ impl Client {
         let path = format!("{}/issues/{number}/comments", repo.api_path());
         self.call(Method::POST, &path, &[], Some(&BodyOnly { body }))
             .await
+    }
+
+    pub async fn edit_review_comment(
+        &self,
+        repo: &RepoRef,
+        comment_id: u64,
+        body: &str,
+    ) -> Result<ReviewComment, Error> {
+        let path = format!("{}/pulls/comments/{comment_id}", repo.api_path());
+        self.call(Method::PATCH, &path, &[], Some(&BodyOnly { body }))
+            .await
+    }
+
+    pub async fn delete_review_comment(
+        &self,
+        repo: &RepoRef,
+        comment_id: u64,
+    ) -> Result<(), Error> {
+        let path = format!("{}/pulls/comments/{comment_id}", repo.api_path());
+        self.send(Method::DELETE, &path, None::<&()>).await
+    }
+
+    pub async fn edit_issue_comment(
+        &self,
+        repo: &RepoRef,
+        comment_id: u64,
+        body: &str,
+    ) -> Result<IssueComment, Error> {
+        let path = format!("{}/issues/comments/{comment_id}", repo.api_path());
+        self.call(Method::PATCH, &path, &[], Some(&BodyOnly { body }))
+            .await
+    }
+
+    pub async fn delete_issue_comment(&self, repo: &RepoRef, comment_id: u64) -> Result<(), Error> {
+        let path = format!("{}/issues/comments/{comment_id}", repo.api_path());
+        self.send(Method::DELETE, &path, None::<&()>).await
+    }
+
+    pub async fn reviews(&self, repo: &RepoRef, number: u64) -> Result<Vec<Review>, Error> {
+        let path = format!("{}/reviews", pull_path(repo, number));
+        self.get_all(&path, &[], MAX_COMMENT_PAGES).await
+    }
+
+    pub async fn approve(&self, repo: &RepoRef, number: u64) -> Result<(), Error> {
+        let path = format!("{}/reviews", pull_path(repo, number));
+        self.send(Method::POST, &path, Some(&ReviewEvent { event: "APPROVE" }))
+            .await
+    }
+
+    async fn send<B: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+    ) -> Result<(), Error> {
+        let url = self.url(path, &[])?;
+        self.execute(method, url, path, body).await?;
+        Ok(())
     }
 
     pub async fn set_thread_resolved(

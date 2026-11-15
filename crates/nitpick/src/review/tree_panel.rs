@@ -40,6 +40,7 @@ fn view_options_panel(
     let flat = current.tree_mode == TreeMode::List;
     let show_hidden = current.show_hidden_files;
     let compact = current.compact_folders;
+    let comments = current.tree_comments;
     let theme = cx.theme();
     let popover = cx.entity();
     let rows = hidden.len();
@@ -106,6 +107,17 @@ fn view_options_panel(
                 .on_click(|checked, _, cx| {
                     let checked = *checked;
                     update_settings(cx, move |s| s.show_hidden_files = checked)
+                })
+                .into_any_element(),
+        ))
+        .child(option(
+            s.tree_comments.clone(),
+            Switch::new("tree-comments")
+                .small()
+                .checked(comments)
+                .on_click(|checked, _, cx| {
+                    let checked = *checked;
+                    update_settings(cx, move |s| s.tree_comments = checked)
                 })
                 .into_any_element(),
         ))
@@ -460,7 +472,7 @@ impl ReviewView {
         } else {
             None
         };
-        let comments = (row.comments > 0).then(|| {
+        let comments = (row.comments > 0 && settings(cx).tree_comments).then(|| {
             h_flex()
                 .gap_0p5()
                 .text_xs()

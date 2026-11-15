@@ -8,7 +8,7 @@ use git_repo::Repo;
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
     IntoElement, ParentElement as _, PathPromptOptions, Render, SharedString, Styled as _,
-    Subscription, Window, actions, div, prelude::FluentBuilder as _, px,
+    Subscription, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, StyledExt as _, WindowExt as _,
@@ -23,7 +23,8 @@ use crate::localization::tr;
 use crate::picker::{Picker, PickerEntry, PickerEvent};
 use crate::recent::{RecentRepos, StoredReview, now, recent};
 use crate::review::{ReviewEvent, ReviewSource, ReviewView};
-use crate::settings_view::{SettingsEvent, SettingsSection, SettingsView};
+use crate::settings_view::SettingsSection;
+use crate::settings_window::{self, Opener};
 use start::{StartEvent, StartView};
 
 actions!(
@@ -44,18 +45,14 @@ actions!(
 enum Screen {
     Start,
     Review,
-    Settings,
 }
 
 pub struct Workspace {
     repo: Option<Repo>,
     repo_name: SharedString,
     screen: Screen,
-    previous_screen: Screen,
     start: Option<Entity<StartView>>,
     review: Option<Entity<ReviewView>>,
-    settings: Option<Entity<SettingsView>>,
-    _settings_events: Option<Subscription>,
     repo_picker: Entity<Picker>,
     repo_paths: Vec<PathBuf>,
     focus: FocusHandle,
@@ -75,6 +72,11 @@ impl Workspace {
                 cx,
             )
             .with_footer(footer)
+            .with_row_action(
+                Icons::ArrowUpRight,
+                || tr().open_in_new_window.clone(),
+                cx,
+            )
         });
         let picker_subscriptions = vec![
             cx.subscribe_in(
@@ -97,11 +99,8 @@ impl Workspace {
             repo: None,
             repo_name: SharedString::default(),
             screen: Screen::Start,
-            previous_screen: Screen::Start,
             start: None,
             review: None,
-            settings: None,
-            _settings_events: None,
             repo_picker,
             repo_paths: Vec::new(),
             focus: cx.focus_handle(),
@@ -185,7 +184,9 @@ impl Workspace {
         {
             self.open_review(source, window, cx);
         }
-        crate::window_registry::set_repo(window, self.repo_path().map(Path::to_path_buf), cx);
+        let root = self.repo_path().map(Path::to_path_buf);
+        crate::window_registry::set_repo(window, root.clone(), cx);
+        settings_window::repository_changed(window.window_handle().window_id(), root, cx);
         self.refresh_repo_picker(window, cx);
         self.update_title(window, cx);
         cx.notify();
@@ -216,19 +217,9 @@ impl Workspace {
                     cx.notify();
                 }
                 ReviewEvent::Open(source) => this.open_review(source.clone(), window, cx),
-                ReviewEvent::OpenSettings => {
-                    if this.screen != Screen::Settings {
-                        this.show_settings(window, cx);
-                    }
-                }
+                ReviewEvent::OpenSettings => this.show_settings(window, cx),
                 ReviewEvent::EditHiddenFiles => {
-                    if this.screen != Screen::Settings {
-                        this.show_settings(window, cx);
-                    }
-                    if let Some(settings) = &this.settings {
-                        settings
-                            .update(cx, |view, cx| view.reveal(SettingsSection::HiddenFiles, cx));
-                    }
+                    this.open_settings(Some(SettingsSection::HiddenFiles), window, cx)
                 }
             },
         );
@@ -267,43 +258,18 @@ impl Workspace {
     }
 
     pub fn show_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_screen_pickers(cx);
-        if self.screen == Screen::Settings {
-            self.close_settings(window, cx);
-            return;
-        }
-        if self.settings.is_none() {
-            let settings = cx.new(|cx| SettingsView::new(window, cx));
-            self._settings_events = Some(cx.subscribe_in(
-                &settings,
-                window,
-                |this, _, event: &SettingsEvent, window, cx| match event {
-                    SettingsEvent::Close => this.close_settings(window, cx),
-                },
-            ));
-            self.settings = Some(settings);
-        }
-        let root = self.repo_path().map(Path::to_path_buf);
-        if let Some(settings) = &self.settings {
-            settings.update(cx, |view, cx| view.set_repository(root, window, cx));
-            let focus = settings.focus_handle(cx);
-            window.focus(&focus, cx);
-        }
-        self.previous_screen = self.screen;
-        self.screen = Screen::Settings;
-        cx.notify();
+        self.open_settings(None, window, cx);
     }
 
-    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.screen != Screen::Settings {
-            return;
-        }
-        self.screen = self.previous_screen;
-        if let (Screen::Start, Some(start)) = (self.screen, &self.start) {
-            start.update(cx, |start, cx| start.refresh(window, cx));
-        }
-        self.focus_screen(window, cx);
-        cx.notify();
+    fn open_settings(
+        &mut self,
+        section: Option<SettingsSection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_screen_pickers(cx);
+        let opener = Opener::of(window, self.repo_path().map(Path::to_path_buf), cx);
+        settings_window::open(Some(opener), section, cx);
     }
 
     fn keep_focus_inside(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -324,13 +290,9 @@ impl Workspace {
     }
 
     fn focus_screen(&self, window: &mut Window, cx: &mut Context<Self>) {
-        match (self.screen, &self.review, &self.settings) {
-            (Screen::Review, Some(review), _) => {
+        match (self.screen, &self.review) {
+            (Screen::Review, Some(review)) => {
                 review.update(cx, |review, cx| review.focus_main(window, cx))
-            }
-            (Screen::Settings, _, Some(settings)) => {
-                let focus = settings.focus_handle(cx);
-                window.focus(&focus, cx);
             }
             _ => window.focus(&self.focus, cx),
         }
@@ -505,11 +467,6 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.keep_focus_inside(window, cx);
         let body = match (self.screen, &self.repo) {
-            (Screen::Settings, _) => self
-                .settings
-                .clone()
-                .map(|s| s.into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
             (_, None) => self.render_welcome(cx).into_any_element(),
             (Screen::Review, Some(_)) if self.review.is_some() => self
                 .review
@@ -549,13 +506,6 @@ impl Render for Workspace {
             .child(self.render_title_bar(window, cx))
             .child(window_tabs::render(window, cx))
             .child(div().flex_1().min_h_0().child(body))
-            .when(self.screen == Screen::Settings, |el| {
-                el.on_action(cx.listener(
-                    |this, _: &crate::settings_view::CloseSettings, window, cx| {
-                        this.close_settings(window, cx)
-                    },
-                ))
-            })
     }
 }
 

@@ -6,6 +6,7 @@ mod remote_url;
 mod repo;
 mod scan;
 mod worktree;
+mod worktree_list;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,7 @@ pub use command::NETWORK_TIMEOUT;
 pub use remote_url::{RemoteLocation, parse_remote_url};
 pub use repo::Repo;
 pub use scan::{SCAN_DEPTH, find_repositories};
+pub use worktree_list::{Worktree, parse_worktrees, worktree_for};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {

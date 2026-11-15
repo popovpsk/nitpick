@@ -1,5 +1,7 @@
+pub(crate) mod avatars;
 mod blame;
 mod branch_picker;
+mod comment_list;
 mod comments;
 mod commit_picker;
 mod diff_panel;
@@ -8,6 +10,7 @@ mod file_search;
 mod find_bar;
 mod image_preview;
 pub mod model;
+mod note_actions;
 mod since_viewed;
 mod tree_panel;
 mod viewed;
@@ -41,6 +44,7 @@ use crate::settings_store::{
     DiffLayout, SPLIT_RATIO_RANGE, SettingsStore, TREE_WIDTH_RANGE, TreeMode, settings,
     update_settings,
 };
+pub use avatars::init as init_avatars;
 pub use blame::ToggleBlame;
 pub use file_actions::{CopyPath, HostOs, OpenInEditor, editor_presets};
 pub use model::{LoadedReview, MrContext, ReviewSource};
@@ -155,6 +159,11 @@ pub struct Composer {
 pub struct NoteView {
     pub id: u64,
     pub author: SharedString,
+    pub avatar: Option<SharedString>,
+    pub initials: SharedString,
+    pub tint: usize,
+    pub long: bool,
+    pub own: bool,
     pub meta: SharedString,
     pub body: SharedString,
 }
@@ -170,8 +179,18 @@ pub struct DiscussionView {
     pub location: Option<SharedString>,
 }
 
+const LONG_NOTE_LINES: usize = 10;
+const WRAP_CHARS: usize = 90;
+
+fn is_long(body: &str) -> bool {
+    body.lines()
+        .map(|line| line.chars().count().div_ceil(WRAP_CHARS).max(1))
+        .sum::<usize>()
+        > LONG_NOTE_LINES
+}
+
 impl DiscussionView {
-    fn from_forge(discussion: &forge::Discussion) -> Option<Self> {
+    fn from_forge(discussion: &forge::Discussion, me: Option<&str>) -> Option<Self> {
         let notes: Vec<NoteView> = discussion
             .notes
             .iter()
@@ -185,6 +204,11 @@ impl DiscussionView {
                 NoteView {
                     id: note.id,
                     author: note.author.name.clone().into(),
+                    avatar: note.author.avatar_url.clone().map(SharedString::from),
+                    initials: review_core::blame::initials(&note.author.name).into(),
+                    tint: review_core::blame::tint_index(&note.author.username, blame::TINT_COUNT),
+                    long: is_long(&note.body),
+                    own: me.is_some_and(|me| me == note.author.username),
                     meta: format!("@{} · {time}", note.author.username).into(),
                     body: note.body.clone().into(),
                 }
@@ -228,6 +252,18 @@ pub struct ReviewView {
     discussions: Rc<Vec<DiscussionView>>,
     by_file: HashMap<SharedString, Vec<usize>>,
     general: Vec<usize>,
+    general_only: Rc<Vec<usize>>,
+    code_threads: Rc<Vec<comment_list::CodeThread>>,
+    comments_tab: comment_list::CommentsTab,
+    comment_tab_labels: (SharedString, SharedString),
+    expanded_notes: HashSet<u64>,
+    open_thread: Option<usize>,
+    me: Option<String>,
+    editing: Option<note_actions::NoteEdit>,
+    note_busy: bool,
+    approval: Option<note_actions::ApprovalView>,
+    approval_busy: bool,
+    _approval: Task<()>,
     discussions_loading: bool,
     viewed: Vec<bool>,
     tree: Arc<FileTree>,
@@ -338,6 +374,18 @@ impl ReviewView {
             discussions: Rc::default(),
             by_file: HashMap::new(),
             general: Vec::new(),
+            general_only: Rc::default(),
+            code_threads: Rc::default(),
+            comments_tab: comment_list::CommentsTab::default(),
+            comment_tab_labels: (SharedString::default(), SharedString::default()),
+            expanded_notes: HashSet::new(),
+            open_thread: None,
+            me: None,
+            editing: None,
+            note_busy: false,
+            approval: None,
+            approval_busy: false,
+            _approval: Task::ready(()),
             discussions_loading: false,
             viewed: Vec::new(),
             tree: Arc::default(),
@@ -833,9 +881,17 @@ impl ReviewView {
                         },
                         _ => progress[row.node],
                     },
-                    comments: file
-                        .and_then(|f| self.by_file.get(&review.files[f].path))
-                        .map_or(0, Vec::len),
+                    comments: match file {
+                        Some(f) => self.by_file.get(&review.files[f].path).map_or(0, Vec::len),
+                        None if !row.expanded && !self.by_file.is_empty() => self
+                            .tree
+                            .files_under(row.node)
+                            .iter()
+                            .filter_map(|&f| self.by_file.get(&review.files[f].path))
+                            .map(Vec::len)
+                            .sum(),
+                        None => 0,
+                    },
                     seen_before: file.is_some_and(|f| {
                         !self.viewed.get(f).copied().unwrap_or(false) && self.seen_before(f)
                     }),
@@ -1320,23 +1376,57 @@ impl ReviewView {
             return;
         };
         self.discussions_loading = true;
+        self.load_approval(cx);
+        let known_me = self.me.clone();
         self._discussions = cx.spawn(async move |this, cx| {
             let result = net_runtime::spawn(async move {
-                ctx.client
+                let me = match known_me {
+                    Some(me) => Some(me),
+                    None => ctx
+                        .client
+                        .current_user()
+                        .await
+                        .inspect_err(|err| log::warn!("current user: {err}"))
+                        .ok()
+                        .map(|user| user.username),
+                };
+                let discussions = ctx
+                    .client
                     .discussions(&ctx.project, ctx.request.number)
-                    .await
+                    .await;
+                discussions.map(|list| (list, me))
             })
             .await;
             let _ = this.update(cx, |this, cx| {
                 this.discussions_loading = false;
                 match result {
-                    Ok(discussions) => {
+                    Ok((discussions, me)) => {
+                        if me.is_some() {
+                            this.me = me;
+                        }
+                        let edited = this.editing.as_ref().map(|e| e.note_id);
+                        if edited.is_some_and(|id| {
+                            !discussions
+                                .iter()
+                                .flat_map(|d| &d.notes)
+                                .any(|n| n.id == id)
+                        }) {
+                            this.editing = None;
+                        }
+                        this.open_thread = None;
+                        let me = this.me.clone();
                         this.discussions = Rc::new(
                             discussions
                                 .iter()
-                                .filter_map(DiscussionView::from_forge)
+                                .filter_map(|d| DiscussionView::from_forge(d, me.as_deref()))
                                 .collect(),
                         );
+                        let urls: Vec<SharedString> = this
+                            .discussions
+                            .iter()
+                            .flat_map(|d| d.notes.iter().filter_map(|n| n.avatar.clone()))
+                            .collect();
+                        avatars::request(urls, cx);
                         this.index_discussions();
                         this.rebuild_rows();
                         this.rebuild_annotations();
@@ -1360,6 +1450,8 @@ impl ReviewView {
         self.by_file.clear();
         self.general.clear();
         let (Some(review), Some(ctx)) = (self.review.as_ref(), self.mr.as_ref()) else {
+            self.code_threads = Rc::default();
+            self.general_only = Rc::default();
             return;
         };
         let can_place = review.comments_aligned && review.commit.is_none();
@@ -1383,6 +1475,93 @@ impl ReviewView {
                 None => self.general.push(ix),
             }
         }
+        let files = comment_list::FilePaths::of(review);
+        self.code_threads = Rc::new(comment_list::build_code_threads(
+            &self.discussions,
+            &files,
+            review.tree.file_order(),
+            &self.by_file,
+            Some(ctx.refs.head_sha.as_str()),
+        ));
+        self.general_only = Rc::new(
+            self.discussions
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| {
+                    d.position
+                        .as_ref()
+                        .is_none_or(|p| p.new_path.is_none() && p.old_path.is_none())
+                })
+                .map(|(ix, _)| ix)
+                .collect(),
+        );
+        let s = tr();
+        self.comment_tab_labels = (
+            format!("{} · {}", s.comments_code, self.code_threads.len()).into(),
+            format!("{} · {}", s.comments_general, self.general_only.len()).into(),
+        );
+    }
+
+    pub fn reveal_discussion(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self
+            .code_threads
+            .iter()
+            .find(|thread| thread.discussion == ix)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(file) = thread.file else {
+            return;
+        };
+        if self.tree.file_node(file).is_none() {
+            return;
+        }
+        if self.current_file != Some(file) {
+            self.show_file(file, cx);
+        }
+        self.focus_diff(window, cx);
+        let position = thread.placed.then(|| {
+            let pos = self.discussions.get(ix)?.position.as_ref()?;
+            let path = self.review.as_ref()?.files.get(file)?.path.clone();
+            match (pos.new_line, pos.old_line) {
+                (Some(line), _) => Some(DiffLinePosition::new(
+                    path,
+                    DiffSide::Modified,
+                    line as usize,
+                )),
+                (None, Some(line)) => Some(DiffLinePosition::new(
+                    path,
+                    DiffSide::Original,
+                    line as usize,
+                )),
+                (None, None) => None,
+            }
+        });
+        if let Some(Some(position)) = position
+            && !self.content_pending()
+        {
+            self.change_cursor = None;
+            self.diff
+                .update(cx, |state, cx| state.scroll_to_line(position, cx));
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_open_thread(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.open_thread = if self.open_thread == Some(ix) {
+            None
+        } else {
+            Some(ix)
+        };
+        cx.notify();
+    }
+
+    pub fn toggle_note(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.expanded_notes.remove(&id) {
+            self.expanded_notes.insert(id);
+        }
+        cx.notify();
     }
 
     fn rebuild_annotations(&mut self) {
@@ -1615,10 +1794,6 @@ impl ReviewView {
         .detach();
     }
 
-    pub fn general_discussions(&self) -> (Rc<Vec<DiscussionView>>, &[usize]) {
-        (self.discussions.clone(), &self.general)
-    }
-
     pub fn discussions(&self) -> Rc<Vec<DiscussionView>> {
         self.discussions.clone()
     }
@@ -1688,8 +1863,8 @@ impl ReviewView {
         cx.notify();
     }
 
-    pub fn general_count(&self) -> usize {
-        self.general.len()
+    pub fn comments_count(&self) -> usize {
+        self.code_threads.len() + self.general_only.len()
     }
 
     pub fn has_mr(&self) -> bool {

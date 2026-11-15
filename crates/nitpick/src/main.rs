@@ -15,6 +15,7 @@ pub mod recent;
 pub mod review;
 pub mod settings_store;
 pub mod settings_view;
+pub mod settings_window;
 pub mod shortcut_dialog;
 pub mod window_registry;
 pub mod workspace;
@@ -80,7 +81,7 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     app.on_reopen(|cx| {
-        if cx.windows().is_empty() {
+        if !window_registry::has_windows(cx) {
             open_window(None, cx);
         }
     });
@@ -101,14 +102,16 @@ fn main() {
         ui_resources::themes::register_bundled_themes(cx, settings_store::apply_saved_theme);
 
         settings_view::init(cx);
+        settings_window::init(cx);
         updater::init(cx, env!("CARGO_PKG_VERSION"), true);
         zoom::init(cx);
+        review::init_avatars(cx);
         keymap::init(cx);
 
         cx.on_window_closed(|cx, id| {
             window_registry::remove(id, cx);
             #[cfg(not(target_os = "macos"))]
-            if cx.windows().is_empty() {
+            if !window_registry::has_windows(cx) {
                 cx.quit();
             }
         })
@@ -136,13 +139,17 @@ fn main() {
         #[cfg(target_os = "macos")]
         cx.on_action(|_: &crate::app_menu::Minimize, cx| {
             if let Some(w) = cx.active_window() {
-                let _ = w.update(cx, |_, window, _| window.minimize_window());
+                cx.defer(move |cx| {
+                    let _ = w.update(cx, |_, window, _| window.minimize_window());
+                });
             }
         });
         #[cfg(target_os = "macos")]
         cx.on_action(|_: &crate::app_menu::Zoom, cx| {
             if let Some(w) = cx.active_window() {
-                let _ = w.update(cx, |_, window, _| window.zoom_window());
+                cx.defer(move |cx| {
+                    let _ = w.update(cx, |_, window, _| window.zoom_window());
+                });
             }
         });
         cx.on_action(|_: &crate::app_menu::OpenProjectPage, cx| {

@@ -190,15 +190,10 @@ impl Repo {
 
     async fn worktree_with(&self, local_ref: &str) -> Result<Option<PathBuf>, GitError> {
         let out = self.git_async(&["worktree", "list", "--porcelain"]).await?;
-        let listing = String::from_utf8_lossy(&out);
-        let mut current: Option<&str> = None;
-        for line in listing.lines() {
-            if let Some(path) = line.strip_prefix("worktree ") {
-                current = Some(path);
-            } else if line.strip_prefix("branch ") == Some(local_ref) {
-                return Ok(Some(PathBuf::from(current.unwrap_or_default())));
-            }
-        }
-        Ok(None)
+        let branch = local_ref.strip_prefix("refs/heads/").unwrap_or(local_ref);
+        Ok(crate::parse_worktrees(&String::from_utf8_lossy(&out))
+            .into_iter()
+            .find(|w| w.branch.as_deref() == Some(branch))
+            .map(|w| w.path))
     }
 }

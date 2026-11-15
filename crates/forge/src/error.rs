@@ -8,4 +8,6 @@ pub enum Error {
     InvalidPosition,
     #[error("comment {0} takes no replies")]
     CannotReply(String),
+    #[error("{0} is not supported here")]
+    Unsupported(&'static str),
 }

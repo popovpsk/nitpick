@@ -1,10 +1,10 @@
 # workspace
 
 The root view of a window: the title bar, the macOS window-tab strip, and the screen below
-it — welcome (no repository), start (choose a review), the review, or settings.
+it — welcome (no repository), start (choose a review) or the review.
 
 Not here: the review itself (`review/doc.md`), settings storage (`settings_store.rs`),
-window options and opening windows (`main.rs`).
+window options and opening windows (`main.rs`), the settings window (`settings_window.rs`).
 
 ## Files
 
@@ -13,19 +13,22 @@ window options and opening windows (`main.rs`).
   picker's entries, window-level actions and bindings.
 - `title_bar.rs` — the repository picker trigger and its footer (open, add from folder), the
   review button, the settings button.
-- `window_tabs.rs` — the strip of native window tabs, and next/previous tab.
+- `window_tabs.rs` — the strip of native window tabs (title centred, the close button at the
+  tab's right edge on hover, as in Zed), and next/previous tab.
 - `start.rs` — `StartView`: target/source branch pickers (fuzzy `Picker`s) for a
   comparison, the uncommitted-changes review, and the open merge requests (GitLab) or pull
   requests (GitHub) of the repository's remote on a configured host (list, filter, URL,
-  `!123` or `#123`).
+  `!123` or `#123`); the list reloads when a forge URL or token changes (`forge_key`, a hash,
+  so other settings changes don't refetch).
 
 ## Spec
 
-- Settings open and close through calls and events (`StartEvent::OpenSettings`,
-  `ReviewEvent::OpenSettings`, `SettingsEvent::Close`), never only through a dispatched
-  action: an action starts from the focused element, and after a popover or menu closes
-  nothing in the window may be focused, so it would not reach `Workspace`. Every screen
-  switch ends in `focus_screen`: the settings screen, the review's tree (its diff when the
+- Settings open through calls and events (`StartEvent::OpenSettings`,
+  `ReviewEvent::OpenSettings`, `ReviewEvent::EditHiddenFiles`), never only through a
+  dispatched action: an action starts from the focused element, and after a popover or menu
+  closes nothing in the window may be focused, so it would not reach `Workspace`. Each passes
+  this window and its repository as the `Opener`, and a repository switch tells the settings
+  window. Every screen switch ends in `focus_screen`: the review's tree (its diff when the
   tree is hidden), or the window root, so menu items and shortcuts keep reaching the window.
   As a safety net, a render that finds nothing focused at all (no dialog or sheet open,
   the window active) focuses the current screen on the next frame. A focused element that
@@ -34,9 +37,9 @@ window options and opening windows (`main.rs`).
   lights are hidden there), so the repository picker starts at the edge.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with
   `~` for the home dir; both are matched, the name preferred), in `recent.json` order, the
-  current one checked. Enter or a click switches this window to the repository;
-  ⌘/Ctrl-Enter or ⌘/Ctrl-click opens it in a new window (a native tab on macOS when tabs are
-  on). The trigger's tooltip says so; there is no hint line. "Open Repository…" opens the
+  current one selected (no checkmark). Enter or a click switches this window to the
+  repository; the ↗ button on the row (as in Zed's recent projects), ⌘/Ctrl-Enter or
+  ⌘/Ctrl-click opens it in a new window (a native tab on macOS when tabs are on). "Open Repository…" opens the
   folder in this window when it has none, in a new window otherwise. Each switch records the
   repository in `recent.json` and the window in `window_registry`. The entries are rebuilt
   whenever `RecentRepos` changes (any window), not on open.
@@ -66,7 +69,10 @@ window options and opening windows (`main.rs`).
   text follow the host ("merge requests" / "pull requests"). The input takes a GitLab or
   GitHub request URL (`forge::parse_request_url`, the host from the URL) or `!123` / `#123` /
   `123` for the listed host. Branch and request loads each keep one task, so a refresh
-  cancels the previous load instead of racing it. Rows (title, subtitle with the host's
-  reference, lowercase filter key) are built once per load, not per frame.
+  cancels the previous load instead of racing it. Rows (author avatar, title, subtitle with
+  the host's reference, author, branches and how long ago it was updated; the reviewers' and
+  assignees' avatars, up to four, names in the tooltip; the comment count on GitLab;
+  a lowercase filter key that includes those people) are built once per load, not per frame.
+  Commit authors are not shown: they would cost a request per row.
 - Closing a window tab: the current window closes through the click's own `window`, since
   `WindowHandle::update` on the window being dispatched fails.

@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::convert::{
     github_comment, github_discussions, github_reply_target, github_request, gitlab_discussion,
-    gitlab_request,
+    gitlab_request, own_avatar,
 };
 use crate::{DiffRefs, Error, ForgeKind, NewPosition, Position, RequestState};
 
@@ -330,4 +330,70 @@ fn forge_kind_serializes_as_lowercase_names() {
         json!("github")
     );
     assert_eq!(ForgeKind::default(), ForgeKind::GitLab);
+}
+
+#[rstest]
+#[case::uploaded(
+    "https://gitlab.example.com/uploads/-/system/user/avatar/7/a.png",
+    true
+)]
+#[case::github("https://avatars.githubusercontent.com/u/1?v=4", true)]
+#[case::gravatar("https://secure.gravatar.com/avatar/abc?s=80&d=identicon", false)]
+#[case::bare_gravatar("https://gravatar.com/avatar/abc", false)]
+#[case::not_a_url("avatar.png", false)]
+#[case::blank("  ", false)]
+fn avatars_keep_only_uploaded_pictures(#[case] url: &str, #[case] kept: bool) {
+    assert_eq!(own_avatar(Some(url)).is_some(), kept);
+}
+
+#[test]
+fn gitlab_approvals_say_who_approved_and_what_is_allowed() {
+    let approvals: gitlab::Approvals = serde_json::from_value(json!({
+        "approved_by": [{"user": {"id": 1, "username": "bob", "name": "Bob"}}],
+        "user_has_approved": false,
+        "user_can_approve": true
+    }))
+    .unwrap();
+    let approval = crate::convert::gitlab_approval(&approvals);
+    assert_eq!(approval.approvers[0].username, "bob");
+    assert!(approval.can_approve && !approval.can_unapprove && !approval.approved_by_me);
+}
+
+#[rstest]
+#[case::approved(&[("me", "APPROVED")], true, false)]
+#[case::later_changes_requested(&[("me", "APPROVED"), ("me", "CHANGES_REQUESTED")], false, true)]
+#[case::comments_do_not_reset(&[("me", "APPROVED"), ("me", "COMMENTED")], true, false)]
+#[case::someone_else(&[("bob", "APPROVED")], false, true)]
+fn github_approval_follows_each_reviewers_latest_verdict(
+    #[case] reviews: &[(&str, &str)],
+    #[case] mine: bool,
+    #[case] can_approve: bool,
+) {
+    let reviews: Vec<github::Review> = reviews
+        .iter()
+        .map(|(login, state)| {
+            serde_json::from_value(json!({"user": {"login": login}, "state": state})).unwrap()
+        })
+        .collect();
+    let approval = crate::convert::github_approval(&reviews, "me", "author");
+    assert_eq!(approval.approved_by_me, mine);
+    assert_eq!(approval.can_approve, can_approve);
+    assert!(!approval.can_unapprove);
+    assert!(!crate::convert::github_approval(&[], "author", "author").can_approve);
+}
+
+#[test]
+fn list_entries_carry_people_and_comment_counts() {
+    let mut mr = gitlab_mr("opened", false);
+    mr.user_notes_count = 4;
+    mr.reviewers = vec![gitlab::User {
+        id: 2,
+        username: "bob".into(),
+        name: "Bob".into(),
+        avatar_url: None,
+    }];
+    let request = gitlab_request(&mr);
+    assert_eq!(request.comments, Some(4));
+    assert_eq!(request.reviewers[0].username, "bob");
+    assert_eq!(github_request(&github_pr("open", false)).comments, None);
 }

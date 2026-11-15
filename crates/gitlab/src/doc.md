@@ -14,12 +14,15 @@ the GitLab instance from git remotes (`git_repo`), storing the token (`secret_st
 
 - `lib.rs` — module list and the public re-exports.
 - `client.rs` — `Client`: the reqwest client (from `http_client::builder`, plus auth, the
-  total timeout and the same-host redirect policy), one method per endpoint, discussion
-  pagination.
+  total timeout and the same-host redirect policy), one method per endpoint (merge requests,
+  discussions, notes: create, reply, edit, delete; resolve; approvals, approve, unapprove),
+  discussion pagination.
 - `request.rs` — what the client sends: `ProjectRef`, `MrQuery`/`MrState`, `NewPosition`
   and the JSON bodies, path-segment encoding.
-- `models.rs` — what GitLab returns: `User`, `Project`, `MergeRequest`, `DiffRefs`,
-  `Discussion`, `Note`, `Position`, `LineRange`.
+- `models.rs` — what GitLab returns: `User`, `Project`, `MergeRequest` (with
+  `user_notes_count`, reviewers and assignees), `DiffRefs`, `Discussion`, `Note`, `Position`,
+  `LineRange`, `Approvals` / `Approver` (`user_can_approve` absent on old servers reads as
+  allowed).
 - `error.rs` — `Error` and the HTTP-status mapping.
 - `mr_url.rs` — `parse_mr_url`, `parse_mr_url_with_base`, `parse_mr_reference`.
 - `models_tests.rs` — JSON fixtures (shared with `client_tests.rs`) and deserialization.

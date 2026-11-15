@@ -14,15 +14,19 @@ tokens (the app, `secret_store`).
 
 - `lib.rs` — module list and the public re-exports.
 - `models.rs` — `ForgeKind` (reference `!5` / `#5`, refspecs, `comment_context`,
-  `web_url`), `User`, `Request`,
+  `web_url`), `User` (with `avatar_url`), `Request` (reviewers, assignees, `comments` — GitLab's
+  `user_notes_count`, `None` on GitHub, whose list has no count — and `updated_at`), `Approval`,
   `RequestState`, `DiffRefs`, `Discussion`, `Note`, `Position`, `NewPosition`,
   `GITHUB_DEFAULT_URL`.
 - `client.rs` — `Client`: `new(kind, base_url, token)`, `kind`, `base_url`, and the
   operations `current_user`, `open_requests`, `request`, `discussions`, `comment`, `reply`,
-  `set_resolved`.
+  `set_resolved`, `edit_note`, `delete_note`, `approval`, `approve`, `unapprove`.
 - `convert.rs` — each host's models to the neutral ones and back (positions, comment
-  payloads, discussion ids).
-- `error.rs` — `Error`: the host's error as is (`transparent`), plus the neutral refusals.
+  payloads, discussion ids); `own_avatar` keeps a user's `avatar_url` only when it is not a
+  Gravatar link (gravatar.com or a subdomain), which GitLab hands out for users without an
+  uploaded picture — those show initials and no request leaves for Gravatar.
+- `error.rs` — `Error`: the host's error as is (`transparent`), plus the neutral refusals
+  (`Unsupported`: withdrawing a GitHub approval).
 - `request_url.rs` — `parse_request_url` (GitLab or GitHub URL → kind, project, number),
   `parse_reference` (`!123`, `#123`, `123`).
 - `convert_tests.rs`, `client_tests.rs`, `request_url_tests.rs` — conversions, dispatch to
@@ -67,6 +71,16 @@ tokens (the app, `secret_store`).
 - `parse_request_url` tries GitLab's `/-/merge_requests/<n>` shape (under the GitLab base,
   else any host), then GitHub's `/<owner>/<repo>/pull/<n>`; the two never overlap. The host
   of the URL is not checked against settings: the configured client for that kind opens it.
+
+- Editing or deleting a note on GitHub picks the endpoint by the discussion id: `issue-<id>`
+  is an issue (conversation) comment, anything else a review comment.
+- Approval: GitLab answers it (`approvals`: who approved, `user_has_approved`,
+  `user_can_approve`). On GitHub it is derived from the reviews: each reviewer's latest
+  `APPROVED` / `CHANGES_REQUESTED` / `DISMISSED` verdict counts (comments don't reset it), and
+  the current user may approve unless they already did or wrote the pull request. A GitHub
+  approval can't be withdrawn (dismissing a review needs maintainer rights), so
+  `can_unapprove` is always false there. Neither is offered on a request that is not open;
+  `approval` takes the already known username so GitHub needs no `/user` call each time.
 
 ## Decisions
 

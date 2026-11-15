@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::models::{
-    DiffRefs, Discussion, ForgeKind, NewPosition, Note, Position, Request, RequestState, User,
+    Approval, DiffRefs, Discussion, ForgeKind, NewPosition, Note, Position, Request, RequestState,
+    User,
 };
 
 const ISSUE_PREFIX: &str = "issue-";
@@ -13,7 +14,15 @@ pub(crate) fn gitlab_user(user: &gitlab::User) -> User {
         } else {
             user.name.clone()
         },
+        avatar_url: own_avatar(user.avatar_url.as_deref()),
     }
+}
+
+pub(crate) fn own_avatar(url: Option<&str>) -> Option<String> {
+    let url = url?.trim();
+    let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    let gravatar = host == "gravatar.com" || host.ends_with(".gravatar.com");
+    (!gravatar).then(|| url.to_string())
 }
 
 pub(crate) fn gitlab_request(mr: &gitlab::MergeRequest) -> Request {
@@ -36,6 +45,10 @@ pub(crate) fn gitlab_request(mr: &gitlab::MergeRequest) -> Request {
             start_sha: refs.start_sha.clone(),
             head_sha: refs.head_sha.clone(),
         }),
+        reviewers: mr.reviewers.iter().map(gitlab_user).collect(),
+        assignees: mr.assignees.iter().map(gitlab_user).collect(),
+        comments: Some(mr.user_notes_count),
+        updated_at: mr.updated_at.clone(),
     }
 }
 
@@ -85,6 +98,7 @@ pub(crate) fn github_user(user: &github::User) -> User {
     User {
         username: user.login.clone(),
         name: user.display_name().to_string(),
+        avatar_url: own_avatar(user.avatar_url.as_deref()),
     }
 }
 
@@ -112,6 +126,10 @@ pub(crate) fn github_request(pr: &github::PullRequest) -> Request {
         state,
         draft: pr.draft,
         diff_refs,
+        reviewers: pr.requested_reviewers.iter().map(github_user).collect(),
+        assignees: pr.assignees.iter().map(github_user).collect(),
+        comments: None,
+        updated_at: pr.updated_at.clone(),
     }
 }
 
@@ -226,4 +244,61 @@ pub(crate) fn github_reply_target(discussion_id: &str) -> Result<u64, Error> {
     discussion_id
         .parse()
         .map_err(|_| Error::CannotReply(discussion_id.to_string()))
+}
+
+pub(crate) fn gitlab_approval(approvals: &gitlab::Approvals) -> Approval {
+    Approval {
+        approvers: approvals
+            .approved_by
+            .iter()
+            .map(|a| gitlab_user(&a.user))
+            .collect(),
+        approved_by_me: approvals.user_has_approved,
+        can_approve: !approvals.user_has_approved && approvals.user_can_approve.unwrap_or(true),
+        can_unapprove: approvals.user_has_approved,
+    }
+}
+
+pub(crate) fn github_approval(reviews: &[github::Review], me: &str, author: &str) -> Approval {
+    let mut latest: Vec<(&github::User, &str)> = Vec::new();
+    for review in reviews {
+        if !matches!(
+            review.state.as_str(),
+            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+        ) {
+            continue;
+        }
+        match latest
+            .iter_mut()
+            .find(|(user, _)| user.login == review.user.login)
+        {
+            Some(entry) => entry.1 = &review.state,
+            None => latest.push((&review.user, &review.state)),
+        }
+    }
+    let approvers: Vec<User> = latest
+        .iter()
+        .filter(|(_, state)| *state == "APPROVED")
+        .map(|(user, _)| github_user(user))
+        .collect();
+    let approved_by_me = approvers.iter().any(|user| user.username == me);
+    Approval {
+        approvers,
+        approved_by_me,
+        can_approve: !approved_by_me && !me.is_empty() && me != author,
+        can_unapprove: false,
+    }
+}
+
+pub(crate) enum GithubComment {
+    Review(u64),
+    Issue(u64),
+}
+
+pub(crate) fn github_comment_kind(discussion_id: &str, note_id: u64) -> GithubComment {
+    if discussion_id.starts_with(ISSUE_PREFIX) {
+        GithubComment::Issue(note_id)
+    } else {
+        GithubComment::Review(note_id)
+    }
 }

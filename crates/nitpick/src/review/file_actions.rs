@@ -5,7 +5,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use forge::ForgeKind;
-use git_repo::Remote;
+use git_repo::{Remote, Repo};
 use gpui::{App, AppContext as _, ClipboardItem, Context, Entity, SharedString, Task, actions};
 use gpui_component::{
     diff::DiffSide,
@@ -330,6 +330,18 @@ fn split_words(template: &str) -> Vec<String> {
     words
 }
 
+fn checkout_of(repo: &Repo, branch: &str) -> Option<PathBuf> {
+    let worktrees = repo
+        .worktrees()
+        .inspect_err(|err| log::warn!("listing worktrees: {err}"))
+        .ok()?;
+    let remotes: Vec<String> = repo
+        .remotes()
+        .map(|remotes| remotes.into_iter().map(|r| r.name).collect())
+        .unwrap_or_default();
+    git_repo::worktree_for(&worktrees, branch, &remotes).map(Path::to_path_buf)
+}
+
 fn substitute(template: &str, root: &str, file: &str, line: &str) -> String {
     let mut out = String::with_capacity(template.len() + file.len());
     let mut rest = template;
@@ -527,16 +539,24 @@ impl ReviewView {
     }
 
     fn open_in_editor(&mut self, file: usize, cx: &mut Context<Self>) {
-        let Some(shown) = self.review.as_ref().and_then(|r| r.files.get(file)) else {
+        let Some(review) = self.review.as_ref() else {
+            return;
+        };
+        let Some(shown) = review.files.get(file) else {
             return;
         };
         let relative = shown.new_path.to_string();
-        let path: PathBuf = self.repo.root().join(&relative);
+        let branch =
+            (!matches!(self.source, ReviewSource::WorkingTree)).then(|| review.source.clone());
         let line = self.file_line(file, cx);
         let template = settings(cx).editor_command.clone();
-        let dir = self.repo.root().to_path_buf();
+        let repo = self.repo.clone();
         let executor = cx.background_executor().clone();
         let launch = cx.background_spawn(async move {
+            let dir = branch
+                .and_then(|branch| checkout_of(&repo, &branch))
+                .unwrap_or_else(|| repo.root().to_path_buf());
+            let path: PathBuf = dir.join(&relative);
             if !path.exists() {
                 return (None, Launch::Failed(tr().file_not_on_disk(&relative)));
             }

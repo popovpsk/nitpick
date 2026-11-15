@@ -15,11 +15,13 @@ finding the repository from git remotes (the app), storing the token (`secret_st
 - `lib.rs` — module list and the public re-exports.
 - `client.rs` — `Client`: API roots from the web URL, the reqwest client (from
   `http_client::builder`, plus auth, the total timeout and the same-host redirect policy),
-  one method per endpoint, Link-header pagination, the GraphQL calls.
+  one method per endpoint (pulls, review and issue comments: create, reply, edit, delete;
+  reviews, approve), Link-header pagination, the GraphQL calls.
 - `request.rs` — what the client sends: `RepoRef` (`owner/name`), `Side`,
   `NewReviewComment`, the JSON bodies.
-- `models.rs` — what GitHub returns: `User`, `PullRequest`, `BranchRef`, `ReviewComment`,
-  `IssueComment`, `ThreadState`, `ReviewThread`, `group_threads`; the GraphQL shapes.
+- `models.rs` — what GitHub returns: `User` (with `avatar_url`), `PullRequest` (with
+  requested reviewers and assignees), `BranchRef`, `ReviewComment`, `IssueComment`, `Review`,
+  `ThreadState`, `ReviewThread`, `group_threads`; the GraphQL shapes.
 - `error.rs` — `Error` and the HTTP-status mapping.
 - `pr_url.rs` — `parse_pr_url`, `parse_pr_url_with_base`, `parse_pr_reference`.
 - `models_tests.rs` — JSON fixtures (shared with `client_tests.rs`), deserialization,

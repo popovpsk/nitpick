@@ -1,6 +1,6 @@
 use crate::convert;
 use crate::error::Error;
-use crate::models::{Discussion, ForgeKind, NewPosition, Request, User};
+use crate::models::{Approval, Discussion, ForgeKind, NewPosition, Request, RequestState, User};
 
 #[derive(Debug, Clone)]
 pub enum Client {
@@ -158,6 +158,122 @@ impl Client {
             }
         }
         Ok(())
+    }
+}
+
+impl Client {
+    pub async fn edit_note(
+        &self,
+        project: &str,
+        number: u64,
+        discussion_id: &str,
+        note_id: u64,
+        body: &str,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                client
+                    .edit_note(
+                        &gitlab_project(project),
+                        number,
+                        discussion_id,
+                        note_id,
+                        body,
+                    )
+                    .await?;
+            }
+            Client::GitHub(client) => {
+                let repo = github::RepoRef::parse(project)?;
+                match convert::github_comment_kind(discussion_id, note_id) {
+                    convert::GithubComment::Review(id) => {
+                        client.edit_review_comment(&repo, id, body).await?;
+                    }
+                    convert::GithubComment::Issue(id) => {
+                        client.edit_issue_comment(&repo, id, body).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn delete_note(
+        &self,
+        project: &str,
+        number: u64,
+        discussion_id: &str,
+        note_id: u64,
+    ) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                client
+                    .delete_note(&gitlab_project(project), number, discussion_id, note_id)
+                    .await?;
+            }
+            Client::GitHub(client) => {
+                let repo = github::RepoRef::parse(project)?;
+                match convert::github_comment_kind(discussion_id, note_id) {
+                    convert::GithubComment::Review(id) => {
+                        client.delete_review_comment(&repo, id).await?
+                    }
+                    convert::GithubComment::Issue(id) => {
+                        client.delete_issue_comment(&repo, id).await?
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn approval(
+        &self,
+        request: &Request,
+        project: &str,
+        me: Option<&str>,
+    ) -> Result<Approval, Error> {
+        let mut approval = match self {
+            Client::GitLab(client) => convert::gitlab_approval(
+                &client
+                    .approvals(&gitlab_project(project), request.number)
+                    .await?,
+            ),
+            Client::GitHub(client) => {
+                let repo = github::RepoRef::parse(project)?;
+                let me = match me {
+                    Some(me) => me.to_string(),
+                    None => client.current_user().await?.login,
+                };
+                let reviews = client.reviews(&repo, request.number).await?;
+                convert::github_approval(&reviews, &me, &request.author.username)
+            }
+        };
+        if request.state != RequestState::Open {
+            approval.can_approve = false;
+            approval.can_unapprove = false;
+        }
+        Ok(approval)
+    }
+
+    pub async fn approve(&self, project: &str, number: u64) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => client.approve(&gitlab_project(project), number).await?,
+            Client::GitHub(client) => {
+                client
+                    .approve(&github::RepoRef::parse(project)?, number)
+                    .await?
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn unapprove(&self, project: &str, number: u64) -> Result<(), Error> {
+        match self {
+            Client::GitLab(client) => {
+                client.unapprove(&gitlab_project(project), number).await?;
+                Ok(())
+            }
+            Client::GitHub(_) => Err(Error::Unsupported("withdrawing an approval")),
+        }
     }
 }
 

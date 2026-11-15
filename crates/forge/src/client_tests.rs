@@ -195,3 +195,74 @@ fn an_invalid_github_project_is_an_error_not_a_panic() {
     let result = runtime.block_on(client.request("not-a-repo", 1));
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn gitlab_edits_deletes_and_approves() {
+    let server = MockServer::start().await;
+    let note = "/api/v4/projects/g%2Fp/merge_requests/5/discussions/d1/notes/7";
+    Mock::given(method("PUT"))
+        .and(path(note))
+        .and(body_json(json!({"body": "fixed"})))
+        .respond_with(json_response(200, json!({"id": 7})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(note))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for action in ["approve", "unapprove"] {
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/api/v4/projects/g%2Fp/merge_requests/5/{action}"
+            )))
+            .respond_with(json_response(201, json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    client.edit_note("g/p", 5, "d1", 7, "fixed").await.unwrap();
+    client.delete_note("g/p", 5, "d1", 7).await.unwrap();
+    client.approve("g/p", 5).await.unwrap();
+    client.unapprove("g/p", 5).await.unwrap();
+}
+
+#[tokio::test]
+async fn github_edits_each_comment_kind_at_its_endpoint() {
+    let server = MockServer::start().await;
+    for (verb, endpoint) in [
+        ("PATCH", "/api/v3/repos/o/r/pulls/comments/30"),
+        ("DELETE", "/api/v3/repos/o/r/pulls/comments/30"),
+        ("PATCH", "/api/v3/repos/o/r/issues/comments/40"),
+        ("DELETE", "/api/v3/repos/o/r/issues/comments/40"),
+    ] {
+        Mock::given(method(verb))
+            .and(path(endpoint))
+            .respond_with(json_response(200, json!({"id": 1})))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/api/v3/repos/o/r/pulls/9/reviews"))
+        .and(body_json(json!({"event": "APPROVE"})))
+        .respond_with(json_response(200, json!({"id": 2})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitHub, &server.uri(), TOKEN).unwrap();
+
+    client.edit_note("o/r", 9, "30", 30, "x").await.unwrap();
+    client.delete_note("o/r", 9, "30", 30).await.unwrap();
+    client
+        .edit_note("o/r", 9, "issue-40", 40, "x")
+        .await
+        .unwrap();
+    client.delete_note("o/r", 9, "issue-40", 40).await.unwrap();
+    client.approve("o/r", 9).await.unwrap();
+    assert!(client.unapprove("o/r", 9).await.is_err());
+}

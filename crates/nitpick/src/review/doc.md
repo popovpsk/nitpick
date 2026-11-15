@@ -39,9 +39,34 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
   commit's label and tooltip) and its fuzzy `Picker`, entries built when it opens, and the
   pick → a reload of the same review at that commit.
-- `comments.rs` — discussion cards and the composer as `Diff` annotations, and the sheet with
-  general and outdated discussions (titled by `comments_title`: merge request or pull request
-  comments).
+- `avatars.rs` — the `Avatars` global (`init`): an in-memory map from avatar URL to the
+  decoded picture (loading, ready or missing), filled by `request` (disk cache through
+  `avatar_cache`, else a download on `net_runtime` with the matching forge's token, a stale
+  entry when that fails); `render` draws the picture or, until it is there, initials on the
+  author's tint (blame's `tint`, seeded by the username). Finished loads refresh the windows
+  once per 100 ms batch; a missing picture is tried again the next time discussions load.
+- `comments.rs` — discussion cards and the composer as `Diff` annotations. Each note: avatar,
+  name, meta, and for the user's own notes (`NoteView::own`, matched on the username from
+  `current_user`) edit and delete buttons at the right end of the header, shown on hover of
+  that note; editing swaps the body for a textarea with Cancel / Save (⌘/Ctrl-Enter). A long
+  body (`NoteView::long`: over 10 lines counting a wrap every 90 chars) is cut to about ten
+  lines with a fade and a Show more / Show less toggle (`expanded_notes`). Starting another
+  edit replaces the open one; a reload that no longer has the edited note drops the editor.
+- `comment_list.rs` — the comments sheet (`comments_title`) with two tabs: On code (every
+  discussion with a file position, outdated ones included, as one-line rows grouped by file in
+  tree order then line: avatar, author, `L<line>`, outdated (its `head_sha` is not the
+  review's head) / resolved tags, first meaningful line of the first note, reply count). A
+  click on a thread drawn in the diff closes the sheet and `reveal_discussion` opens the file
+  at the line; any other thread (outdated, commit mode, file not in the review) expands in
+  place as the full card (`open_thread`, reset on reload) with Reply / Resolve and an Open
+  button for its file. General (discussions without a file, with the new-comment
+  composer). `build_code_threads` precomputes the rows; it opens on General when there is no
+  code thread.
+- `comment_list_tests.rs` — previews and row order.
+- `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
+  own notes, then a discussion reload; `ApprovalView` (label, tooltip with who approved) and
+  `toggle_approval` for the header's Approve button, reloaded with the discussions; the button
+  stays busy until the reloaded approval arrives, so a second click can't repeat the call.
 - `blame.rs` — `ToggleBlame`, `BlameState` (the cache, the shown marks, the fetch), the
   toolbar toggle (`render_blame_toggle`) and the chips drawn in the `Diff`'s marker lane
   (`BlameMarks::render_chip`).
@@ -186,7 +211,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   collapses it and every completed folder above it; the selection moves to the row that now
   shows the selected file. Unmarking never expands anything.
 - A discussion is placed on a line only when its position's `head_sha` is the review's head;
-  others are listed as outdated in the comments sheet with the general ones. A new line
+  others are listed as outdated on the sheet's On code tab. A new line
   comment sends `old_line`/`new_line` from `LineMap::locate`: both for a context line, one
   for an added or removed line.
 - Tree rows are rebuilt when data changes (load, viewed, collapse, discussions), never in
@@ -294,7 +319,14 @@ wraps `gitlab` and `github`; nothing here names those crates).
   so comment positions follow the host's real diff rather than the whitespace-blind one;
   `ReviewFile::display_map` keeps the shown patch's map (`shown_map`), from which `changes`
   and blame's block starts are taken.
-- A discussion whose position has no line (file or image comments) goes to the sheet.
+- A discussion whose position has no line (file or image comments) is listed on the On code
+  tab without a line; one with no file at all on General. Tree rows show comment counts (a
+  collapsed folder: the sum of the files under it) unless `tree_comments` is off, a switch in
+  the tree's view options (the eye).
+- Approve button (left of the comments button): "Approve" (with the count when others
+  approved), "Approved" in the success style once the user approved (a click withdraws on
+  GitLab), or just the count when the user can't approve (their own request); hidden when
+  none applies.
 - Image preview: a binary file (`ReviewFile::binary`) whose existing sides all have an image
   extension (png, jpg/jpeg, gif, webp, bmp, svg, ico, tif/tiff: what gpui's `ImageFormat`
   decodes) shows "Before" and "After" panes instead of the `Diff`; an added file only After,
@@ -359,7 +391,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   `explorer.exe`, whose exit code is ignored since it is 1 on success), which cannot jump to
   a line. Otherwise on macOS/Linux the template runs as `$SHELL -lc` (a login shell, so the
   PATH from the profile files, not the interactive rc files, reaches a GUI app; `/bin/sh`
-  when `$SHELL` is not an sh-family shell or fish). `{root}` (the repository's work tree),
+  when `$SHELL` is not an sh-family shell or fish). `{root}` (the worktree that has the
+  review's source branch checked out, found by `git_repo::worktree_for` when the editor
+  opens, else the repository's work tree; the file is taken from the same checkout, so its
+  lines may differ from the reviewed head),
   `{file}` and `{line}` become references to `NITPICK_ROOT`/`NITPICK_FILE`/`NITPICK_LINE`,
   passed in the environment, so the path never goes
   through quoting; the reference depends on the quoting around the placeholder

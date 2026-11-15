@@ -5,12 +5,14 @@ use std::sync::Arc;
 use git_repo::Branch;
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, Focusable as _,
-    HighlightStyle, IntoElement, ParentElement as _, Pixels, ScrollStrategy, SharedString,
-    Styled as _, StyledText, Subscription, Task, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    HighlightStyle, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    ScrollStrategy, SharedString, Styled as _, StyledText, Subscription, Task, WeakEntity, Window,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, IndexPath, Selectable, Sizable as _, h_flex,
+    ActiveTheme as _, Icon, IconName, IndexPath, Selectable, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
     popover::Popover,
     v_flex,
@@ -71,6 +73,7 @@ impl Picker {
     ) -> Self {
         let delegate = PickerDelegate {
             icon: icon.into(),
+            row_action: None,
             entries: Arc::default(),
             shown: Arc::default(),
             rows: Vec::new(),
@@ -100,6 +103,20 @@ impl Picker {
         footer: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.footer = Some(Rc::new(footer));
+        self
+    }
+
+    pub fn with_row_action(
+        self,
+        icon: impl Into<Icon>,
+        tooltip: fn() -> SharedString,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let icon = icon.into();
+        self.list.update(cx, |list, _| {
+            let delegate = list.delegate_mut();
+            delegate.row_action = Some(RowAction { icon, tooltip });
+        });
         self
     }
 
@@ -226,8 +243,15 @@ struct PickerRow {
     detail: Vec<Range<usize>>,
 }
 
+#[derive(Clone)]
+struct RowAction {
+    icon: Icon,
+    tooltip: fn() -> SharedString,
+}
+
 pub struct PickerDelegate {
     icon: Icon,
+    row_action: Option<RowAction>,
     entries: Arc<Vec<PickerEntry>>,
     shown: Arc<Vec<PickerEntry>>,
     rows: Vec<PickerRow>,
@@ -354,15 +378,39 @@ impl ListDelegate for PickerDelegate {
             .with_highlights(row.label.iter().map(|range| (range.clone(), highlight)));
         let detail = StyledText::new(entry.detail.clone())
             .with_highlights(row.detail.iter().map(|range| (range.clone(), highlight)));
+        let selected = self.selected == Some(ix.row);
+        let entry_ix = row.entry;
+        let action = self.row_action.as_ref().map(|action| {
+            div()
+                .flex_none()
+                .invisible()
+                .when(selected, |el| el.visible())
+                .group_hover("picker-row", |s| s.visible())
+                .child(
+                    Button::new(("picker-row-action", ix.row))
+                        .ghost()
+                        .xsmall()
+                        .icon(action.icon.clone())
+                        .tooltip((action.tooltip)())
+                        .on_click(cx.listener(move |list, _, _, cx| {
+                            cx.stop_propagation();
+                            list.delegate_mut().confirmed = Some((entry_ix, true));
+                            cx.emit(ListEvent::Confirm(ix));
+                        })),
+                )
+        });
+        let show_check = self.row_action.is_none();
         Some(
             ListItem::new(("picker-row", ix.row))
                 .px_2()
-                .check_icon(IconName::Check)
-                .confirmed(
-                    Arc::ptr_eq(&self.shown, &self.entries) && self.checked == Some(row.entry),
-                )
+                .when(show_check, |item| {
+                    item.check_icon(IconName::Check).confirmed(
+                        Arc::ptr_eq(&self.shown, &self.entries) && self.checked == Some(row.entry),
+                    )
+                })
                 .child(
                     h_flex()
+                        .group("picker-row")
                         .w_full()
                         .min_w_0()
                         .gap_2()
@@ -393,7 +441,8 @@ impl ListDelegate for PickerDelegate {
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
                                 .child(detail),
-                        ),
+                        )
+                        .children(action),
                 ),
         )
     }

@@ -20,6 +20,8 @@ pub struct User {
     pub login: String,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 impl User {
@@ -64,6 +66,10 @@ pub struct PullRequest {
     pub merged_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub requested_reviewers: Vec<User>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub assignees: Vec<User>,
 }
 
 impl PullRequest {
@@ -271,4 +277,12 @@ pub(crate) struct ResolvePayload {
 pub(crate) struct ResolvedThread {
     #[serde(default, deserialize_with = "null_default")]
     pub is_resolved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Review {
+    #[serde(default, deserialize_with = "null_default")]
+    pub user: User,
+    #[serde(default, deserialize_with = "null_default")]
+    pub state: String,
 }

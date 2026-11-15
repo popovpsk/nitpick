@@ -67,6 +67,18 @@ pub struct Strings {
     pub pr_comments: SharedString,
     pub comments_failed: SharedString,
     pub comment_failed: SharedString,
+    pub approve: SharedString,
+    pub approved: SharedString,
+    pub approve_failed: SharedString,
+    pub approved_by_t: SharedString,
+    pub no_approvals: SharedString,
+    pub withdraw_approval: SharedString,
+    pub edit_comment: SharedString,
+    pub delete_comment: SharedString,
+    pub delete_comment_title: SharedString,
+    pub delete_comment_desc: SharedString,
+    pub comment_edit_failed: SharedString,
+    pub comment_delete_failed: SharedString,
     pub comment_line_unavailable: SharedString,
     pub comment_placeholder: SharedString,
     pub comment_hint: SharedString,
@@ -79,7 +91,11 @@ pub struct Strings {
     pub outdated: SharedString,
     pub new_comment: SharedString,
     pub no_comments: SharedString,
-    pub back: SharedString,
+    pub comments_code: SharedString,
+    pub comments_general: SharedString,
+    pub no_code_comments: SharedString,
+    pub show_more: SharedString,
+    pub show_less: SharedString,
     pub appearance: SharedString,
     pub general: SharedString,
     pub version: SharedString,
@@ -132,6 +148,7 @@ pub struct Strings {
     pub tree_mode_list: SharedString,
     pub compact_folders: SharedString,
     pub show_hidden_files: SharedString,
+    pub tree_comments: SharedString,
     pub tree_view_options: SharedString,
     pub shortcut_needs_modifier: SharedString,
     pub shortcut_builtin: SharedString,
@@ -222,6 +239,7 @@ pub struct Strings {
 
     pub add_repositories_ellipsis: SharedString,
     pub switch_repository_tooltip: SharedString,
+    pub open_in_new_window: SharedString,
     pub search_repositories: SharedString,
     pub search_branches: SharedString,
     pub no_matches: SharedString,
@@ -348,6 +366,10 @@ impl Strings {
 
     pub fn zed_imported(&self, themes: &str) -> String {
         fill(&self.zed_imported_t, &[themes])
+    }
+
+    pub fn approved_by(&self, names: &str) -> String {
+        fill(&self.approved_by_t, &[names])
     }
 
     pub fn reset_progress_desc(&self, count: usize) -> String {
@@ -599,6 +621,7 @@ mod tests {
                 &s.renamed_from_t,
                 &s.reset_progress_desc_t,
                 &s.file_not_on_disk_t,
+                &s.approved_by_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

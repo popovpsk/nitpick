@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use forge::ForgeKind;
 use gpui::{
-    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _,
-    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px, rems,
+    Anchor, AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PathPromptOptions,
+    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
+    actions, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
-    WindowExt as _,
+    TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
@@ -35,6 +35,7 @@ use crate::settings_store::{
     syntax_palette_names, update_settings,
 };
 use crate::shortcut_dialog::{self, keystroke_element, where_label};
+use crate::workspace::{CloseWindow, ShowSettings};
 use crate::zoom::{ZoomIn, ZoomOut, ZoomReset};
 
 actions!(settings_view, [CloseSettings]);
@@ -269,18 +270,12 @@ impl HiddenRules {
     }
 }
 
-pub enum SettingsEvent {
-    Close,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     HiddenFiles,
 }
 
 const HIDDEN_FILES_PAGE: usize = 1;
-
-impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl Focusable for SettingsView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -393,6 +388,23 @@ impl SettingsView {
             },
         ));
         this
+    }
+
+    fn keep_focus_inside(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let stray = |window: &mut Window, cx: &mut App| {
+            window.is_window_active()
+                && window.focused(cx).is_none()
+                && !window.has_active_dialog(cx)
+                && !window.has_active_sheet(cx)
+        };
+        if stray(window, cx) {
+            let focus = self.focus.clone();
+            cx.defer_in(window, move |_, window, cx| {
+                if stray(window, cx) {
+                    window.focus(&focus, cx);
+                }
+            });
+        }
     }
 
     pub fn reveal(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
@@ -1035,7 +1047,8 @@ fn choice_buttons<T: Copy + PartialEq + 'static>(
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.keep_focus_inside(window, cx);
         let s = tr();
         let view = cx.entity();
         let syntax_desc = if cx.theme().is_dark() {
@@ -1246,25 +1259,16 @@ impl Render for SettingsView {
             .id("settings-screen")
             .key_context("SettingsScreen")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|_, _: &CloseSettings, _, cx| cx.emit(SettingsEvent::Close)))
+            .on_action(|_: &CloseSettings, window, _| window.remove_window())
+            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(|_: &ShowSettings, window, _| window.activate_window())
             .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
-                h_flex()
-                    .flex_none()
-                    .h(px(40.))
-                    .px_3()
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        Button::new("settings-back")
-                            .ghost()
-                            .small()
-                            .icon(IconName::ArrowLeft)
-                            .label(s.back.clone())
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
-                    )
-                    .child(div().font_semibold().child(s.settings.clone())),
+                TitleBar::new()
+                    .when(window.is_fullscreen(), |bar| bar.pl(px(0.)))
+                    .child(div().text_sm().font_semibold().child(s.settings.clone())),
             )
             .child(
                 div().flex_1().min_h_0().child(

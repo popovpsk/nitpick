@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::error::Error;
-use crate::models::{Discussion, MergeRequest, Note, Project, User};
+use crate::models::{Approvals, Discussion, MergeRequest, Note, Project, User};
 use crate::request::{
     MrQuery, NewDiscussionBody, NewPosition, NoteBody, ProjectRef, WirePosition, encode_segment,
 };
@@ -183,6 +183,54 @@ impl Client {
             .await
     }
 
+    pub async fn edit_note(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+        discussion_id: &str,
+        note_id: u64,
+        body: &str,
+    ) -> Result<Note, Error> {
+        let path = note_path(project, iid, discussion_id, note_id);
+        self.call(Method::PUT, &path, &[], Some(&NoteBody { body }))
+            .await
+    }
+
+    pub async fn delete_note(
+        &self,
+        project: &ProjectRef,
+        iid: u64,
+        discussion_id: &str,
+        note_id: u64,
+    ) -> Result<(), Error> {
+        let path = note_path(project, iid, discussion_id, note_id);
+        self.send(Method::DELETE, &path).await
+    }
+
+    pub async fn approvals(&self, project: &ProjectRef, iid: u64) -> Result<Approvals, Error> {
+        let path = format!("{}/approvals", mr_path(project, iid));
+        self.call(Method::GET, &path, &[], None::<&()>).await
+    }
+
+    pub async fn approve(&self, project: &ProjectRef, iid: u64) -> Result<(), Error> {
+        self.send(Method::POST, &format!("{}/approve", mr_path(project, iid)))
+            .await
+    }
+
+    pub async fn unapprove(&self, project: &ProjectRef, iid: u64) -> Result<(), Error> {
+        self.send(
+            Method::POST,
+            &format!("{}/unapprove", mr_path(project, iid)),
+        )
+        .await
+    }
+
+    async fn send(&self, method: Method, path: &str) -> Result<(), Error> {
+        let url = self.url(path, &[])?;
+        self.execute(method, url, path, None::<&()>).await?;
+        Ok(())
+    }
+
     fn url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url, Error> {
         let mut url = Url::parse(&format!("{}{path}", self.inner.api_root))
             .map_err(|e| Error::InvalidUrl(format!("{path}: {e}")))?;
@@ -286,6 +334,13 @@ fn discussion_path(project: &ProjectRef, iid: u64, discussion_id: &str) -> Strin
         "{}/discussions/{}",
         mr_path(project, iid),
         encode_segment(discussion_id)
+    )
+}
+
+fn note_path(project: &ProjectRef, iid: u64, discussion_id: &str, note_id: u64) -> String {
+    format!(
+        "{}/notes/{note_id}",
+        discussion_path(project, iid, discussion_id)
     )
 }
 

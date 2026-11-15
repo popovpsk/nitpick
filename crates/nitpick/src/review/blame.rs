@@ -28,7 +28,7 @@ actions!(review, [ToggleBlame]);
 
 const TINT_STRENGTHS: [f32; 2] = [0.28, 0.5];
 const BLAME_DELAY: Duration = Duration::from_millis(120);
-const TINT_COUNT: usize = 12;
+pub(crate) const TINT_COUNT: usize = 12;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct BlameKey {
@@ -462,7 +462,7 @@ fn chip_details(chip: &BlameChip, when: &SharedString, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn tint(theme: &Theme, ix: usize) -> Hsla {
+pub(crate) fn tint(theme: &Theme, ix: usize) -> Hsla {
     let hues = [
         theme.blue,
         theme.magenta,

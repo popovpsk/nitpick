@@ -86,7 +86,6 @@ impl Workspace {
                         .ghost()
                         .small()
                         .icon(IconName::Settings)
-                        .selected(self.screen == Screen::Settings)
                         .tooltip(s.settings.clone())
                         .on_click(
                             cx.listener(|this, _, window, cx| this.show_settings(window, cx)),

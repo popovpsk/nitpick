@@ -14,7 +14,7 @@ mod pr_url_tests;
 pub use client::Client;
 pub use error::Error;
 pub use models::{
-    BranchRef, IssueComment, PullRequest, ReviewComment, ReviewThread, ThreadState, User,
+    BranchRef, IssueComment, PullRequest, Review, ReviewComment, ReviewThread, ThreadState, User,
     group_threads,
 };
 pub use pr_url::{PrUrl, parse_pr_reference, parse_pr_url, parse_pr_url_with_base};
