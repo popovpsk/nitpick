@@ -82,6 +82,7 @@ pub struct Strings {
     pub comment_edit_failed: SharedString,
     pub comment_delete_failed: SharedString,
     pub comment_line_unavailable: SharedString,
+    pub comment_line_far_from_change: SharedString,
     pub comment_placeholder: SharedString,
     pub comment_hint: SharedString,
     pub comment: SharedString,

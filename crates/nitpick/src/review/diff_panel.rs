@@ -702,10 +702,8 @@ impl ReviewView {
         let view = cx.entity();
         let annotations = self.annotations.clone();
         let annotation_view = view.clone();
-        let add_view = view.clone();
         let measure_view = view.clone();
         let can_comment = self.can_comment_lines();
-        let lines_selected = can_comment && self.diff.read(cx).selected_lines().is_some();
         let hover_view = view.clone();
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
@@ -723,6 +721,9 @@ impl ReviewView {
                 .clamp(SPLIT_RATIO_RANGE.0, SPLIT_RATIO_RANGE.1)
         };
         let split_mode = self.diff.read(cx).mode() == DiffMode::Split;
+        self.refresh_comment_markers(split_mode);
+        let comment_markers = self.comment_markers.clone();
+        let marker_view = view.clone();
         let resizable = split_mode
             && shown.is_some_and(|f| !f.binary && f.additions + f.deletions > 0)
             && body_width >= 2. * SPLIT_MIN_COLUMN;
@@ -807,21 +808,29 @@ impl ReviewView {
                                 hover_view.update(cx, |this, _| this.set_hovered_line(position))
                             })
                         })
-                        .when(lines_selected, |diff| {
-                            diff.on_add_annotation(move |range, window, cx| {
-                                add_view.update(cx, |this, cx| {
-                                    this.open_line_composer(range, window, cx)
-                                });
-                            })
-                        })
                         .when_some(find_decorations, |diff, decorations| {
                             diff.decorations(decorations.iter().cloned())
                         })
-                        .when_some(blame, |diff, marks| {
-                            diff.gutter_markers(marks.markers(split_mode).iter().cloned())
-                                .render_gutter_marker(move |marker, window, cx| {
-                                    marks.render_chip(marker, window, cx)
-                                })
+                        .when(blame.is_some() || !comment_markers.is_empty(), |diff| {
+                            let shown_blame = blame.clone();
+                            let blame_markers = blame
+                                .as_ref()
+                                .map(|marks| marks.markers(split_mode))
+                                .unwrap_or_default();
+                            diff.gutter_markers(
+                                blame_markers.iter().chain(comment_markers.iter()).cloned(),
+                            )
+                            .render_gutter_marker(
+                                move |marker, window, cx| match (&shown_blame, marker.id()) {
+                                    (_, ElementId::NamedInteger(name, _))
+                                        if name.as_ref() == "comment-line" =>
+                                    {
+                                        comments::render_comment_marker(&marker_view, marker, cx)
+                                    }
+                                    (Some(marks), _) => marks.render_chip(marker, window, cx),
+                                    (None, _) => Empty.into_any_element(),
+                                },
+                            )
                         }),
                 ),
             })

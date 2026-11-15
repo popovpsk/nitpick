@@ -32,7 +32,8 @@ use gpui::{
 use gpui_component::{
     WindowExt as _,
     diff::{
-        DiffAnnotation, DiffEvent, DiffLinePosition, DiffLineRange, DiffMode, DiffSide, DiffState,
+        DiffAnnotation, DiffEvent, DiffGutterMarker, DiffLinePosition, DiffLineRange, DiffMode,
+        DiffSide, DiffState,
     },
     input::{InputEvent, TextareaState},
     notification::Notification,
@@ -275,6 +276,7 @@ pub struct ReviewView {
     general_only: Rc<Vec<usize>>,
     code_threads: Rc<Vec<comment_list::CodeThread>>,
     comments_tab: comment_list::CommentsTab,
+    comments_tab_chosen: bool,
     comment_tab_labels: (SharedString, SharedString),
     description: Option<SharedString>,
     code_section_labels: (SharedString, SharedString),
@@ -309,6 +311,9 @@ pub struct ReviewView {
     composer: Option<Composer>,
     kept_unviewed: HashSet<(SharedString, String)>,
     hovered_line: Option<DiffLinePosition>,
+    gutter_gesture: bool,
+    comment_markers: Rc<Vec<DiffGutterMarker>>,
+    comment_markers_key: Option<(usize, usize, bool)>,
     change_cursor: Option<usize>,
     change_scrolled: bool,
     cross_hint: Option<CrossHint>,
@@ -366,16 +371,18 @@ impl ReviewView {
                 .with_mode(mode)
                 .with_context_lines(context)
         });
-        let subscription = cx.subscribe_in(&diff, window, |_, _, event: &DiffEvent, _, cx| {
-            if matches!(
-                event,
-                DiffEvent::FileCollapsed(_)
-                    | DiffEvent::FileExpanded(_)
-                    | DiffEvent::SelectionChanged(_)
-            ) {
-                cx.notify();
-            }
-        });
+        let subscription = cx.subscribe_in(
+            &diff,
+            window,
+            |this, _, event: &DiffEvent, window, cx| match event {
+                DiffEvent::FileCollapsed(_) | DiffEvent::FileExpanded(_) => cx.notify(),
+                DiffEvent::SelectionStarted(_) => this.gutter_gesture = true,
+                DiffEvent::SelectionEnded(range) if std::mem::take(&mut this.gutter_gesture) => {
+                    this.open_line_composer(range, window, cx);
+                }
+                _ => {}
+            },
+        );
         let viewed_store = viewed::shared_for(repo.root(), cx);
         let viewed_sync = cx.observe(&viewed_store, |this, _, cx| this.sync_viewed(cx));
         let settings_sync = cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx));
@@ -402,6 +409,7 @@ impl ReviewView {
             general_only: Rc::default(),
             code_threads: Rc::default(),
             comments_tab: comment_list::CommentsTab::default(),
+            comments_tab_chosen: false,
             comment_tab_labels: (SharedString::default(), SharedString::default()),
             description: None,
             code_section_labels: (SharedString::default(), SharedString::default()),
@@ -436,6 +444,9 @@ impl ReviewView {
             composer: None,
             kept_unviewed: HashSet::new(),
             hovered_line: None,
+            gutter_gesture: false,
+            comment_markers: Rc::default(),
+            comment_markers_key: None,
             change_cursor: None,
             change_scrolled: false,
             cross_hint: None,
@@ -1678,6 +1689,43 @@ impl ReviewView {
                 .is_some_and(|r| r.comments_aligned && r.commit.is_none())
     }
 
+    pub(super) fn refresh_comment_markers(&mut self, split: bool) {
+        let key = self
+            .current_file
+            .filter(|_| self.can_comment_lines())
+            .zip(self.review.as_ref())
+            .map(|(file, review)| (Rc::as_ptr(review) as usize, file, split));
+        if key == self.comment_markers_key {
+            return;
+        }
+        self.comment_markers_key = key;
+        let mut markers = Vec::new();
+        if let Some(file) = key.and_then(|(_, file, _)| self.review.as_ref()?.files.get(file)) {
+            let mut push = |side: DiffSide, line: u32| {
+                let position = DiffLinePosition::new(file.path.clone(), side, line as usize);
+                if self.line_commentable(&position) {
+                    markers.push(DiffGutterMarker::new(
+                        ElementId::NamedInteger("comment-line".into(), markers.len() as u64),
+                        position,
+                    ));
+                }
+            };
+            for row in file.shown_map().rows() {
+                match row {
+                    LineKind::Added { new } => push(DiffSide::Modified, new),
+                    LineKind::Removed { old } => push(DiffSide::Original, old),
+                    LineKind::Context { old, new } => {
+                        if split {
+                            push(DiffSide::Original, old);
+                        }
+                        push(DiffSide::Modified, new);
+                    }
+                }
+            }
+        }
+        self.comment_markers = Rc::new(markers);
+    }
+
     pub(super) fn set_hovered_line(&mut self, position: Option<&DiffLinePosition>) {
         if let Some(position) = position {
             self.hovered_line = Some(position.clone());
@@ -1717,7 +1765,7 @@ impl ReviewView {
         let position = DiffLinePosition::new(range.path().clone(), side, range.end());
         if !self.line_commentable(&position) {
             window.push_notification(
-                Notification::error(tr().comment_line_unavailable.clone()),
+                Notification::info(tr().comment_line_far_from_change.clone()),
                 cx,
             );
             return;
@@ -1733,6 +1781,17 @@ impl ReviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(composer) = self.composer.as_mut()
+            && !composer.input.read(cx).value().trim().is_empty()
+        {
+            composer.target = target;
+            composer
+                .input
+                .update(cx, |state, cx| state.focus(window, cx));
+            self.rebuild_annotations();
+            cx.notify();
+            return;
+        }
         let placeholder = tr().comment_placeholder.clone();
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)

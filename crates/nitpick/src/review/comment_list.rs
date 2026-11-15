@@ -157,7 +157,7 @@ pub fn open_comments_sheet(
     window: &mut Window,
     cx: &mut Context<ReviewView>,
 ) {
-    if this.code_threads.is_empty() {
+    if !this.comments_tab_chosen && this.code_threads.is_empty() {
         if !this.general_only.is_empty() {
             this.comments_tab = CommentsTab::General;
         } else if this.description.is_some() {
@@ -201,6 +201,7 @@ pub fn open_comments_sheet(
                     view.update(cx, |this, cx| {
                         if let Some(tab) = tabs_shown.get(*ix) {
                             this.comments_tab = *tab;
+                            this.comments_tab_chosen = true;
                         }
                         cx.notify();
                     })
