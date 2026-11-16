@@ -12,7 +12,7 @@ macOS · Windows · Linux
 
 </div>
 
-<img alt="Reviewing a branch" src=".docs/screenshots/review.jpg">
+<img alt="Reviewing a branch" src=".docs/screenshots/review.webp">
 
 ## Highlights
 
