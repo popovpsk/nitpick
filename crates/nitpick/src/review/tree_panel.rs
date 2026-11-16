@@ -17,7 +17,7 @@ use gpui_component::{
 use review_core::{FileStatus, hidden};
 use ui_resources::Icons;
 
-use super::diff_panel::ProgressFit;
+use super::diff_panel::{ProgressFit, TOOLBAR_HEIGHT_REMS};
 use super::{
     CollapseSelected, ExpandSelected, FindFile, HiddenFile, NextFile, OpenSelected, PreviousFile,
     ReviewEvent, ReviewView, SelectNext, SelectPrevious, ToggleViewed, TreeRow, file_actions,
@@ -311,11 +311,13 @@ impl ReviewView {
         let header = v_flex()
             .flex_none()
             .px_2()
-            .py_1p5()
+            .when(search_field.is_some(), |el| el.pb_1p5())
             .border_b_1()
             .border_color(theme.border)
             .child(
                 h_flex()
+                    .flex_none()
+                    .h(window.rem_size() * TOOLBAR_HEIGHT_REMS - px(1.))
                     .gap_1()
                     .items_center()
                     .child(

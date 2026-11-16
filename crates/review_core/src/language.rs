@@ -55,6 +55,7 @@ fn by_extension(extension: &str) -> Option<&'static str> {
         "zon" => "zig",
         "rockspec" | "luau" => "lua",
         "pgsql" | "psql" | "mysql" => "sql",
+        "vue" => "vue",
         _ => return None,
     };
     Some(language)

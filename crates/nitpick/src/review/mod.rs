@@ -32,11 +32,12 @@ use gpui::{
     UniformListScrollHandle, Window, actions,
 };
 use gpui_component::{
-    WindowExt as _,
+    ActiveTheme as _, Theme, WindowExt as _,
     diff::{
-        DiffAnnotation, DiffEvent, DiffGutterMarker, DiffLinePosition, DiffLineRange, DiffMode,
-        DiffSide, DiffState,
+        DiffAnnotation, DiffEvent, DiffFile, DiffGutterMarker, DiffLinePosition, DiffLineRange,
+        DiffMode, DiffSide, DiffState,
     },
+    highlighter::HighlightTheme,
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
@@ -335,6 +336,7 @@ pub struct ReviewView {
     _cross_hint_clear: Task<()>,
     shown_at: Option<Instant>,
     installed_whitespace: bool,
+    diff_injections: Option<Arc<HighlightTheme>>,
     tree_visible: bool,
     tree_closing: bool,
     tree_toggles: usize,
@@ -401,6 +403,7 @@ impl ReviewView {
         let viewed_store = viewed::shared_for(repo.root(), cx);
         let viewed_sync = cx.observe(&viewed_store, |this, _, cx| this.sync_viewed(cx));
         let settings_sync = cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx));
+        let theme_sync = cx.observe_global::<Theme>(|this, cx| this.sync_diff_highlighter(cx));
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.check_for_push(cx);
@@ -477,6 +480,7 @@ impl ReviewView {
             _cross_hint_clear: Task::ready(()),
             shown_at: None,
             installed_whitespace: settings(cx).ignore_whitespace,
+            diff_injections: None,
             tree_visible: true,
             tree_closing: false,
             tree_toggles: 0,
@@ -512,7 +516,13 @@ impl ReviewView {
             web: file_actions::WebLink::default(),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
-            _subscriptions: vec![subscription, viewed_sync, settings_sync, activation],
+            _subscriptions: vec![
+                subscription,
+                viewed_sync,
+                settings_sync,
+                theme_sync,
+                activation,
+            ],
         };
         this.load(cx);
         this.start_push_watch(window, cx);
@@ -2032,6 +2042,40 @@ impl ReviewView {
 
     pub fn discussions(&self) -> Rc<Vec<DiscussionView>> {
         self.discussions.clone()
+    }
+
+    fn set_diff_files(&mut self, files: Vec<DiffFile>, cx: &mut Context<Self>) {
+        let injections = files
+            .iter()
+            .any(|file| model::grammars::needs_injections(&file.language()));
+        if injections {
+            self.install_injecting_highlighter(cx);
+        } else if self.diff_injections.take().is_some() {
+            self.diff
+                .update(cx, |state, cx| state.clear_syntax_highlighter(cx));
+        }
+        self.diff.update(cx, |state, cx| state.set_files(files, cx));
+    }
+
+    fn sync_diff_highlighter(&mut self, cx: &mut Context<Self>) {
+        if self.diff_injections.is_some() {
+            self.install_injecting_highlighter(cx);
+        }
+    }
+
+    fn install_injecting_highlighter(&mut self, cx: &mut Context<Self>) {
+        let theme = cx.theme().highlight_theme.clone();
+        if self
+            .diff_injections
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &theme))
+        {
+            return;
+        }
+        self.diff_injections = Some(theme.clone());
+        self.diff.update(cx, |state, cx| {
+            state.set_syntax_highlighter(model::grammars::injecting_highlighter(theme), cx)
+        });
     }
 
     pub fn toggle_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {

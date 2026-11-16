@@ -434,6 +434,7 @@ fn language_overrides_apply_to_parsed_files() {
 #[case::sql("db/schema.sql", "SELECT id FROM users WHERE id = 1;\n")]
 #[case::diff("fixes/0001.patch", "@@ -1 +1 @@\n-a\n+b\n")]
 #[case::zsh("scripts/setup.zsh", "export A=1\necho \"$A\"\n")]
+#[case::vue("src/App.vue", "<template>\n  <p>{{ msg }}</p>\n</template>\n")]
 fn review_languages_highlight(#[case] path: &str, #[case] source: &str) {
     let body: String = source.lines().map(|line| format!("+{line}\n")).collect();
     let patch = format!(
@@ -448,6 +449,28 @@ fn review_languages_highlight(#[case] path: &str, #[case] source: &str) {
     assert!(
         styles.iter().any(|(_, style)| style.color.is_some()),
         "{path} ({language}) has no syntax colors"
+    );
+}
+
+#[rstest]
+#[case::script("<script setup lang=\"ts\">\nconst count = 1\n</script>\n", "const")]
+#[case::style("<style scoped>\n.title { color: red; }\n</style>\n", "color")]
+#[case::interpolation("<template>\n  <p>{{ count + 1 }}</p>\n</template>\n", "1")]
+#[case::directive("<template>\n  <p v-if=\"count > 1\">a</p>\n</template>\n", "1")]
+#[case::unquoted_directive("<template>\n  <p v-if=true>a</p>\n</template>\n", "true")]
+fn vue_blocks_highlight_their_language(#[case] source: &str, #[case] word: &str) {
+    super::grammars::register_highlight_queries();
+    assert!(super::grammars::needs_injections("vue"));
+    let highlight = super::grammars::injecting_highlighter(HighlightTheme::default_dark());
+    let start = source.find(word).unwrap();
+    let word = start..start + word.len();
+    let styles = highlight("vue", source);
+    assert!(
+        styles.iter().any(|(range, style)| range.start <= word.start
+            && word.end <= range.end
+            && style.color.is_some()),
+        "{:?} in {source:?} has no syntax colors",
+        &source[word.clone()]
     );
 }
 

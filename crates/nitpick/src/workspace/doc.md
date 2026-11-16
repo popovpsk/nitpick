@@ -21,7 +21,8 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   (`updater::ready_note`; the workspace observes the updater), the settings button.
 - `window_tabs.rs` — the strip of native window tabs (title centred, the close button at the
   tab's right edge on hover, as in Zed; its tooltip names `CloseWindow`'s key on the active tab
-  only, the new-tab button shows `NewWindow`'s), and next/previous tab.
+  only, the new-tab button shows `NewWindow`'s), dragging a tab onto another to reorder
+  (`DraggedWindowTab`), and next/previous tab.
 - `start.rs` — `StartView`: target/source branch pickers (fuzzy `Picker`s) for a
   comparison, the uncommitted-changes review, and the open merge requests (GitLab) or pull
   requests (GitHub) of the repository's remote on a configured host (list, filter, URL,
@@ -63,7 +64,11 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   state, which a hidden screen loses, so a picker left open would pop up again on return.
 - Window tabs: gpui hides AppKit's own tab bar, so the strip is drawn here from
   `SystemWindowTabController` and only when the window has more than one tab. The tab title
-  is the window title (`repo — review`), kept in sync with `update_tab_title`.
+  is the window title (`repo — review`), kept in sync with `update_tab_title`. Reordering
+  (drag a tab onto another, as in Zed) moves it in the controller only
+  (`update_tab_position`): AppKit's hidden tab bar keeps its own order; next/previous tab and
+  the strip both use the controller's, AppKit's only picks the tab shown after the active one
+  closes.
 - The start screen preselects the remote default branch as the target and the checked-out
   branch as the source, and keeps the previous picks across a refresh. Opening a branch
   review from anywhere (including the review header's branch pickers) moves the start

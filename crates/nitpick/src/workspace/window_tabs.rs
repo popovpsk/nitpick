@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, SystemWindowTabController, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    SystemWindowTabController, Window, WindowId, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, IconName, Sizable as _,
@@ -11,6 +11,52 @@ use gpui_component::{
 
 use super::{CloseWindow, NewWindow};
 use crate::localization::tr;
+
+const STRIP_HEIGHT: f32 = 30.;
+const NEW_TAB_REMS: f32 = 1.75;
+
+#[derive(Clone)]
+struct DraggedWindowTab {
+    id: WindowId,
+    ix: usize,
+    title: SharedString,
+    active: bool,
+    width: Pixels,
+}
+
+impl Render for DraggedWindowTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .h(px(STRIP_HEIGHT))
+            .w(self.width)
+            .px_7()
+            .justify_center()
+            .text_sm()
+            .bg(if self.active {
+                theme.tab_active
+            } else {
+                theme.tab_bar
+            })
+            .text_color(if self.active {
+                theme.tab_active_foreground
+            } else {
+                theme.tab_foreground
+            })
+            .border_1()
+            .border_color(theme.border)
+            .font_family(theme.font_family.clone())
+            .opacity(0.9)
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(self.title.clone()),
+            )
+    }
+}
 
 pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     let current = window.window_handle().window_id();
@@ -22,9 +68,11 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     else {
         return div().into_any_element();
     };
+    let tab_width =
+        (window.viewport_size().width - window.rem_size() * NEW_TAB_REMS) / tabs.len() as f32;
     let theme = cx.theme();
     let mut row = h_flex()
-        .h(px(30.))
+        .h(px(STRIP_HEIGHT))
         .flex_none()
         .w_full()
         .bg(theme.tab_bar)
@@ -34,6 +82,13 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         let active = tab.id == current;
         let handle = tab.handle;
         let close_handle = tab.handle;
+        let dragged = DraggedWindowTab {
+            id: tab.id,
+            ix,
+            title: tab.title.clone(),
+            active,
+            width: tab_width,
+        };
         row = row.child(
             h_flex()
                 .id(("window-tab", ix))
@@ -104,13 +159,33 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                         let _ = close_handle.update(cx, |_, window, _| window.remove_window());
                     }
                 })
+                .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+                .drag_over::<DraggedWindowTab>(move |style, dragged, _, cx| {
+                    let style = style.bg(cx.theme().drop_target);
+                    if ix < dragged.ix {
+                        style
+                            .border_0()
+                            .border_l_2()
+                            .border_color(cx.theme().drag_border)
+                    } else if ix > dragged.ix {
+                        style
+                            .border_0()
+                            .border_r_2()
+                            .border_color(cx.theme().drag_border)
+                    } else {
+                        style
+                    }
+                })
+                .on_drop(move |dragged: &DraggedWindowTab, _, cx| {
+                    SystemWindowTabController::update_tab_position(cx, dragged.id, ix);
+                })
                 .on_click(move |_, _, cx| {
                     let _ = handle.update(cx, |_, window, _| window.activate_window());
                 }),
         );
     }
     row.child(
-        div().px_1().child(
+        div().w(rems(NEW_TAB_REMS)).flex_none().px_1().child(
             Button::new("window-tab-new")
                 .ghost()
                 .xsmall()

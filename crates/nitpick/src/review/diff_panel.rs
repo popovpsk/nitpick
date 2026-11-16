@@ -7,7 +7,7 @@ use gpui::{
     HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
     MouseDownEvent, ParentElement as _, Pixels, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, StyledText, Window, canvas, div, ease_out_quint,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -528,28 +528,33 @@ impl ReviewView {
             .current_file
             .and_then(|f| self.viewed.get(f).copied())
             .unwrap_or(false);
+        let tree_left = settings(cx).tree_side == TreeSide::Left;
+        let toggle_tree = Button::new("toggle-tree")
+            .ghost()
+            .xsmall()
+            .icon(if tree_left {
+                IconName::PanelLeft
+            } else {
+                IconName::PanelRight
+            })
+            .selected(self.tree_visible)
+            .tooltip_with_action(s.toggle_tree.clone(), &ToggleTree, Some("Review"))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_tree(window, cx)));
+        let (toggle_left, toggle_right) = if tree_left {
+            (Some(toggle_tree), None)
+        } else {
+            (None, Some(toggle_tree))
+        };
         let theme = cx.theme();
         h_flex()
             .flex_none()
-            .h(px(34.))
+            .h(rems(TOOLBAR_HEIGHT_REMS))
             .px_2()
             .gap_1()
             .items_center()
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                Button::new("toggle-tree")
-                    .ghost()
-                    .xsmall()
-                    .icon(if settings(cx).tree_side == TreeSide::Left {
-                        IconName::PanelLeft
-                    } else {
-                        IconName::PanelRight
-                    })
-                    .selected(self.tree_visible)
-                    .tooltip_with_action(s.toggle_tree.clone(), &ToggleTree, Some("Review"))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_tree(window, cx))),
-            )
+            .children(toggle_left)
             .child(
                 Button::new("prev-change")
                     .ghost()
@@ -701,6 +706,7 @@ impl ReviewView {
                         this.set_layout(layout, cx);
                     })),
             )
+            .children(toggle_right)
             .into_any_element()
     }
 
@@ -956,6 +962,7 @@ impl ReviewView {
     }
 }
 
+pub(super) const TOOLBAR_HEIGHT_REMS: f32 = 2.125;
 const DIFF_BORDER: f32 = 1.;
 const GUTTER_DIGITS: f32 = 5.;
 const SPLIT_HANDLE: f32 = 8.;

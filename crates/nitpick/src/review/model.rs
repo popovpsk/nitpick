@@ -556,7 +556,7 @@ pub fn comparison_for_mr(request: &forge::Request, refs: &MrRefs) -> Comparison 
 }
 
 #[path = "model_grammars.rs"]
-mod grammars;
+pub(super) mod grammars;
 
 #[cfg(test)]
 #[path = "model_tests.rs"]

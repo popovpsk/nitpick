@@ -175,6 +175,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   grammar (`tree-sitter-sequel`) requires `cc ~1.2.1`, so `Cargo.lock` keeps `cc` on 1.2.x;
   the grammar crates listed directly are there only for their highlight queries
   (`review/model_grammars.rs`) and must stay on the versions gpui-component resolves.
+  `tree-sitter-vue-next` is the exception: a whole grammar gpui-component lacks, registered
+  as `vue`; its parser ABI must be one gpui-component's `tree-sitter` loads.
 
 ## Decisions
 

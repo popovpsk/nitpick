@@ -120,8 +120,7 @@ impl ReviewView {
             self.pending_jump = None;
             let diff_file = shown.diff.clone();
             self.sync_diff_mode(cx);
-            self.diff
-                .update(cx, |state, cx| state.set_files([diff_file], cx));
+            self.set_diff_files(vec![diff_file], cx);
             return;
         };
         if let Some(interdiff) = self.interdiff.as_mut().filter(|d| d.key == key) {
@@ -133,7 +132,7 @@ impl ReviewView {
                 .into_iter()
                 .collect();
             self.sync_diff_mode(cx);
-            self.diff.update(cx, |state, cx| state.set_files(files, cx));
+            self.set_diff_files(files, cx);
             return;
         }
         self.interdiff = None;
@@ -185,7 +184,7 @@ impl ReviewView {
                 interdiff.file = file;
                 let files: Vec<DiffFile> = interdiff.diff.clone().into_iter().collect();
                 self.interdiff = Some(interdiff);
-                self.diff.update(cx, |state, cx| state.set_files(files, cx));
+                self.set_diff_files(files, cx);
                 self.sync_find(cx);
                 if let Some(forward) = self.pending_jump.take() {
                     let count = self.shown_changes(file).len();

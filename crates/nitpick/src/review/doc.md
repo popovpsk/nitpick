@@ -23,7 +23,15 @@ wraps `gitlab` and `github`; nothing here names those crates).
   version viewed before to the current blob, `Interdiff`).
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
   gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
-  the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`).
+  the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`), and the
+  `vue` language gpui-component lacks (`tree-sitter-vue-next` with our own
+  `../../queries/vue/` queries: the crate's are nvim-treesitter's, with `inherits` and
+  `lua-match` predicates the component's highlighter does not run). `<script>` and every
+  template expression (`{{ }}`, directive values) are injected as TypeScript, which also
+  parses plain JS, since a query cannot say "no `lang` attribute"; `<style>` as CSS.
+  `needs_injections` / `injecting_highlighter`: the `Diff`'s own highlighter skips injected
+  languages, so a Vue file is highlighted through `SyntaxHighlighter::styles` instead (a
+  fresh highlighter per hunk: reusing one would parse against a tree from other text).
 - `model_tests.rs` — the whole pipeline on a throwaway repository; every enabled language
   produces syntax colors.
 - `viewed.rs` — `SharedViewed`: one `ViewedStore` entity per repository for the whole app,
@@ -199,7 +207,15 @@ wraps `gitlab` and `github`; nothing here names those crates).
   highlighting work on huge reviews, and is why the `Diff` draws no file header
   (`header_visible(false)`): the toolbar names the file instead. File-level annotations
   still render, since the component keeps them when the header is hidden.
-- The file toolbar, left to right: tree toggle, previous/next change, previous/next file
+- Diff highlighting: `set_diff_files` installs `injecting_highlighter` on the `DiffState`
+  while the shown file needs injections (Vue) and clears it otherwise, so every other
+  language keeps the component's highlighter, whose colors resolve at paint. Its styles are
+  fixed when computed, so a `Theme` change (theme, syntax palette, preview) installs it again
+  with the new `highlight_theme`. The patch has full context, so a file side is one hunk and
+  `<script>` reaches its tag; in the 3-line fallback for huge reviews a hunk inside
+  `<script>` is parsed as template text.
+- The file toolbar, left to right: tree toggle (at the right end instead when the tree is on
+  the right, so it sits next to the panel it opens), previous/next change, previous/next file
   (`PreviousFile`/`NextFile`, disabled without a visible neighbour), `n / m` in tree order,
   then the file: status icon in the tree's colors, the path with the directory muted and the
   name in the foreground color, ellipsized from the start so the name stays, `+a`/`−d` when
@@ -487,7 +503,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   not shown. As the tree narrows (`ProgressFit::for_width`, in rems so it follows the
   interface size, the count's width from its digits) the count goes first (the tooltip
   still has it), then the bar shrinks to a small floor; the progress box clips rather than
-  overlap the header buttons.
+  overlap the header buttons. The header's button row is `TOOLBAR_HEIGHT_REMS` tall with its
+  border, like the file toolbar beside it, so the two bottom borders line up at every
+  interface size (in rems, as the buttons in them are); the filter
+  field slides out below that row.
   The tree's view options popover opens toward the diff (from the button's left edge when
   the tree is on the left), so the files stay visible while the options change.
 - File actions: the tree row menu starts with Copy path, Open in editor, Open in GitLab (or

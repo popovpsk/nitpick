@@ -245,6 +245,7 @@ fn line_map_locates_lines(
 }
 
 #[rstest]
+#[case::vue("src/components/App.vue", Some("vue"))]
 #[case::make_include("build/rules.mk", Some("make"))]
 #[case::make_mak("win/nmake.mak", Some("make"))]
 #[case::makefile_am("Makefile.am", Some("make"))]
