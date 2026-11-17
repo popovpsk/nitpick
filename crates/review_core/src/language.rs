@@ -56,6 +56,7 @@ fn by_extension(extension: &str) -> Option<&'static str> {
         "rockspec" | "luau" => "lua",
         "pgsql" | "psql" | "mysql" => "sql",
         "vue" => "vue",
+        "pcss" | "postcss" => "css",
         _ => return None,
     };
     Some(language)

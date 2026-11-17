@@ -634,6 +634,8 @@ impl ReviewView {
                             Notification::success(tr().review_submitted.clone()),
                             cx,
                         );
+                        this.push_watch.last_check = None;
+                        this.check_for_push(cx);
                     }
                     Err(err) => {
                         log::warn!("submitting a review: {err}");

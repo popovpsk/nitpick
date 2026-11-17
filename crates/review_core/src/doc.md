@@ -23,7 +23,8 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   `viewed_versions_except`: the other versions of a path marked viewed, newest
   first; persistence is `app_db`'s), `fingerprint`, `fingerprint_blobs`, `write_atomic` (owner-only on Unix from the first byte; the
   temp-file-and-rename write the JSON settings use).
-- `line_map.rs` — `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
+- `line_map.rs` — `file_spans(patch)`: the byte range of each `diff --git` file section, in
+  patch order; `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
   `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
   up to two context lines above it within the hunk, else the first line);
@@ -82,9 +83,11 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   never one entering the old blob or leaving the new one, so a loop through the null blob
   (another file's deletion `x → 0`) is kept.
 - `line_maps` walks hunks by their declared counts, so a removed line `--- x` or an added
-  `+++ y` is never taken for a file header. The result is index-aligned with
-  gpui-component's `DiffFile::parse` of the same patch, which also yields one file per
-  `diff --git` header; the caller checks the counts match.
+  `+++ y` is never taken for a file header. `file_spans` cuts at every line starting with
+  `diff --git `, which needs no hunk counts: a hunk body line always starts with a space,
+  `+`, `-` or `\`. Both yield one entry per `diff --git` header, as gpui-component's
+  `DiffFile::parse` yields one file; the caller checks that the `line_maps` and `file_spans`
+  counts match and that each section parses to one file.
 - `shown_block_starts` mirrors gpui-component's default folding (`visible_pairs` in its
   `diff/state.rs`, private): a change shows `context` unchanged lines on each side, a
   removal on the other side counts as a change between two lines of this side, folds

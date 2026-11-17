@@ -54,6 +54,18 @@ fn numbered(n: usize, changed: Option<usize>) -> String {
         .collect()
 }
 
+fn assert_files_parse_on_demand(review: &super::LoadedReview) {
+    for (ix, file) in review.files.iter().enumerate() {
+        let diff = review.diff_file(ix).expect("the file's section parses");
+        assert_eq!(diff.path(), &file.path);
+        assert_eq!(
+            (diff.additions() as u32, diff.deletions() as u32),
+            (file.additions, file.deletions)
+        );
+    }
+    assert!(review.diff_file(review.files.len()).is_none());
+}
+
 fn fixture() -> (tempfile::TempDir, Repo) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -128,6 +140,7 @@ fn review_shows_only_what_the_source_brings() {
         .map(|&ix| review.files[ix].path.as_ref())
         .collect();
     assert_eq!(order, vec!["src/a.rs", "web/new.ts", "old.go"]);
+    assert_files_parse_on_demand(&review);
 }
 
 #[test]
@@ -353,6 +366,7 @@ fn ignoring_whitespace_keeps_exact_comment_positions() {
             anchor: LineKind::Context { old: 18, new: 18 },
         }]
     );
+    assert_files_parse_on_demand(&review);
 }
 
 #[test]
@@ -379,6 +393,7 @@ fn working_tree_review_shows_uncommitted_and_untracked_files() {
     assert!(review.commits.is_empty());
     let todo = &review.files[review.file_index("notes/todo.md").unwrap()];
     assert_eq!(todo.additions, 2);
+    assert_files_parse_on_demand(&review);
     let first = todo.fingerprint.clone();
     write(root, "notes/todo.md", "# todo\n- review\n- ship\n");
     let again = build_working_tree(&repo, false).unwrap();
@@ -403,7 +418,7 @@ fn language_overrides_apply_to_parsed_files() {
     let review = build(&repo, repo.compare("main", "feature").unwrap(), None, false).unwrap();
     let language = |path: &str| {
         let ix = review.file_index(path).unwrap();
-        review.files[ix].diff.language().to_string()
+        review.diff_file(ix).unwrap().language().to_string()
     };
     assert_eq!(language("build/rules.mk"), "make");
     assert_eq!(language("src/lib.rs"), "rust");
@@ -434,6 +449,7 @@ fn language_overrides_apply_to_parsed_files() {
 #[case::sql("db/schema.sql", "SELECT id FROM users WHERE id = 1;\n")]
 #[case::diff("fixes/0001.patch", "@@ -1 +1 @@\n-a\n+b\n")]
 #[case::zsh("scripts/setup.zsh", "export A=1\necho \"$A\"\n")]
+#[case::postcss("src/main.pcss", ".title { color: red; }\n")]
 #[case::vue("src/App.vue", "<template>\n  <p>{{ msg }}</p>\n</template>\n")]
 fn review_languages_highlight(#[case] path: &str, #[case] source: &str) {
     let body: String = source.lines().map(|line| format!("+{line}\n")).collect();
@@ -526,4 +542,39 @@ fn interdiff_shows_what_changed_since_the_viewed_version() {
     .unwrap();
     assert!(same.is_empty());
     assert!(same.changes.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn ignoring_whitespace_keeps_both_sections_of_a_type_change() {
+    let (dir, repo) = fixture();
+    let root = dir.path();
+    write(
+        root,
+        "web/new.ts",
+        "export const x = 1;\nexport const y = 2;\n",
+    );
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "the file on main"]);
+    git(root, &["checkout", "-qb", "link"]);
+    std::fs::remove_file(root.join("web/new.ts")).unwrap();
+    std::os::unix::fs::symlink("../src/a.rs", root.join("web/new.ts")).unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "link"]);
+    let review = build(&repo, repo.compare("main", "link").unwrap(), None, true).unwrap();
+    let sections: Vec<&super::ReviewFile> = review
+        .files
+        .iter()
+        .filter(|f| f.path.as_ref() == "web/new.ts")
+        .collect();
+    assert_eq!(sections.len(), 2);
+    assert_eq!(
+        sections[0].line_map.locate(Side::Old, 2),
+        Some(LineKind::Removed { old: 2 })
+    );
+    assert_eq!(
+        sections[1].line_map.locate(Side::New, 1),
+        Some(LineKind::Added { new: 1 })
+    );
+    assert_files_parse_on_demand(&review);
 }

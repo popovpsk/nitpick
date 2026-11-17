@@ -60,6 +60,15 @@ pub enum WrapLines {
     Never,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentSort {
+    #[default]
+    Newest,
+    Oldest,
+    ByFile,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntaxPalettes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +154,8 @@ pub struct Settings {
     #[serde(default)]
     pub wrap_lines: WrapLines,
     #[serde(default)]
+    pub comment_sort: CommentSort,
+    #[serde(default)]
     pub editor_command: String,
 }
 
@@ -216,6 +227,7 @@ impl Default for Settings {
             show_blame: false,
             show_whole_file: false,
             wrap_lines: WrapLines::default(),
+            comment_sort: CommentSort::default(),
             editor_command: String::new(),
         }
     }

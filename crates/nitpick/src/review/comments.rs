@@ -468,13 +468,16 @@ pub(super) fn render_composer(view: &Entity<ReviewView>, cx: &App) -> AnyElement
         .child(Textarea::new(&input))
         .child(
             h_flex()
+                .flex_wrap()
                 .gap_2()
                 .justify_end()
                 .items_center()
                 .child(
                     div()
-                        .flex_1()
-                        .min_w_0()
+                        .flex_grow(1.)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(hint),

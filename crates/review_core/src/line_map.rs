@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Old,
@@ -195,6 +197,23 @@ impl LineMap {
         }
         map[ix] = value;
     }
+}
+
+pub fn file_spans(patch: &str) -> Vec<Range<usize>> {
+    let mut starts = Vec::new();
+    let mut offset = 0;
+    for line in patch.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            starts.push(offset);
+        }
+        offset += line.len();
+    }
+    let ends = starts.iter().skip(1).copied().chain([patch.len()]);
+    starts
+        .iter()
+        .zip(ends)
+        .map(|(&start, end)| start..end)
+        .collect()
 }
 
 pub fn line_maps(patch: &str) -> Vec<LineMap> {

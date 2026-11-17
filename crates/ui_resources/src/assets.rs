@@ -46,6 +46,7 @@ gpui_kit_assets::icon_assets!(
         RotateCcw,
         FileClock,
         ArrowUpRight,
+        ArrowDownUp,
         Pencil,
         Trash,
         ThumbsUp,

@@ -118,9 +118,9 @@ impl ReviewView {
             self.interdiff = None;
             self.interdiff_loading = None;
             self.pending_jump = None;
-            let diff_file = shown.diff.clone();
+            let diff_file = review.diff_file(file);
             self.sync_diff_mode(cx);
-            self.set_diff_files(vec![diff_file], cx);
+            self.set_diff_files(diff_file.into_iter().collect(), cx);
             return;
         };
         if let Some(interdiff) = self.interdiff.as_mut().filter(|d| d.key == key) {

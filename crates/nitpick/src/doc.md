@@ -27,7 +27,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file
   patterns (`hidden_files` for every repository, `repo_hidden_files` keyed by the work
   tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`, `strike_viewed`; diff display (`show_whole_file`,
-  `WrapLines`); the diff's `split_ratio` and
+  `WrapLines`); the comments sheet's order (`CommentSort`, newest first by default); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower).
 - `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub included)

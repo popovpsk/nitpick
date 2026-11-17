@@ -216,6 +216,29 @@ index 6666666..7777777 100644
 ";
 
 #[test]
+fn file_spans_cut_the_patch_at_each_file_header() {
+    let spans = file_spans(PATCH);
+    let heads: Vec<&str> = spans
+        .iter()
+        .map(|span| PATCH[span.clone()].lines().next().unwrap())
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            "diff --git a/one.rs b/one.rs",
+            "diff --git a/bin.png b/bin.png",
+            "diff --git a/two.txt b/two.txt",
+            "diff --git a/three.txt b/three.txt",
+        ]
+    );
+    assert_eq!(spans.first().unwrap().start, 0);
+    assert_eq!(spans.last().unwrap().end, PATCH.len());
+    assert!(spans.windows(2).all(|w| w[0].end == w[1].start));
+    assert!(PATCH[spans[3].clone()].contains("--- removed line that looks like a header"));
+    assert!(file_spans("").is_empty());
+}
+
+#[test]
 fn line_maps_follow_patch_order() {
     let maps = line_maps(PATCH);
     assert_eq!(maps.len(), 4);
@@ -246,6 +269,7 @@ fn line_map_locates_lines(
 
 #[rstest]
 #[case::vue("src/components/App.vue", Some("vue"))]
+#[case::postcss("src/styles/main.pcss", Some("css"))]
 #[case::make_include("build/rules.mk", Some("make"))]
 #[case::make_mak("win/nmake.mak", Some("make"))]
 #[case::makefile_am("Makefile.am", Some("make"))]

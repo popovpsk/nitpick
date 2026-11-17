@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
@@ -90,7 +92,7 @@ impl MrContext {
 }
 
 pub struct ReviewFile {
-    pub diff: DiffFile,
+    pub patch: Range<usize>,
     pub path: SharedString,
     pub old_path: SharedString,
     pub new_path: SharedString,
@@ -125,11 +127,28 @@ pub struct LoadedReview {
     pub commits: Vec<git_repo::Commit>,
     pub commit: Option<git_repo::Commit>,
     pub merge_base_sha: String,
+    pub patch: String,
+    parsed: RefCell<Option<(usize, DiffFile)>>,
 }
 
 impl LoadedReview {
     pub fn file_index(&self, path: &str) -> Option<usize> {
         self.files.iter().position(|f| f.path.as_ref() == path)
+    }
+
+    pub fn diff_file(&self, ix: usize) -> Option<DiffFile> {
+        if let Some((cached, diff)) = self.parsed.borrow().as_ref()
+            && *cached == ix
+        {
+            return Some(diff.clone());
+        }
+        let file = self.files.get(ix)?;
+        let section = self.patch.get(file.patch.clone())?;
+        let diff = parse_file(section)
+            .inspect_err(|err| log::warn!("{}: {err:#}", file.path))
+            .ok()?;
+        *self.parsed.borrow_mut() = Some((ix, diff.clone()));
+        Some(diff)
     }
 
     pub fn commit_sha(&self) -> Option<&str> {
@@ -245,42 +264,48 @@ fn build_range(
             .context("computing the diff")?;
         context_limited = true;
     }
-    let diffs = parse(&patch)?;
-    let (maps, display, comments_aligned) = if ignore_whitespace {
-        let display = display_maps(&patch, diffs.len());
+    let spans = review_core::file_spans(&patch);
+    let by_path: HashMap<&str, &ChangedFile> =
+        changed.iter().map(|f| (f.path.as_str(), f)).collect();
+    let mut files: Vec<ReviewFile> = spans
+        .into_iter()
+        .map(|span| {
+            let diff = parse_file(&patch[span.clone()])?;
+            Ok(review_file(span, &diff, &by_path))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let comments_aligned = if ignore_whitespace {
+        let display = display_maps(&patch, files.len());
         options.ignore_whitespace = false;
-        drop(patch);
         let exact = range_head
             .diff(repo, &base, &options)
             .context("computing the diff")?;
-        let exact_files = parse(&exact)?;
-        let (exact_maps, aligned) = aligned_maps(&exact, exact_files.len());
-        let by_path: HashMap<SharedString, LineMap> = exact_files
-            .iter()
-            .map(|f| f.path().clone())
-            .zip(exact_maps)
-            .collect();
-        let maps = diffs
-            .iter()
-            .map(|f| by_path.get(f.path()).cloned().unwrap_or_default())
-            .collect();
-        (maps, Some(display), aligned)
+        let exact_spans = review_core::file_spans(&exact);
+        let (exact_maps, aligned) = aligned_maps(&exact, exact_spans.len());
+        let mut by_path: HashMap<SharedString, VecDeque<LineMap>> = HashMap::new();
+        for (span, map) in exact_spans.into_iter().zip(exact_maps) {
+            by_path
+                .entry(parse_file(&exact[span])?.path().clone())
+                .or_default()
+                .push_back(map);
+        }
+        for (file, display_map) in files.iter_mut().zip(display) {
+            file.line_map = by_path
+                .get_mut(&file.path)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_default();
+            file.changes = display_map.changes().to_vec();
+            file.display_map = Some(display_map);
+        }
+        aligned
     } else {
-        let (maps, aligned) = aligned_maps(&patch, diffs.len());
-        drop(patch);
-        (maps, None, aligned)
+        let (maps, aligned) = aligned_maps(&patch, files.len());
+        for (file, line_map) in files.iter_mut().zip(maps) {
+            file.changes = line_map.changes().to_vec();
+            file.line_map = line_map;
+        }
+        aligned
     };
-    let mut display = display.map(Vec::into_iter);
-    let by_path: HashMap<&str, &ChangedFile> =
-        changed.iter().map(|f| (f.path.as_str(), f)).collect();
-    let files: Vec<ReviewFile> = diffs
-        .into_iter()
-        .zip(maps)
-        .map(|(diff, line_map)| {
-            let display_map = display.as_mut().and_then(Iterator::next);
-            review_file(diff, line_map, display_map, &by_path)
-        })
-        .collect();
     let tree = Arc::new(FileTree::build(&tree_files(&files)));
     Ok(LoadedReview {
         base_sha: base,
@@ -295,6 +320,8 @@ fn build_range(
         commits: range.commits,
         commit: range.commit,
         merge_base_sha: range.merge_base_sha,
+        patch,
+        parsed: RefCell::new(None),
     })
 }
 
@@ -361,6 +388,16 @@ fn parse(patch: &str) -> anyhow::Result<Vec<DiffFile>> {
     Ok(files.into_iter().map(with_language).collect())
 }
 
+fn parse_file(section: &str) -> anyhow::Result<DiffFile> {
+    let mut files = parse(section)?;
+    match (files.pop(), files.is_empty()) {
+        (Some(file), true) => Ok(file),
+        _ => Err(anyhow!(
+            "parsing the diff: not one file in a `diff --git` section"
+        )),
+    }
+}
+
 fn with_language(file: DiffFile) -> DiffFile {
     match review_core::language_override(file.path()) {
         Some(language) => file.with_language(language),
@@ -403,12 +440,10 @@ fn display_maps(patch: &str, files: usize) -> Vec<LineMap> {
 }
 
 fn review_file(
-    diff: DiffFile,
-    line_map: LineMap,
-    display_map: Option<LineMap>,
+    patch: Range<usize>,
+    diff: &DiffFile,
     by_path: &HashMap<&str, &ChangedFile>,
 ) -> ReviewFile {
-    let changes: Vec<Change> = display_map.as_ref().unwrap_or(&line_map).changes().to_vec();
     let path = diff.path().clone();
     let changed = by_path.get(path.as_ref()).copied();
     let status = match changed.map(|c| c.status) {
@@ -425,7 +460,7 @@ fn review_file(
     };
     let blobs = changed
         .map(|c| (c.old_blob.clone(), c.new_blob.clone()))
-        .or_else(|| index_blobs(&diff));
+        .or_else(|| index_blobs(diff));
     let (old_blob, new_blob, fingerprint) = match blobs {
         Some((old, new)) => {
             let fingerprint = review_core::fingerprint(&old, &new);
@@ -445,7 +480,7 @@ fn review_file(
         additions: diff.additions() as u32,
         deletions: diff.deletions() as u32,
         binary: diff.is_binary(),
-        diff,
+        patch,
         path,
         old_path,
         new_path,
@@ -453,9 +488,9 @@ fn review_file(
         old_blob,
         new_blob,
         status,
-        line_map,
-        display_map,
-        changes,
+        line_map: LineMap::default(),
+        display_map: None,
+        changes: Vec::new(),
     }
 }
 

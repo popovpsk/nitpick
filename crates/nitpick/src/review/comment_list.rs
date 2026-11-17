@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
@@ -9,6 +10,7 @@ use gpui_component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex,
@@ -20,6 +22,7 @@ use super::comments::{remote_markdown, render_composer, render_discussion};
 use super::model::LoadedReview;
 use super::{ComposerTarget, DiscussionView, ReviewView};
 use crate::localization::tr;
+use crate::settings_store::{CommentSort, settings, update_settings};
 
 const PREVIEW_CHARS: usize = 160;
 
@@ -73,6 +76,7 @@ pub fn build_code_threads(
     tree_order: &[usize],
     by_file: &HashMap<SharedString, Vec<usize>>,
     head_sha: Option<&str>,
+    sort: CommentSort,
 ) -> Vec<CodeThread> {
     let mut rank = vec![usize::MAX; files.len()];
     for (pos, &file) in tree_order.iter().enumerate() {
@@ -116,15 +120,24 @@ pub fn build_code_threads(
             Some((order, line.unwrap_or(0), thread))
         })
         .collect();
-    threads.sort_by(|a, b| {
-        (a.2.resolved, a.0, &a.2.path, a.1, a.2.discussion).cmp(&(
-            b.2.resolved,
-            b.0,
-            &b.2.path,
-            b.1,
-            b.2.discussion,
-        ))
-    });
+    match sort {
+        CommentSort::ByFile => threads.sort_by(|a, b| {
+            (a.2.resolved, a.0, &a.2.path, a.1, a.2.discussion).cmp(&(
+                b.2.resolved,
+                b.0,
+                &b.2.path,
+                b.1,
+                b.2.discussion,
+            ))
+        }),
+        CommentSort::Newest | CommentSort::Oldest => threads.sort_by(|a, b| {
+            let (a, b) = (&a.2, &b.2);
+            a.resolved.cmp(&b.resolved).then_with(|| {
+                thread_order(&discussions[a.discussion], &discussions[b.discussion], sort)
+                    .then(a.discussion.cmp(&b.discussion))
+            })
+        }),
+    }
     let mut previous: Option<(bool, SharedString)> = None;
     threads
         .into_iter()
@@ -233,7 +246,14 @@ impl Render for CommentsSheet {
             (CommentsTab::General, _) => render_general_list(&view, cx),
             _ => render_code_list(&view, cx),
         };
-        v_flex().size_full().gap_3().child(tabs).child(
+        let sort = (tab != CommentsTab::Description).then(|| sort_menu(tab, cx));
+        let header = h_flex()
+            .gap_2()
+            .items_center()
+            .child(tabs)
+            .child(div().flex_1())
+            .children(sort);
+        v_flex().size_full().gap_3().child(header).child(
             div()
                 .id("comments-list")
                 .flex_1()
@@ -241,6 +261,52 @@ impl Render for CommentsSheet {
                 .overflow_y_scroll()
                 .child(body),
         )
+    }
+}
+
+fn sort_menu(tab: CommentsTab, cx: &App) -> AnyElement {
+    let s = tr();
+    let current = match (tab, settings(cx).comment_sort) {
+        (CommentsTab::General, CommentSort::ByFile) => CommentSort::Oldest,
+        (_, sort) => sort,
+    };
+    let choices: &[CommentSort] = if tab == CommentsTab::General {
+        &[CommentSort::Newest, CommentSort::Oldest]
+    } else {
+        &[
+            CommentSort::Newest,
+            CommentSort::Oldest,
+            CommentSort::ByFile,
+        ]
+    };
+    Button::new("comment-sort")
+        .ghost()
+        .xsmall()
+        .icon(Icon::new(Icons::ArrowDownUp))
+        .label(sort_label(current))
+        .tooltip(s.comment_sort.clone())
+        .dropdown_menu(move |menu, _, _| {
+            choices.iter().fold(menu, |menu, &choice| {
+                menu.item(
+                    PopupMenuItem::new(sort_label(choice))
+                        .checked(choice == current)
+                        .on_click(move |_, _, cx| {
+                            if choice != current {
+                                update_settings(cx, |s| s.comment_sort = choice);
+                            }
+                        }),
+                )
+            })
+        })
+        .into_any_element()
+}
+
+fn sort_label(sort: CommentSort) -> SharedString {
+    let s = tr();
+    match sort {
+        CommentSort::Newest => s.sort_newest.clone(),
+        CommentSort::Oldest => s.sort_oldest.clone(),
+        CommentSort::ByFile => s.sort_by_file.clone(),
     }
 }
 
@@ -324,7 +390,11 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
                                 .ghost()
                                 .xsmall()
                                 .icon(Icon::new(Icons::ArrowUpRight))
-                                .label(s.go_to_code.clone())
+                                .label(if thread.placed {
+                                    s.go_to_code.clone()
+                                } else {
+                                    s.go_to_file.clone()
+                                })
                                 .on_click(move |_, window, cx| {
                                     window.close_sheet(cx);
                                     jump_view.update(cx, |this, cx| {
@@ -338,6 +408,28 @@ fn render_code_list(view: &Entity<ReviewView>, cx: &App) -> AnyElement {
         );
     }
     list.into_any_element()
+}
+
+pub fn general_threads(discussions: &[DiscussionView], sort: CommentSort) -> Vec<usize> {
+    let mut general: Vec<usize> = discussions
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| {
+            d.position
+                .as_ref()
+                .is_none_or(|p| p.new_path.is_none() && p.old_path.is_none())
+        })
+        .map(|(ix, _)| ix)
+        .collect();
+    general.sort_by(|&a, &b| thread_order(&discussions[a], &discussions[b], sort).then(a.cmp(&b)));
+    general
+}
+
+fn thread_order(a: &DiscussionView, b: &DiscussionView, sort: CommentSort) -> Ordering {
+    match sort {
+        CommentSort::Newest => b.active.cmp(&a.active),
+        CommentSort::Oldest | CommentSort::ByFile => a.created.cmp(&b.created),
+    }
 }
 
 pub(super) fn status_icon(status: Option<FileStatus>) -> Icons {

@@ -45,8 +45,8 @@ use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side, Tre
 
 use crate::localization::tr;
 use crate::settings_store::{
-    DiffLayout, SPLIT_RATIO_RANGE, SettingsStore, TREE_WIDTH_RANGE, TreeMode, settings,
-    update_settings,
+    CommentSort, DiffLayout, SPLIT_RATIO_RANGE, SettingsStore, TREE_WIDTH_RANGE, TreeMode,
+    settings, update_settings,
 };
 pub use avatars::init as init_avatars;
 pub use blame::ToggleBlame;
@@ -190,6 +190,8 @@ pub struct DiscussionView {
     pub location: Option<SharedString>,
     pub preview: SharedString,
     pub replies: Option<SharedString>,
+    pub created: i64,
+    pub active: i64,
 }
 
 fn nearest_unviewed(after: &[usize], before: &[usize], viewed: &[bool]) -> Option<usize> {
@@ -222,6 +224,12 @@ fn is_long(body: &str) -> bool {
 
 impl DiscussionView {
     fn from_forge(discussion: &forge::Discussion, me: Option<&str>, open: bool) -> Option<Self> {
+        let times: Vec<i64> = discussion
+            .notes
+            .iter()
+            .filter(|n| !n.system)
+            .filter_map(|n| review_core::parse_timestamp(&n.created_at))
+            .collect();
         let notes: Vec<NoteView> = discussion
             .notes
             .iter()
@@ -261,6 +269,8 @@ impl DiscussionView {
             location,
             preview,
             replies,
+            created: times.iter().copied().min().unwrap_or_default(),
+            active: times.iter().copied().max().unwrap_or_default(),
         })
     }
 }
@@ -287,6 +297,7 @@ pub struct ReviewView {
     code_threads: Rc<Vec<comment_list::CodeThread>>,
     comments_tab: comment_list::CommentsTab,
     comments_tab_chosen: bool,
+    comment_sort: CommentSort,
     comment_tab_labels: (SharedString, SharedString),
     description: Option<SharedString>,
     code_section_labels: (SharedString, SharedString),
@@ -431,6 +442,7 @@ impl ReviewView {
             code_threads: Rc::default(),
             comments_tab: comment_list::CommentsTab::default(),
             comments_tab_chosen: false,
+            comment_sort: settings(cx).comment_sort,
             comment_tab_labels: (SharedString::default(), SharedString::default()),
             description: None,
             code_section_labels: (SharedString::default(), SharedString::default()),
@@ -866,6 +878,11 @@ impl ReviewView {
 
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
         let whitespace = settings(cx).ignore_whitespace;
+        if settings(cx).comment_sort != self.comment_sort {
+            self.comment_sort = settings(cx).comment_sort;
+            self.index_discussions();
+            cx.notify();
+        }
         self.sync_diff_mode(cx);
         let context = context_lines(cx);
         if self.diff.read(cx).context_lines() != context {
@@ -1571,19 +1588,12 @@ impl ReviewView {
             review.tree.file_order(),
             &self.by_file,
             Some(ctx.refs.head_sha.as_str()),
+            self.comment_sort,
         ));
-        self.general_only = Rc::new(
-            self.discussions
-                .iter()
-                .enumerate()
-                .filter(|(_, d)| {
-                    d.position
-                        .as_ref()
-                        .is_none_or(|p| p.new_path.is_none() && p.old_path.is_none())
-                })
-                .map(|(ix, _)| ix)
-                .collect(),
-        );
+        self.general_only = Rc::new(comment_list::general_threads(
+            &self.discussions,
+            self.comment_sort,
+        ));
         let s = tr();
         let resolved = self.code_threads.iter().filter(|t| t.resolved).count();
         let open = self.code_threads.len() - resolved;
@@ -1981,6 +1991,8 @@ impl ReviewView {
                             this.load_pending(cx);
                         } else {
                             this.load_discussions(cx);
+                            this.push_watch.last_check = None;
+                            this.check_for_push(cx);
                         }
                     }
                     Err(err) => {

@@ -16,8 +16,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   save, tree selection and collapse state, file navigation, pull, discussions and the comment
   composer; actions and key bindings.
 - `model.rs` — `ReviewSource`, `LoadedReview`, `ReviewFile` (with both blob ids), `build` (the range's commits,
-  optionally narrowed to one of them; changed files + full context patch → parsed `DiffFile`s with `review_core::language_override` applied, line
-  maps (plus the shown patch's map with "ignore whitespace"), fingerprints, tree),
+  optionally narrowed to one of them; changed files + full context patch, kept as text with
+  each file's section (`review_core::file_spans`); line maps (plus the shown patch's map
+  with "ignore whitespace"), fingerprints, tree), `LoadedReview::diff_file` (parses one
+  file's section into a `DiffFile` with `review_core::language_override` applied),
   `MrContext` / `MrRefs`, `forge_remote` / `ForgeRemote`, `resolve_mr_refs`,
   `comparison_for_mr`; `interdiff` (one file's diff from the
   version viewed before to the current blob, `Interdiff`).
@@ -78,15 +80,23 @@ wraps `gitlab` and `github`; nothing here names those crates).
   runs on every window frame) with a Description tab first when
   the request has one (its markdown body, `ReviewView::description`) and two more: On code (every
   discussion with a file position, outdated ones included, as full cards: open threads first,
-  then resolved, each section grouped by file in tree order then line; above each card its
-  `L<line>`, an outdated tag when its `head_sha` is not the review's head, and Go to code,
-  which closes the sheet and `reveal_discussion` opens the file, at the line when the thread
-  is drawn in the diff) and General (discussions without a file, with the new-comment
-  composer). `build_code_threads` precomputes the rows; it opens on General when there is no
+  then resolved, each section in the chosen order, the file named whenever it changes from
+  the card before; above each card its
+  `L<line>`, an outdated tag when its `head_sha` is not the review's head, and Go to code
+  (Go to file when the thread is not drawn in the diff, since nothing to scroll to), which
+  closes the sheet and `reveal_discussion` opens the file, at the line when the thread is
+  drawn) and General (discussions without a file, with the new-comment
+  composer). The order (`CommentSort` in the settings, a menu beside the tabs, hidden on
+  Description): Newest first by each thread's last note (`DiscussionView::active`), so a
+  new reply brings its thread up; Oldest first by its first note (`created`), as GitLab's
+  default; By file, tree order then line, On code only (General has no files, so there it
+  is Oldest first and the menu offers the two time orders; picking the order already shown
+  there keeps a saved By file). `build_code_threads` and
+  `general_threads` precompute the rows, again when the setting changes; it opens on General when there is no
   code thread, and on Description when there is no comment at all, until the user picks a tab
   (`comments_tab_chosen`); from then on it opens on that tab for this review.
 - `review_tests.rs` — comment times in a fixed time zone; which file Viewed advances to.
-- `comment_list_tests.rs` — previews and row order.
+- `comment_list_tests.rs` — previews and row order in each sort.
 - `note_actions.rs` — `NoteEdit` and edit / delete (a danger confirm dialog) of the user's
   own notes, then a discussion reload; a resolve toggle is busy per thread (`resolving`) so a
   second click can't repeat it; `ApprovalView` (label, tooltip with who approved) and
@@ -135,7 +145,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
 ## Spec
 
 - Diff content: `install_content` is the one place a file's diff goes into the `DiffState`:
-  the review's own `DiffFile`, or the `Interdiff` when "since last view" applies to the
+  the review's own file (`diff_file`, parsed on the UI thread when it is shown), or the `Interdiff` when "since last view" applies to the
   file. While an interdiff loads the state is empty (`content_pending`), and change steps
   wait; a cross-file step remembers its direction (`pending_jump`) and lands once it is in.
 - "Since last view" (`since_mode`, view state, off by default): a file whose current
@@ -240,8 +250,17 @@ wraps `gitlab` and `github`; nothing here names those crates).
   code: the tag already says the whole file is new or gone, and a solid fill would drown the
   syntax colors. Modified and renamed files keep the fill and the `+`/`−` signs.
 - `LoadedReview::files` is in patch order; the tree's `file_order` is the navigation order.
-  `line_maps` and the parsed files are index-aligned; if the counts ever differ the review
-  still loads but diff comments are disabled (`comments_aligned`).
+  `line_maps` and `file_spans` are index-aligned; if the counts ever differ the review
+  still loads but diff comments are disabled (`comments_aligned`). Only the text and per-file
+  metadata are kept, since a parsed `DiffFile` is many times larger than its patch text: the
+  review parses every section once at load for its counts and paths, drops it, and parses the
+  shown file again on demand, keeping that one parse (`parsed`) so reinstalling the same file
+  costs nothing. That parse runs on the UI thread, a pass the `DiffState` makes over the file
+  there anyway: off-thread it would leave the state empty and every line jump pending, as an
+  interdiff does. A section that does not parse to exactly one file fails the load, so
+  `diff_file` failing later is only logged. With "ignore whitespace" the exact patch's maps
+  are matched by path in order, since a type change (file ↔ symlink) gives two sections with
+  the same path.
 - Hidden files: the patterns from settings (all repositories, then this repository) mark
   matching files untracked (`hidden_mask`): they are out of the progress, change and file
   navigation (`nav_order`), auto-mark and the "first unviewed" pick. They are left out of
@@ -345,12 +364,17 @@ wraps `gitlab` and `github`; nothing here names those crates).
   API) leaves `pending` empty and the composer posts directly, and a failed later load keeps
   the drafts already shown. The verdicts are fixed when the sheet opens (`ReviewForm`), and
   the header label and the composer's key hints are built when their data changes, not per
-  frame.
+  frame. The composer's footer wraps: in a narrow card (the sheet) the key hint keeps one line
+  and the buttons move below it instead of squeezing it to a letter-wide column.
 - New pushes (`push_watch.rs`): while a merge request's window is active, at most every
   5 minutes (a 30 s tick checks the time, and window activation checks at once) one request
   fetch compares the head with the loaded one; nothing is fetched in an inactive window. A
   new head shows a banner under the header until a reload installs it; the diff is never
-  replaced on its own, so the text does not move under the reader.
+  replaced on its own, so the text does not move under the reader. Posting a comment checks
+  at once, whatever the time since the last check: GitLab moves a line comment made against
+  an older version onto the request's latest diff, so its head no longer matches the loaded
+  one and it is listed (as outdated) but not drawn in the code until a reload; the banner
+  offers that reload. A submitted review checks at once too, for its line drafts.
 - Starting a line comment (`can_comment_lines`): no `on_add_annotation` button (it trails
   the pointer over the code and is lost when a press clears the selection it hangs on).
   Instead the hovered line gets one gutter marker (`comment_marker`, set by
@@ -570,7 +594,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   multi-line comments for now.
 - New pushes are polled, at most every 5 minutes and only in an active window; a banner,
   not an automatic reload.
-- One file at a time rather than all files in one scrolling list.
+- Comments sheet order is the user's choice (newest first, oldest first, by file),
+  remembered app-wide; newest first is the default, since the new-comment button sits on
+  top.
+- One file at a time rather than all files in one scrolling list, so only the shown file is
+  held parsed.
 - Viewed progress is local; neither GitLab nor GitHub has an API for its "viewed" checkboxes.
 - The uncommitted-changes review compares with `HEAD`, not with a target branch.
 - Pull is fast-forward only and only from the branch chips of a branch review.
