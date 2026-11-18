@@ -2,9 +2,10 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Subscription, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
@@ -177,9 +178,20 @@ pub fn open_comments_sheet(
         }
     }
     let view = cx.entity();
-    let body = cx.new(|cx: &mut Context<CommentsSheet>| CommentsSheet {
-        _observe: cx.observe(&view, |_, _, cx| cx.notify()),
-        view,
+    let body = cx.new(|cx: &mut Context<CommentsSheet>| {
+        let focus = cx.focus_handle();
+        CommentsSheet {
+            _observe: cx.observe(&view, |_, _, cx| cx.notify()),
+            _focus_lost: cx.on_focus_lost(window, |this, window, cx| {
+                if let Some(target) = window.focus_lost_restore_target(cx)
+                    && this.focus.contains(&target, window)
+                {
+                    window.focus(&target, cx);
+                }
+            }),
+            focus,
+            view,
+        }
     });
     window.open_sheet(cx, move |sheet, _window, _cx| {
         sheet
@@ -191,7 +203,9 @@ pub fn open_comments_sheet(
 
 pub struct CommentsSheet {
     view: Entity<ReviewView>,
+    focus: FocusHandle,
     _observe: Subscription,
+    _focus_lost: Subscription,
 }
 
 impl Render for CommentsSheet {
@@ -253,14 +267,19 @@ impl Render for CommentsSheet {
             .child(tabs)
             .child(div().flex_1())
             .children(sort);
-        v_flex().size_full().gap_3().child(header).child(
-            div()
-                .id("comments-list")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(body),
-        )
+        v_flex()
+            .track_focus(&self.focus)
+            .size_full()
+            .gap_3()
+            .child(header)
+            .child(
+                div()
+                    .id("comments-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(body),
+            )
     }
 }
 

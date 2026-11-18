@@ -6,6 +6,9 @@ mod en;
 mod ru;
 
 pub struct Strings {
+    pub automatic_updates: SharedString,
+    pub automatic_updates_desc: SharedString,
+    pub checking_for_updates: SharedString,
     pub check_for_updates: SharedString,
     pub hide_app: SharedString,
     pub hide_others: SharedString,
@@ -300,6 +303,7 @@ pub struct Strings {
     pub change_source_branch: SharedString,
     pub compare_tooltip: SharedString,
 
+    pub downloading_update_t: SharedString,
     pub update_ready_t: SharedString,
     pub update_check_failed_t: SharedString,
     pub settings_save_failed_t: SharedString,
@@ -365,6 +369,10 @@ fn fill(template: &str, args: &[&str]) -> String {
 }
 
 impl Strings {
+    pub fn downloading_update(&self, version: &str) -> String {
+        fill(&self.downloading_update_t, &[version])
+    }
+
     pub fn update_ready(&self, version: &str) -> String {
         fill(&self.update_ready_t, &[version])
     }
@@ -669,6 +677,7 @@ mod tests {
         for &lang in Lang::all() {
             let s = lang.strings();
             for template in [
+                &s.downloading_update_t,
                 &s.update_ready_t,
                 &s.update_check_failed_t,
                 &s.settings_save_failed_t,

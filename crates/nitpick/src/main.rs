@@ -105,7 +105,8 @@ fn main() {
 
         settings_view::init(cx);
         settings_window::init(cx);
-        updater::init(cx, env!("CARGO_PKG_VERSION"), true);
+        let auto_update = settings_store::settings(cx).auto_update;
+        updater::init(cx, env!("CARGO_PKG_VERSION"), auto_update);
         zoom::init(cx);
         review::init_avatars(cx);
         keymap::init(cx);

@@ -47,8 +47,12 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   re-creating gpui-component's `Settings` under a new id with that page selected: its
   selection lives in keyed state and only a fresh state takes `default_selected_index`, so a
   new window starts on the first page. Escape and ⌘/Ctrl-W close the window; the view takes
-  focus when it opens. Settings page: General (language, the version with a
-  "Check for Updates" button where the updater is built in), then theme and syntax colors (hover
+  focus when it opens. Settings page: General (language, the "Automatic updates" switch
+  (`auto_update`, on by default, passed to `updater::init` at startup and to
+  `updater::set_enabled` when flipped) and the version with a "Check for Updates" button
+  and the updater's `UpdateState` under it (checking, downloading, up to date, the error, or
+  the staged version with "Restart to Update"; the view observes the updater); the switch,
+  the button and the status only where the updater is built in), then theme and syntax colors (hover
   previews), Zed theme import, review options (the editor command is saved 400 ms
   after typing stops by a detached task, and reloads when the saved value differs from the
   one it last loaded or saved and the field is not focused), hidden-file patterns (all

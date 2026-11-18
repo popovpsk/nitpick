@@ -12,8 +12,8 @@ use gpui::{
     Subscription, Task, Window, actions, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, ThemeRegistry,
-    TitleBar, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    StyledExt as _, ThemeRegistry, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
@@ -25,6 +25,7 @@ use gpui_component::{
 use ui_resources::Icons;
 use ui_resources::i18n::{Lang, Strings};
 use ui_resources::themes::ZedThemeFile;
+use updater::UpdateState;
 
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
@@ -353,6 +354,7 @@ pub struct SettingsView {
     zed_files: Rc<Vec<ZedThemeFile>>,
     _zed_discovery: Task<()>,
     _zed_import: Task<()>,
+    _updater: Option<Subscription>,
 }
 
 impl SettingsView {
@@ -421,6 +423,8 @@ impl SettingsView {
             zed_files: Rc::default(),
             _zed_discovery: zed_discovery,
             _zed_import: Task::ready(()),
+            _updater: updater::handle(cx)
+                .map(|updater| cx.observe(&updater, |_, _, cx| cx.notify())),
         };
         this.reload_hidden(true, window, cx);
         this._settings_sync = Some(cx.observe_global_in::<SettingsStore>(
@@ -851,24 +855,77 @@ fn editor_presets_button() -> AnyElement {
 }
 
 fn version_field(cx: &App) -> AnyElement {
-    h_flex()
-        .gap_2()
-        .items_center()
+    let state = updater::handle(cx).map(|updater| updater.read(cx).state());
+    let busy = matches!(
+        state,
+        Some(UpdateState::Checking | UpdateState::Downloading(_))
+    );
+    v_flex()
+        .items_end()
+        .gap_1()
         .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(env!("CARGO_PKG_VERSION")),
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(env!("CARGO_PKG_VERSION")),
+                )
+                .when(state.is_some(), |el| {
+                    el.child(
+                        Button::new("check-for-updates")
+                            .small()
+                            .label(tr().check_for_updates.clone())
+                            .loading(busy)
+                            .disabled(busy)
+                            .on_click(|_, _, cx| updater::check_now(cx)),
+                    )
+                }),
         )
-        .when(updater::is_supported(), |el| {
-            el.child(
-                Button::new("check-for-updates")
-                    .small()
-                    .label(tr().check_for_updates.clone())
-                    .on_click(|_, _, cx| updater::check_now(cx)),
-            )
-        })
+        .children(state.and_then(|state| update_status(state, cx)))
         .into_any_element()
+}
+
+fn update_status(state: UpdateState, cx: &App) -> Option<AnyElement> {
+    let s = tr();
+    let theme = cx.theme();
+    let (text, color): (SharedString, _) = match state {
+        UpdateState::Idle => return None,
+        UpdateState::Checking => (s.checking_for_updates.clone(), theme.muted_foreground),
+        UpdateState::Downloading(version) => (
+            s.downloading_update(&version).into(),
+            theme.muted_foreground,
+        ),
+        UpdateState::UpToDate => (s.up_to_date.clone(), theme.success),
+        UpdateState::Failed(error) => (s.update_check_failed(&error).into(), theme.danger),
+        UpdateState::Ready(version) => {
+            return Some(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().text_xs().child(s.update_ready(&version)))
+                    .child(
+                        Button::new("restart-to-update")
+                            .small()
+                            .primary()
+                            .label(s.restart_to_update.clone())
+                            .on_click(|_, _, cx| updater::apply_and_restart(cx)),
+                    )
+                    .into_any_element(),
+            );
+        }
+    };
+    Some(
+        div()
+            .max_w(px(360.))
+            .text_xs()
+            .text_right()
+            .text_color(color)
+            .child(text)
+            .into_any_element(),
+    )
 }
 
 fn theme_dropdown(cx: &App) -> AnyElement {
@@ -1143,16 +1200,31 @@ impl Render for SettingsView {
         };
         let import_view = view.clone();
         let editor_view = view.clone();
-        let general = SettingGroup::new()
+        let mut general = SettingGroup::new()
             .title(s.general.clone())
             .item(SettingItem::new(
                 s.language.clone(),
                 SettingField::render(|_, _, cx| language_dropdown(cx)),
-            ))
-            .item(SettingItem::new(
-                s.version.clone(),
-                SettingField::render(|_, _, cx| version_field(cx)),
             ));
+        if updater::is_supported() {
+            general = general.item(
+                SettingItem::new(
+                    s.automatic_updates.clone(),
+                    SettingField::switch(
+                        |cx| settings(cx).auto_update,
+                        |value, cx| {
+                            update_settings(cx, |s| s.auto_update = value);
+                            updater::set_enabled(cx, value);
+                        },
+                    ),
+                )
+                .description(s.automatic_updates_desc.clone()),
+            );
+        }
+        let general = general.item(SettingItem::new(
+            s.version.clone(),
+            SettingField::render(|_, _, cx| version_field(cx)),
+        ));
         let appearance = SettingGroup::new()
             .title(s.appearance.clone())
             .item(

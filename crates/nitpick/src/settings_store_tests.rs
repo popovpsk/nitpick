@@ -12,6 +12,7 @@ fn settings_without_syntax_colors_still_load() {
     assert!(!settings.show_whole_file);
     assert_eq!(settings.wrap_lines, WrapLines::SplitOnly);
     assert!(settings.editor_command.is_empty());
+    assert!(settings.auto_update);
 }
 
 #[test]

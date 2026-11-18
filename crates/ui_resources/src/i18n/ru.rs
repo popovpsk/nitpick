@@ -2,6 +2,9 @@ use crate::i18n::Strings;
 use crate::lang;
 
 pub static RU: Strings = lang! {
+    automatic_updates: "Автоматические обновления",
+    automatic_updates_desc: "Проверять и скачивать обновления в фоне",
+    checking_for_updates: "Проверка обновлений…",
     check_for_updates: "Проверить обновления...",
     hide_app: "Скрыть Nitpick",
     hide_others: "Скрыть остальные",
@@ -294,6 +297,7 @@ pub static RU: Strings = lang! {
     blame_uncommitted: "Ещё не закоммичено",
     blame_failed: "Не удалось получить blame",
     just_now: "только что",
+    downloading_update_t: "Скачивается Nitpick {}…",
     update_ready_t: "Nitpick {} готов к установке",
     update_check_failed_t: "Не удалось проверить обновления: {}",
     settings_save_failed_t: "Не удалось сохранить настройки: {}",

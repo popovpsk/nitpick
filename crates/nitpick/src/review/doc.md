@@ -77,7 +77,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   edit replaces the open one; a reload that no longer has the edited note drops the editor.
 - `comment_list.rs` — the comments sheet (titled Comments; its body is the `CommentsSheet`
   view, embedded `.cached()` and redrawn when the review notifies, since the sheet builder
-  runs on every window frame) with a Description tab first when
+  runs on every window frame; when focus is lost inside it (a posted reply's input removed,
+  the sort menu closing without restoring focus) it refocuses the closest focusable ancestor
+  still drawn, if that is inside the body, since the sheet's close button dispatches `Cancel`
+  from the focused element and with nothing focused it does nothing; a dialog closing over
+  the sheet is not inside the body, so its deliberate blur is left alone) with a Description tab first when
   the request has one (its markdown body, `ReviewView::description`) and two more: On code (every
   discussion with a file position, outdated ones included, as full cards: open threads first,
   then resolved, each section in the chosen order, the file named whenever it changes from

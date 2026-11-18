@@ -34,8 +34,24 @@ struct StatusToast;
 enum Status {
     Idle,
     Checking,
-    Downloading,
-    Ready,
+    Downloading(Version),
+    Ready(Version),
+}
+
+enum Checked {
+    UpToDate,
+    NotInstallable,
+    Staged(Version, Staged),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    Downloading(SharedString),
+    Ready(SharedString),
+    UpToDate,
+    Failed(SharedString),
 }
 
 pub struct AutoUpdater {
@@ -47,6 +63,7 @@ pub struct AutoUpdater {
     enabled: bool,
     apply_on_quit: bool,
     ready_note: Option<SharedString>,
+    outcome: Option<UpdateState>,
 }
 
 struct GlobalUpdater(Entity<AutoUpdater>);
@@ -85,6 +102,7 @@ pub fn init(cx: &mut App, current_version: &str, enabled: bool) {
         enabled,
         apply_on_quit: false,
         ready_note: None,
+        outcome: None,
     });
     cx.set_global(GlobalUpdater(updater.clone()));
 
@@ -198,6 +216,15 @@ impl AutoUpdater {
         self.ready_note.as_ref()
     }
 
+    pub fn state(&self) -> UpdateState {
+        match &self.status {
+            Status::Checking => UpdateState::Checking,
+            Status::Downloading(version) => UpdateState::Downloading(version.to_string().into()),
+            Status::Ready(version) => UpdateState::Ready(version.to_string().into()),
+            Status::Idle => self.outcome.clone().unwrap_or(UpdateState::Idle),
+        }
+    }
+
     fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.enabled = enabled;
         if enabled {
@@ -225,7 +252,7 @@ impl AutoUpdater {
         if self.in_flight {
             return;
         }
-        if let Status::Ready = &self.status {
+        if let Status::Ready(_) = &self.status {
             if manual && let Some(note) = self.ready_note.clone() {
                 toast(cx, note, NotificationType::Info);
             }
@@ -234,6 +261,7 @@ impl AutoUpdater {
 
         self.in_flight = true;
         self.status = Status::Checking;
+        self.outcome = None;
         cx.notify();
         let current = self.current_version.clone();
 
@@ -245,14 +273,14 @@ impl AutoUpdater {
             })
             .ok();
             match outcome {
-                Ok(Some((version, staged))) => {
+                Ok(Checked::Staged(version, staged)) => {
                     let note = SharedString::from(
                         ui_resources::i18n::strings().update_ready(&version.to_string()),
                     );
                     let toast_note = note.clone();
                     this.update(cx, move |this, cx| {
                         this.staged = Some(Arc::new(staged));
-                        this.status = Status::Ready;
+                        this.status = Status::Ready(version);
                         this.ready_note = Some(note);
                         cx.notify();
                     })
@@ -261,9 +289,17 @@ impl AutoUpdater {
                         cx.update(|cx| toast(cx, toast_note, NotificationType::Info));
                     }
                 }
-                Ok(None) => {
+                Ok(Checked::NotInstallable) => {
                     this.update(cx, |this, cx| {
                         this.status = Status::Idle;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Ok(Checked::UpToDate) => {
+                    this.update(cx, |this, cx| {
+                        this.status = Status::Idle;
+                        this.outcome = Some(UpdateState::UpToDate);
                         cx.notify();
                     })
                     .ok();
@@ -278,21 +314,17 @@ impl AutoUpdater {
                     }
                 }
                 Err(error) => {
-                    this.update(cx, |this, cx| {
+                    let failed = SharedString::from(error.to_string());
+                    let message = ui_resources::i18n::strings().update_check_failed(&failed);
+                    this.update(cx, move |this, cx| {
                         this.status = Status::Idle;
+                        this.outcome = Some(UpdateState::Failed(failed));
                         cx.notify();
                     })
                     .ok();
                     log::error!("updater: {error:#}");
                     if manual {
-                        cx.update(|cx| {
-                            toast(
-                                cx,
-                                ui_resources::i18n::strings()
-                                    .update_check_failed(&error.to_string()),
-                                NotificationType::Error,
-                            )
-                        });
+                        cx.update(|cx| toast(cx, message, NotificationType::Error));
                     }
                 }
             }
@@ -306,13 +338,13 @@ async fn check_and_stage(
     manual: bool,
     this: WeakEntity<AutoUpdater>,
     cx: &mut AsyncApp,
-) -> Result<Option<(Version, Staged)>> {
+) -> Result<Checked> {
     let Some(found) = net_runtime::spawn(github::fetch_latest()).await? else {
-        return Ok(None);
+        return Ok(Checked::UpToDate);
     };
 
     if !version::is_newer(&current, &found.version) {
-        return Ok(None);
+        return Ok(Checked::UpToDate);
     }
 
     let app_bundle = cx.update(|cx| cx.app_path().ok());
@@ -326,14 +358,19 @@ async fn check_and_stage(
             "{} is available, but this copy is not an installed app",
             found.version
         );
-        return Ok(None);
+        return Ok(Checked::NotInstallable);
     }
 
-    this.update(cx, |this, cx| {
-        this.status = Status::Downloading;
+    let version = found.version.clone();
+    this.update(cx, move |this, cx| {
+        this.status = Status::Downloading(version);
         cx.notify();
     })
     .ok();
+    if manual {
+        let note = ui_resources::i18n::strings().downloading_update(&found.version.to_string());
+        cx.update(|cx| toast(cx, note, NotificationType::Info));
+    }
 
     let staged = net_runtime::spawn(install::download_and_stage(
         found.url,
@@ -342,7 +379,7 @@ async fn check_and_stage(
     ))
     .await?;
 
-    Ok(Some((found.version, staged)))
+    Ok(Checked::Staged(found.version, staged))
 }
 
 fn toast(cx: &mut App, message: impl Into<SharedString>, kind: NotificationType) {

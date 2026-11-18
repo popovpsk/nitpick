@@ -112,6 +112,8 @@ pub struct Settings {
     #[serde(default)]
     pub auto_mark_viewed: bool,
     #[serde(default = "default_true")]
+    pub auto_update: bool,
+    #[serde(default = "default_true")]
     pub collapse_viewed_folders: bool,
     #[serde(default = "default_true")]
     pub tree_comments: bool,
@@ -206,6 +208,7 @@ impl Default for Settings {
             ignore_whitespace: false,
             advance_on_viewed: true,
             auto_mark_viewed: false,
+            auto_update: true,
             collapse_viewed_folders: true,
             tree_comments: true,
             strike_viewed: false,

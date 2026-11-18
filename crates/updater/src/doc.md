@@ -6,14 +6,15 @@ OS and arch, stages it, applies it on the user's click or, on Windows, at quit. 
 `AutoUpdater` entity, polling, toasts and install live here; `nitpick` only calls in.
 
 Not here: the app-menu item (`nitpick`: `app_menu.rs`, gated on `is_supported()`); toast
-strings (`ui_resources/src/doc.md`, read at toast time — this crate's only use of it). There is
-no Settings switch yet: `nitpick` calls `init` with auto-update on.
+strings (`ui_resources/src/doc.md`, read at toast time — this crate's only use of it); the
+"Automatic updates" switch (`nitpick`'s `auto_update` setting, passed to `init` and
+`set_enabled`).
 
 ## Files
 
 - `lib.rs` — public API (`init`, `check_now`, `set_enabled`, `apply_and_restart`, `handle`,
-  `is_supported`, the `CheckForUpdates` action, `ToastWindow`), `AutoUpdater` with its
-  `Status` and poll loop (`POLL_INTERVAL`, 6 h), the toasts.
+  `is_supported`, the `CheckForUpdates` action, `ToastWindow`, `AutoUpdater::state` →
+  `UpdateState` for a status line), `AutoUpdater` with its `Status` and poll loop (`POLL_INTERVAL`, 6 h), the toasts.
 - `github.rs` — `fetch_latest`: `releases/latest`, per-OS asset choice, the asset's `digest`;
   a 404 (no published release yet) is "no update", not an error. `client()`: the crate's
   reqwest client.
@@ -29,13 +30,19 @@ no Settings switch yet: `nitpick` calls `init` with auto-update on.
   `rsync`) go through `net_runtime::unblock`, never on a runtime worker. Redirects are not
   host-restricted: release assets redirect from `github.com` to a CDN host, and no secret is
   sent. The API request times out after 30 s.
-- `check_now` works with auto-update off and, unlike automatic polls, toasts "up to date" and
-  errors. Once `Ready`, polls do nothing; a manual check re-shows the toast.
+- `check_now` works with auto-update off and, unlike automatic polls, toasts "up to date",
+  errors and the start of a download (which can take a while before "ready"). Once `Ready`,
+  polls do nothing; a manual check re-shows the toast. `state()` is the status while a check
+  or download runs, else the last check's outcome (up to date or the error, from any poll),
+  cleared when the next check starts; a newer release this copy cannot install leaves no
+  outcome on an automatic poll, so nothing claims "up to date". It carries versions and the
+  raw error, translated where shown, so a language switch reaches the status line.
 - Toasts go to the window the app's `ToastWindow` global picks, or to the active window when
   it sets none (`nitpick` sets none).
 - A staged update shows no toast: `ready_note` ("Nitpick X is ready to install") turns on the
   app's "Restart to Update" title-bar button, whose click is the apply (`apply_and_restart`),
-  as in Zed. A manual check toasts the note once, since Settings has no title bar.
+  as in Zed. A manual check toasts the note once, since it may run from the app menu with
+  no window showing the button.
 - Apply: macOS replaced the bundle during the download, so apply is `install::relaunch` then
   `cx.quit()`. Linux likewise replaced the AppImage: apply sets the restart path to
   `$APPIMAGE` and calls `cx.restart()`. Windows: `apply_and_restart` only sets `apply_on_quit`
