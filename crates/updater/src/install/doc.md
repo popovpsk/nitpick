@@ -46,8 +46,8 @@ Not here: when to check, which asset, toasts (`../doc.md`); the feature-off stan
   (`-600 procNotFound`); the gap grows under load. Waiting on the LaunchServices view is what
   Sparkle does.
 - Not `open -n`: `crates/nitpick/Info.plist` sets `LSMultipleInstancesProhibited` (macOS's
-  single-instance guard; `single_instance.rs` is compiled out there), and with it
-  LaunchServices ignores `-n` and picks the stale instance.
+  single-instance guard), and with it LaunchServices ignores `-n` and picks the stale
+  instance.
 
 ## Windows
 

@@ -30,14 +30,15 @@ openssl req -x509 -newkey rsa:2048 -keyout "$KEY" -out "$CERT" -days 3650 -nodes
   -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=critical,codeSigning"
 
-openssl pkcs12 -export -inkey "$KEY" -in "$CERT" -out "$P12" -name "$IDENTITY" -passout pass:"$PASSWORD"
+P12_PASSWORD="$PASSWORD" openssl pkcs12 -export -inkey "$KEY" -in "$CERT" -out "$P12" -name "$IDENTITY" -passout env:P12_PASSWORD
+rm -f "$KEY"
 base64 -i "$P12" | tr -d '\n' > "$B64"
 
-security import "$P12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PASSWORD" -T /usr/bin/codesign -A
+security import "$P12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PASSWORD" -T /usr/bin/codesign
 
 echo
 echo "Created self-signed code-signing identity: \"$IDENTITY\""
-echo "  key/cert/p12: $OUT  (keep private, never commit)"
+echo "  cert/p12: $OUT  (keep private, never commit; the private key is only inside the password-protected p12)"
 echo "  imported into your login keychain (local signing works now)"
 echo
 echo "GitHub secrets to set:"

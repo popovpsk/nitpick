@@ -13,7 +13,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 ## Files
 
 - `main.rs` — `main`, `build_window_options` (with the macOS `tabbing_identifier`),
-  `open_window`, restoring the windows open at the last quit, app-level action handlers. An
+  `open_window`, restoring the windows open at the last quit, app-level action handlers;
+  at startup it makes the data and config folders owner-only (`restrict_to_owner`), since
+  the log, `nitpick.db` and imported themes inside are created with the default mode. An
   app-level handler that touches a window defers the work: gpui runs it while the window that
   dispatched the action is still borrowed, so updating that window directly fails.
 - `db.rs` — the `app_db::Db` global (`init`: `nitpick.db` in the data folder, an in-memory
@@ -21,7 +23,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).
 - `settings_store.rs` — `Settings` (serde, `settings.json` in the config dir, the GitLab and
   GitHub tokens sealed by `secret_store`; `forge_url` (normalised by `ForgeKind::web_url`: an empty GitHub URL is github.com),
-  `forge_configured`, `forge_hosts`, `forge_client`), the `SettingsStore` global, `update_settings`,
+  `forge_configured`, `forge_hosts`, `forge_client`), `app_dir`, `restrict_to_owner` (mode 0700 on
+  Unix, a no-op elsewhere), the `SettingsStore` global, `update_settings`,
   `apply_theme` (the System choice follows the OS with One Light / One Dark, falling back to
   gpui-component's defaults until the bundled themes are registered); syntax colors: `SyntaxPalettes`, `apply_syntax_colors` and the `Theme`
   observer that keeps it applied, hover previews, `syntax_palette_names`; hidden-file

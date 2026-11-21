@@ -1,3 +1,4 @@
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -282,23 +283,43 @@ fn load(
     }
     let bytes = match source {
         Source::Blob(id) => repo.blob(id)?,
-        Source::Disk(path) => std::fs::read(path)?,
+        Source::Disk(path) => read_regular_file(path, MAX_PREVIEW_BYTES)?,
     };
     let length = bytes.len() as u64;
-    if format != ImageFormat::Svg {
+    if length > MAX_PREVIEW_BYTES {
+        return Ok(Loaded::TooLarge(length));
+    }
+    let bytes = if format == ImageFormat::Svg {
+        review_core::check_svg(bytes, MAX_PREVIEW_BYTES)?
+    } else {
         let (width, height) = image::ImageReader::new(std::io::Cursor::new(&bytes))
             .with_guessed_format()?
             .into_dimensions()?;
         if u64::from(width) * u64::from(height) > MAX_PREVIEW_PIXELS {
             return Ok(Loaded::TooLarge(length));
         }
-    }
+        bytes
+    };
     let (format, bytes) = match format {
         ImageFormat::Gif | ImageFormat::Webp => (ImageFormat::Png, first_frame_png(&bytes)?),
         _ => (format, bytes),
     };
     let image = Image::from_bytes(format, bytes).to_image_data(svg)?;
     Ok(Loaded::Image(image, length))
+}
+
+pub(super) fn read_regular_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::other(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 pub(super) fn first_frame_png(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -398,3 +419,7 @@ fn render_side(side: &PreviewSide, cx: &App) -> AnyElement {
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+#[path = "image_preview_tests.rs"]
+mod tests;

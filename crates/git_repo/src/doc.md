@@ -64,7 +64,10 @@ Not here: patch parsing into hunks and the file tree (`review_core`), GitLab / G
 - Blob ids are full length; the absent side of an add or delete is all zeros. Additions and
   deletions are `None` for binary files. `path` is the new path (the old one for a delete);
   `old_path` is set only for renames and copies.
-- Work-tree diffs stay read-only: nothing is staged and no object is written. Untracked
+- Work-tree diffs stay read-only: nothing is staged and no object is written. `git diff`
+  still refreshes the index's stat cache (as `git status` does) and must: with
+  `diff.autoRefreshIndex=false` a file whose stat alone changed comes back from `--raw` as
+  modified, without numstat, and is hashed again on every reload. Untracked
   files (`ls-files --others --exclude-standard`) are appended as new-file patches built here,
   in git's format (C-quoted paths, `\ No newline at end of file`, `Binary files … differ` for
   NUL bytes or files over 16 MB); the on-disk blob ids come from `hash-object` without `-w`,

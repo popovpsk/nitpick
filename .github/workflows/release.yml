@@ -20,6 +20,16 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Check the version input
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ] && ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z or empty, got '$VERSION'"
+            exit 1
+          fi
+
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install Linux build dependencies
@@ -72,8 +82,9 @@ jobs:
 
       - name: Stamp release version
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             PY=python3
             command -v "$PY" >/dev/null 2>&1 || PY=python
@@ -113,7 +124,8 @@ jobs:
       - name: Install cargo-packager
         uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
-          tool: cargo-packager
+          tool: cargo-packager@0.11.8
+          fallback: cargo-install
 
       - name: Build release binary
         run: cargo build --release -p nitpick
@@ -173,6 +185,11 @@ jobs:
         shell: bash
         run: |
           arch="$(uname -m)"
+          case "$arch" in
+            x86_64) sha=f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f ;;
+            aarch64) sha=072f17c0895a85c490282fe5395c5007e5fc75da727e553b3b8fb680feb11578 ;;
+            *) echo "::error::no pinned AppRun checksum for $arch"; exit 1 ;;
+          esac
           dir="${XDG_CACHE_HOME:-$HOME/.cache}/.cargo-packager/AppImage"
           dest="$dir/AppRun-${arch}"
           url="https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-${arch}"
@@ -180,14 +197,15 @@ jobs:
           rm -f "$dest"
           curl -fSL --retry 5 --retry-all-errors --retry-delay 5 -o "$dest" "$url"
           test -s "$dest"
+          echo "$sha  $dest" | sha256sum -c -
           chmod 755 "$dest"
           ls -l "$dest"
 
       - name: Package
         working-directory: crates/nitpick
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           LDAI_UPDATE_INFORMATION: ${{ matrix.update_info }}
         run: cargo packager --release --formats ${{ matrix.formats }} --verbose
 
@@ -291,8 +309,9 @@ jobs:
 
       - name: Stamp release version
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             PY=python3
             command -v "$PY" >/dev/null 2>&1 || PY=python

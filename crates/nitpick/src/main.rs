@@ -93,6 +93,8 @@ fn main() {
             log_dir: data_dir.join("logs"),
             ..Default::default()
         });
+        settings_store::restrict_to_owner(&data_dir);
+        settings_store::restrict_to_owner(&settings_store::app_dir(dirs::config_dir()));
 
         gpui_component::init(cx);
         cx.set_global(settings_store::SettingsStore::load());

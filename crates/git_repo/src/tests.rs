@@ -1237,6 +1237,33 @@ fn working_tree_changes_cover_staged_unstaged_and_untracked_files() {
 }
 
 #[test]
+fn working_tree_changes_skip_files_whose_stat_alone_changed() {
+    let fixture = Fixture::new();
+    let path = fixture.init("repo");
+    let head = fixture.commit(
+        &path,
+        &[("same.txt", "same\n"), ("edited.txt", "a\n")],
+        "initial",
+    );
+    fixture.write(&path, "edited.txt", "b\n");
+    let an_hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(path.join("same.txt"))
+        .unwrap()
+        .set_modified(an_hour_ago)
+        .unwrap();
+    let repo = Repo::open(&path).unwrap();
+
+    let files = repo
+        .working_tree_changes(&head, &DiffOptions::default())
+        .unwrap();
+
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["edited.txt"]);
+}
+
+#[test]
 fn working_tree_diff_appends_untracked_files_as_new_files() {
     let fixture = Fixture::new();
     let path = fixture.init("repo");

@@ -16,6 +16,7 @@ use gpui_component::{
 };
 use review_core::{LineKind, LineMap, Side};
 
+use super::image_preview::read_regular_file;
 use super::since_viewed::is_blob;
 use super::{FindInFile, ReviewSource, ReviewView};
 use crate::localization::tr;
@@ -35,7 +36,9 @@ impl TextSource {
         let bytes = match self {
             TextSource::None => return Vec::new(),
             TextSource::Blob(id) => repo.blob(id).map_err(|err| err.to_string()),
-            TextSource::Disk(path) => std::fs::read(path).map_err(|err| err.to_string()),
+            TextSource::Disk(path) => {
+                read_regular_file(path, TEXT_LIMIT as u64).map_err(|err| err.to_string())
+            }
         };
         match bytes {
             Ok(bytes) if bytes.len() <= TEXT_LIMIT => String::from_utf8_lossy(&bytes)

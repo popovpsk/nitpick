@@ -316,6 +316,20 @@ pub fn app_dir(base: Option<PathBuf>) -> PathBuf {
     base.unwrap_or_else(|| PathBuf::from(".")).join("nitpick")
 }
 
+pub fn restrict_to_owner(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let restricted = std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)));
+        if let Err(err) = restricted {
+            log::warn!("{}: cannot make it owner-only: {err}", dir.display());
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
 impl SettingsStore {
     pub fn load() -> Self {
         let config = app_dir(dirs::config_dir());

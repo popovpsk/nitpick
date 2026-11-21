@@ -3,7 +3,8 @@
 The review model the UI draws: the changed-file tree with folder compression and viewed
 roll-up, the per-repository store of "viewed" marks, the map from a diff line to the
 old/new line pair GitLab positions need, where blame chips go, the fuzzy matcher every
-picker filters with, and the syntax language of paths the diff component does not recognise. GPUI-free and git-free;
+picker filters with, the syntax language of paths the diff component does not recognise,
+and the check an SVG passes before the image preview renders it. GPUI-free and git-free;
 only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab or GitHub (`forge`),
@@ -55,6 +56,9 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   expanded, and failed sub-matches are memoized so `*` runs never backtrack exponentially); a rooted
   path (a drive-like first component on Windows) never matches instead of panicking.
 - `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
+- `svg.rs` — `check_svg(data, max_len)`: the SVG text the image preview may hand to gpui's
+  renderer (svgz unpacked), or the `SvgError` that refuses it.
+- `svg_tests.rs` — accepted and refused references, entity tricks, svgz limits.
 - `timestamp.rs` — `parse_timestamp`: an RFC 3339 / ISO 8601 date-time (`Z` or a `±HH:MM`
   offset, fractional seconds ignored) to Unix seconds, for "updated 3 h ago".
 - `timestamp_tests.rs` — the formats GitLab and GitHub send, offsets, leap day, refusals.
@@ -115,6 +119,18 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - `rank`: an item matches on its label, or on its detail when it has one; a label match
   gets a fixed bonus so a name beats a path, and the better of the two is kept. Ties go to
   the shorter label, then to the given order, so an empty query keeps the caller's order.
+
+- `check_svg` mirrors what usvg 0.46 (gpui's renderer, default options) would open, so
+  nothing it lets through can make usvg read a file. svgz (gzip magic) is unpacked here,
+  capped at `max_len`, and passed on unpacked, so usvg never unpacks it; a second gzip
+  layer is not UTF-8 and is refused. The text is parsed with roxmltree 0.21 and
+  `allow_dtd`, as usvg parses it, so hrefs and elements built by entities are seen. Every
+  `href` (any namespace) of an `image` or `feImage` must be a data URL, parsed with usvg's
+  `data-url` crate, whose type is neither `image/svg+xml` nor `text/plain` (both parse as
+  a nested SVG, whose svgz usvg unpacks without a limit). An `feImage` `#id` is refused
+  too: when usvg does not keep the target (a `<title>`, a foreign element) it reads `#id`
+  as a file path relative to the working directory. usvg reads files through those two
+  elements only: re-check that when gpui moves to another usvg.
 
 ## Decisions
 

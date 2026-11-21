@@ -145,6 +145,12 @@ wraps `gitlab` and `github`; nothing here names those crates).
   for a binary image, their off-thread loading and decoding, and their rendering. A GIF or
   WebP is shown as its first frame (`first_frame_png`): gpui keeps every frame as a
   full-size buffer, so a small file of many frames would otherwise exhaust memory.
+  `read_regular_file` (also used by `find_bar.rs`) reads a work-tree file only when it
+  resolves to a regular file, and at most the caller's limit plus one byte: a symlink to
+  `/dev/zero` or a FIFO in the work tree would otherwise never finish or never return.
+- `image_preview_tests.rs` — `load` on a throwaway repository with gpui's real (CPU)
+  `SvgRenderer`: a plain SVG still renders, one naming a local file is refused, a work-tree
+  folder is never read.
 
 ## Spec
 
@@ -490,7 +496,12 @@ wraps `gitlab` and `github`; nothing here names those crates).
   size under it. A side is read with `Repo::blob` (the work-tree review reads its new side
   from disk, since `hash-object` there writes no object); over `MAX_PREVIEW_BYTES` (20 MB,
   checked with `blob_size` or the file's metadata before reading) it says too large, and a
-  read or decode failure says so in the pane and logs a warning. Reading and decoding run
+  read or decode failure says so in the pane and logs a warning. An SVG goes through
+  `review_core::check_svg` before gpui renders it: gpui's renderer uses usvg's default
+  options, which read any file path an `<image>` or `<feImage>` names (`/dev/zero`, a UNC
+  share on Windows) and unpack svgz without a limit, so an SVG in someone's merge request
+  could hang the app or leak the user's Windows credentials; refused, it shows the failure
+  text. Reading and decoding run
   on the background executor, one task per side; the state is built when `show_file` puts a
   new file in and when a side lands, keyed by path + fingerprint (an unchanged reload keeps
   it) and a generation, so a result for a file the user has left is dropped. Only the shown
