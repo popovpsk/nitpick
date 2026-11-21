@@ -42,6 +42,9 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   As a safety net, a render that finds nothing focused at all (no dialog or sheet open,
   the window active) focuses the current screen on the next frame. A focused element that
   is merely scrolled out of a virtualized list (a comment being typed) keeps its focus.
+- A repository that fails to open (a folder that no longer exists) reports it through a
+  deferred notification: `Workspace::new` runs inside `open_window` before the window has its
+  `Root`, which holds the notification layer, so an immediate push panics.
 - In fullscreen the title bar drops gpui-component's 80px macOS traffic-light inset (the
   lights are hidden there), so the repository picker starts at the edge.
 - Repository picker: a fuzzy `Picker` over every known repository (name, then the path with

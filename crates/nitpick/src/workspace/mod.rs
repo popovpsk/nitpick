@@ -191,10 +191,11 @@ impl Workspace {
             Ok(repo) => repo,
             Err(err) => {
                 log::warn!("open {}: {err}", path.display());
-                window.push_notification(
-                    Notification::error(err.to_string()).title(tr().open_repo_failed.clone()),
-                    cx,
-                );
+                let notification =
+                    Notification::error(err.to_string()).title(tr().open_repo_failed.clone());
+                cx.defer_in(window, move |_, window, cx| {
+                    window.push_notification(notification, cx);
+                });
                 return;
             }
         };

@@ -186,9 +186,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 
 - The default theme (System) is Zed's One Light / One Dark.
 
-- gpui-component and gpui-kit-assets come from `longbridge/gpui-kit` at a pinned commit of
-  `main`, not crates.io: `Diff::split_ratio` (the movable split) is not in a release yet.
-  Move back to a crates.io version once one includes it; nothing is forked or patched.
+- gpui-component and gpui-kit-assets are crates.io releases; nothing is forked or patched.
 - No Flatpak build.
 
 - One repository per window; switching repositories happens in the title bar, a new
