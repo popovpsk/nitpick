@@ -63,6 +63,10 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   the title bar's.
 - The review button shows only the review's title; viewed progress lives in the review
   header.
+- Title bar and window-tab text follow Zed's `LabelSize::Small`: `text_xs`, the review
+  button and inactive tabs in `muted_foreground`, the active tab in `foreground`. Title bar
+  buttons get their text as a child (`title_label`) with an explicit `accessibility_label`,
+  because `Button` fixes a `.label()`'s size from the button size.
 - Leaving the start or review screen closes its pickers: a popover's state lives in element
   state, which a hidden screen loses, so a picker left open would pop up again on return.
 - Window tabs: gpui hides AppKit's own tab bar, so the strip is drawn here from

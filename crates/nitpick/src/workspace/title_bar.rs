@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Context, IntoElement, ParentElement as _, SharedString, Styled as _,
+    AnyElement, App, Context, Div, IntoElement, ParentElement as _, SharedString, Styled as _,
     WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
@@ -28,7 +28,8 @@ impl Workspace {
             .ghost()
             .small()
             .icon(Icon::new(Icons::FolderGit2))
-            .label(repo_label)
+            .accessibility_label(repo_label.clone())
+            .child(title_label(repo_label))
             .dropdown_caret(true)
             .tooltip(s.switch_repository_tooltip.clone());
         let repo_picker = self
@@ -36,6 +37,7 @@ impl Workspace {
             .read(cx)
             .popover("repo-picker-popover", repo_button, cx);
 
+        let muted = cx.theme().muted_foreground;
         let review_button = self.repo.as_ref().map(|_| {
             let (label, icon) = match &self.review {
                 Some(review) => {
@@ -53,7 +55,8 @@ impl Workspace {
                 .ghost()
                 .small()
                 .icon(Icon::new(icon))
-                .label(label)
+                .accessibility_label(label.clone())
+                .child(title_label(label).text_color(muted))
                 .tooltip_with_action(
                     s.choose_review_tooltip.clone(),
                     &NewReview,
@@ -80,8 +83,13 @@ impl Workspace {
                     .items_center()
                     .child(repo_picker)
                     .when_some(review_button, |el, button| {
-                        el.child(div().text_color(theme.muted_foreground).child("/"))
-                            .child(div().min_w_0().overflow_hidden().child(button))
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("/"),
+                        )
+                        .child(div().min_w_0().overflow_hidden().child(button))
                     }),
             )
             .child(
@@ -94,7 +102,8 @@ impl Workspace {
                             Button::new("restart-to-update")
                                 .small()
                                 .primary()
-                                .label(s.restart_to_update.clone())
+                                .accessibility_label(s.restart_to_update.clone())
+                                .child(title_label(s.restart_to_update.clone()))
                                 .tooltip(note)
                                 .on_click(|_, _, cx| updater::apply_and_restart(cx)),
                         )
@@ -115,6 +124,15 @@ impl Workspace {
                     ),
             )
     }
+}
+
+fn title_label(text: SharedString) -> Div {
+    div()
+        .min_w_0()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_xs()
+        .child(text)
 }
 
 pub(super) fn repo_picker_footer(

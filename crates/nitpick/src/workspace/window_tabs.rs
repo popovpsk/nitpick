@@ -32,16 +32,16 @@ impl Render for DraggedWindowTab {
             .w(self.width)
             .px_7()
             .justify_center()
-            .text_sm()
+            .text_xs()
             .bg(if self.active {
                 theme.tab_active
             } else {
                 theme.tab_bar
             })
             .text_color(if self.active {
-                theme.tab_active_foreground
+                theme.foreground
             } else {
-                theme.tab_foreground
+                theme.muted_foreground
             })
             .border_1()
             .border_color(theme.border)
@@ -100,16 +100,15 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                 .px_7()
                 .items_center()
                 .justify_center()
-                .text_sm()
+                .text_xs()
                 .cursor_pointer()
                 .border_r_1()
                 .border_color(theme.border)
                 .when(active, |el| {
-                    el.bg(theme.tab_active)
-                        .text_color(theme.tab_active_foreground)
+                    el.bg(theme.tab_active).text_color(theme.foreground)
                 })
                 .when(!active, |el| {
-                    el.text_color(theme.tab_foreground)
+                    el.text_color(theme.muted_foreground)
                         .hover(|s| s.bg(theme.list_hover))
                 })
                 .child(
