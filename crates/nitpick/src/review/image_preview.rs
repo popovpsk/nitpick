@@ -290,7 +290,7 @@ fn load(
         return Ok(Loaded::TooLarge(length));
     }
     let bytes = if format == ImageFormat::Svg {
-        review_core::check_svg(bytes, MAX_PREVIEW_BYTES)?
+        review_core::check_svg(bytes, MAX_PREVIEW_BYTES, MAX_PREVIEW_PIXELS)?
     } else {
         let (width, height) = image::ImageReader::new(std::io::Cursor::new(&bytes))
             .with_guessed_format()?

@@ -56,9 +56,10 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   expanded, and failed sub-matches are memoized so `*` runs never backtrack exponentially); a rooted
   path (a drive-like first component on Windows) never matches instead of panicking.
 - `hidden_tests.rs` — gitignore cases, re-include, bad patterns, suggestions.
-- `svg.rs` — `check_svg(data, max_len)`: the SVG text the image preview may hand to gpui's
-  renderer (svgz unpacked), or the `SvgError` that refuses it.
-- `svg_tests.rs` — accepted and refused references, entity tricks, svgz limits.
+- `svg.rs` — `check_svg(data, max_len, max_pixels)`: the SVG text the image preview may hand
+  to gpui's renderer (svgz unpacked), or the `SvgError` that refuses it.
+- `svg_tests.rs` — accepted and refused references, entity tricks, svgz limits, embedded
+  picture sizes.
 - `timestamp.rs` — `parse_timestamp`: an RFC 3339 / ISO 8601 date-time (`Z` or a `±HH:MM`
   offset, fractional seconds ignored) to Unix seconds, for "updated 3 h ago".
 - `timestamp_tests.rs` — the formats GitLab and GitHub send, offsets, leap day, refusals.
@@ -131,6 +132,11 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   too: when usvg does not keep the target (a `<title>`, a foreign element) it reads `#id`
   as a file path relative to the working directory. usvg reads files through those two
   elements only: re-check that when gpui moves to another usvg.
+- An embedded PNG, JPEG, GIF or WebP (the types usvg hands to resvg's decoders) whose
+  header gives more than `max_pixels` is refused: resvg decodes it at full size whatever
+  size it is drawn at, and zune-jpeg alone allows 16384² pixels. The size is read with
+  imagesize 0.14, as usvg reads it; a picture whose size it cannot read usvg skips before
+  decoding, so it passes.
 
 ## Decisions
 

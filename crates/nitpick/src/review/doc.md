@@ -500,8 +500,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   `review_core::check_svg` before gpui renders it: gpui's renderer uses usvg's default
   options, which read any file path an `<image>` or `<feImage>` names (`/dev/zero`, a UNC
   share on Windows) and unpack svgz without a limit, so an SVG in someone's merge request
-  could hang the app or leak the user's Windows credentials; refused, it shows the failure
-  text. Reading and decoding run
+  could hang the app or leak the user's Windows credentials. The same check caps pictures
+  embedded in the SVG at `MAX_PREVIEW_PIXELS`, as for a raster file; refused, it shows the
+  failure text. Reading and decoding run
   on the background executor, one task per side; the state is built when `show_file` puts a
   new file in and when a side lands, keyed by path + fingerprint (an unchanged reload keeps
   it) and a generation, so a result for a file the user has left is dropped. Only the shown

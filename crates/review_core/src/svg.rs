@@ -15,9 +15,11 @@ pub enum SvgError {
     Xml(#[from] roxmltree::Error),
     #[error("<{element}> refers to {href:?}, which is not embedded in the file")]
     ExternalReference { element: String, href: String },
+    #[error("an embedded picture is {width} × {height} pixels, more than the preview decodes")]
+    PictureTooLarge { width: usize, height: usize },
 }
 
-pub fn check_svg(data: Vec<u8>, max_len: u64) -> Result<Vec<u8>, SvgError> {
+pub fn check_svg(data: Vec<u8>, max_len: u64, max_pixels: u64) -> Result<Vec<u8>, SvgError> {
     let data = if data.starts_with(&GZIP_MAGIC) {
         gunzip(&data, max_len)?
     } else {
@@ -39,25 +41,37 @@ pub fn check_svg(data: Vec<u8>, max_len: u64) -> Result<Vec<u8>, SvgError> {
             .filter(|attribute| attribute.name() == "href")
             .map(|attribute| attribute.value())
         {
-            if !embedded_picture(href) {
-                return Err(SvgError::ExternalReference {
-                    element: element.to_string(),
-                    href: href.chars().take(SHOWN_HREF_CHARS).collect(),
-                });
-            }
+            check_href(element, href, max_pixels)?;
         }
     }
     Ok(data)
 }
 
-fn embedded_picture(href: &str) -> bool {
-    data_url::DataUrl::process(href).is_ok_and(|url| {
-        let mime = url.mime_type();
-        !matches!(
-            (mime.type_.as_str(), mime.subtype.as_str()),
-            ("image", "svg+xml") | ("text", "plain")
-        )
-    })
+fn check_href(element: &str, href: &str, max_pixels: u64) -> Result<(), SvgError> {
+    let external = || SvgError::ExternalReference {
+        element: element.to_string(),
+        href: href.chars().take(SHOWN_HREF_CHARS).collect(),
+    };
+    let url = data_url::DataUrl::process(href).map_err(|_| external())?;
+    let mime = url.mime_type();
+    match (mime.type_.as_str(), mime.subtype.as_str()) {
+        ("image", "svg+xml") | ("text", "plain") => Err(external()),
+        ("image", "png" | "jpeg" | "jpg" | "gif" | "webp") => {
+            let Ok((picture, _)) = url.decode_to_vec() else {
+                return Ok(());
+            };
+            match imagesize::blob_size(&picture) {
+                Ok(size) if (size.width as u64).saturating_mul(size.height as u64) > max_pixels => {
+                    Err(SvgError::PictureTooLarge {
+                        width: size.width,
+                        height: size.height,
+                    })
+                }
+                _ => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    }
 }
 
 fn gunzip(data: &[u8], max_len: u64) -> Result<Vec<u8>, SvgError> {

@@ -11,6 +11,7 @@ thiserror = "2"
 roxmltree = "0.21"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 data-url = "0.3"
+imagesize = "0.14"
 
 [dev-dependencies]
 rstest = "0.26"
