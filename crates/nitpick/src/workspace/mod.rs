@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use git_repo::Repo;
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Render,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Pixels, Render,
     SharedString, Styled as _, Subscription, WeakEntity, Window, actions, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, StyledExt as _, WindowExt as _,
+    ActiveTheme as _, IconName, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     notification::Notification,
@@ -41,6 +41,9 @@ actions!(
     ]
 );
 
+const WELCOME_LIST_WIDTH: Pixels = px(520.);
+const WELCOME_LIST_MAX_HEIGHT: Pixels = px(360.);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Start,
@@ -54,6 +57,7 @@ pub struct Workspace {
     start: Option<Entity<StartView>>,
     review: Option<Entity<ReviewView>>,
     repo_picker: Entity<Picker>,
+    welcome_picker: Entity<Picker>,
     repo_paths: Vec<PathBuf>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -64,34 +68,13 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(repo: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let footer = title_bar::repo_picker_footer(cx.entity().downgrade());
-        let repo_picker = cx.new(|cx| {
-            Picker::new(
-                Icons::FolderGit2,
-                || tr().search_repositories.clone(),
-                px(520.),
-                window,
-                cx,
-            )
-            .with_footer(footer)
-            .with_row_action(
-                Icons::ArrowUpRight,
-                || tr().open_in_new_window.clone(),
-                cx,
-            )
-        });
+        let repo_picker = cx.new(|cx| new_repo_picker(window, cx).with_footer(footer));
+        let welcome_picker = cx.new(|cx| new_repo_picker(window, cx));
         let picker_subscriptions = vec![
-            cx.subscribe_in(
-                &repo_picker,
-                window,
-                |this, _, event: &PickerEvent, window, cx| {
-                    if let PickerEvent::Confirm { entry, secondary } = event
-                        && let Some(path) = this.repo_paths.get(*entry).cloned()
-                    {
-                        this.open_path(path, *secondary, window, cx);
-                    }
-                },
-            ),
+            cx.subscribe_in(&repo_picker, window, Self::on_repo_picker_event),
+            cx.subscribe_in(&welcome_picker, window, Self::on_repo_picker_event),
             cx.observe(&repo_picker, |_, _, cx| cx.notify()),
+            cx.observe(&welcome_picker, |_, _, cx| cx.notify()),
             cx.observe_global_in::<RecentRepos>(window, |this, window, cx| {
                 this.refresh_repo_picker(window, cx)
             }),
@@ -103,6 +86,7 @@ impl Workspace {
             start: None,
             review: None,
             repo_picker,
+            welcome_picker,
             repo_paths: Vec::new(),
             focus: cx.focus_handle(),
             _subscriptions: Vec::new(),
@@ -114,6 +98,9 @@ impl Workspace {
             this.open_repo(&path, true, window, cx);
         }
         this.refresh_repo_picker(window, cx);
+        if this.repo.is_none() {
+            this.focus_screen(window, cx);
+        }
         this.update_title(window, cx);
         let entry = (cx.entity().downgrade(), window.window_handle());
         let open = &mut cx.default_global::<OpenWorkspaces>().0;
@@ -167,9 +154,27 @@ impl Workspace {
             })
             .collect();
         self.repo_paths = repos.iter().map(|r| r.path.clone()).collect();
+        let welcome_entries = entries.clone();
         self.repo_picker.update(cx, |picker, cx| {
             picker.set_entries(entries, checked, window, cx)
         });
+        self.welcome_picker.update(cx, |picker, cx| {
+            picker.set_entries(welcome_entries, None, window, cx)
+        });
+    }
+
+    fn on_repo_picker_event(
+        &mut self,
+        _: &Entity<Picker>,
+        event: &PickerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let PickerEvent::Confirm { entry, secondary } = event
+            && let Some(path) = self.repo_paths.get(*entry).cloned()
+        {
+            self.open_path(path, *secondary, window, cx);
+        }
     }
 
     fn close_repo_picker(&mut self, cx: &mut Context<Self>) {
@@ -350,6 +355,10 @@ impl Workspace {
             (Screen::Review, Some(review)) => {
                 review.update(cx, |review, cx| review.focus_main(window, cx))
             }
+            _ if self.repo.is_none() && !self.welcome_picker.read(cx).is_empty(cx) => {
+                let focus = self.welcome_picker.read(cx).focus_handle(cx);
+                window.focus(&focus, cx)
+            }
             _ => window.focus(&self.focus, cx),
         }
     }
@@ -459,31 +468,18 @@ impl Workspace {
     fn render_welcome(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = tr();
         let theme = cx.theme();
-        let recents: Vec<PathBuf> = recent(cx)
-            .repos()
-            .iter()
-            .take(8)
-            .map(|r| r.path.clone())
-            .collect();
-        let mut list = v_flex().gap_1().w(px(420.));
-        for (ix, path) in recents.into_iter().enumerate() {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let display = path.display().to_string();
-            list = list.child(
-                Button::new(("welcome-recent", ix))
-                    .ghost()
-                    .w_full()
-                    .justify_start()
-                    .icon(Icon::new(Icons::FolderGit2))
-                    .label(format!("{name}    {display}"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_path(path.clone(), false, window, cx)
-                    })),
-            );
-        }
+        let picker = self.welcome_picker.read(cx);
+        let list = (!picker.is_empty(cx)).then(|| {
+            div()
+                .w(WELCOME_LIST_WIDTH)
+                .min_h_0()
+                .flex_shrink(1.)
+                .border_1()
+                .border_color(theme.border)
+                .rounded(theme.radius_lg)
+                .bg(theme.popover)
+                .child(picker.inline(WELCOME_LIST_MAX_HEIGHT))
+        });
         v_flex()
             .size_full()
             .items_center()
@@ -528,8 +524,19 @@ impl Workspace {
                             })),
                     ),
             )
-            .child(list)
+            .children(list)
     }
+}
+
+fn new_repo_picker(window: &mut Window, cx: &mut Context<Picker>) -> Picker {
+    Picker::new(
+        Icons::FolderGit2,
+        || tr().search_repositories.clone(),
+        px(520.),
+        window,
+        cx,
+    )
+    .with_row_action(Icons::ArrowUpRight, || tr().open_in_new_window.clone(), cx)
 }
 
 impl Focusable for Workspace {

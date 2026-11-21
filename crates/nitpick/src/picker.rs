@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use git_repo::Branch;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, Focusable as _,
-    HighlightStyle, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    ScrollStrategy, SharedString, Styled as _, StyledText, Subscription, Task, WeakEntity, Window,
-    div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable as _, HighlightStyle, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, ScrollStrategy, SharedString, Styled as _, StyledText, Subscription, Task, WeakEntity,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, IconName, IndexPath, Selectable, Sizable as _,
@@ -193,6 +193,18 @@ impl Picker {
             ListEvent::Cancel => self.close(cx),
             ListEvent::Select(_) => {}
         }
+    }
+
+    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.list.focus_handle(cx)
+    }
+
+    pub fn inline(&self, max_height: Pixels) -> List<PickerDelegate> {
+        List::new(&self.list)
+            .small()
+            .search_placeholder((self.placeholder)())
+            .max_h(max_height)
+            .p_1()
     }
 
     pub fn popover<T>(&self, id: impl Into<ElementId>, trigger: T, cx: &App) -> Popover

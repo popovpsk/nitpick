@@ -55,6 +55,11 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
   folder in this window when it has none, in a new window otherwise. Each switch records the
   repository in `recent.json` and the window in `window_registry`. The entries are rebuilt
   whenever `RecentRepos` changes (any window), not on open.
+- Welcome screen (no repository): every known repository in an inline fuzzy `Picker`
+  (search field, scrolling list capped at `WELCOME_LIST_MAX_HEIGHT`), focused so typing
+  filters at once; it confirms like the title bar's repository picker. It is a second
+  `Picker` with the same entries, not the title bar's: one list state rendered twice would
+  share its query and scroll.
 - "Add Repositories from Folder…" (welcome screen, picker footer, File menu): the folder is
   scanned with `git_repo::find_repositories` on the background executor, every new path is
   added to `recent.json` without opening it, and a notification gives the count.

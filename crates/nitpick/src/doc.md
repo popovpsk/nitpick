@@ -88,7 +88,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
 - `recent_tests.rs` — ordering, bulk add, and the stored format on a `TempDir`; a stored
   merge request without `forge` is GitLab, a GitHub one round-trips.
 - `picker.rs` — `Picker`: the fuzzy picker every repository, branch and commit chooser uses, a
-  `Popover` around gpui-component's searchable `List` with a `PickerDelegate`;
+  `Popover` around gpui-component's searchable `List` with a `PickerDelegate` (`inline` renders
+  the same list without the popover);
   `PickerEntry`, `branch_entries`, `PickerEvent` (`Open`, `Confirm { entry, secondary }`);
   `with_row_action` puts an icon button on the hovered and the selected row that confirms it
   as secondary, and drops the checkmark of the current entry.
