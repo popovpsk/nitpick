@@ -4,7 +4,7 @@ Runs the review assistant: starts an installed agent CLI (Claude Code, Codex, an
 Pi) as a child process in the repository, feeds it prompts and turns its output into one
 stream of `Event`s. It holds the shared machinery (process handling, line reading,
 JSON-RPC framing, the session and registry), the seam a harness driver plugs into and the
-drivers; only Claude Code has one so far, `Session::start` returns `Error::Unsupported` for the
+drivers; Claude Code and Codex have one, `Session::start` returns `Error::Unsupported` for the
 other `HarnessKind`s. GPUI-free.
 
 It also holds the texts the app sends: the system instructions, the tasks and the review brief
@@ -35,8 +35,11 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
   fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
 - `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
+- `codex/` — the Codex driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see
+  `codex/doc.md`. Written from documentation, not run against a real CLI.
 - `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
-  `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand.
+  `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand. The Codex
+  tests use synthetic transcripts written in the test code, not fixtures.
 - `tests/` — unit tests per module (`#[cfg(unix)]` for the ones that spawn `sh`).
 
 ## The driver seam

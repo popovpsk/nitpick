@@ -17,7 +17,6 @@ fn launch(kind: HarnessKind) -> Launch {
 }
 
 #[rstest]
-#[case::codex(HarnessKind::Codex)]
 #[case::pi(HarnessKind::Pi)]
 #[case::opencode(HarnessKind::Acp(AcpFlavor::OpenCode))]
 #[case::deepseek(HarnessKind::Acp(AcpFlavor::DeepSeek))]

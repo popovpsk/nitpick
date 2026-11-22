@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod brief;
 pub mod claude;
+pub mod codex;
 pub mod jsonrpc;
 pub mod lines;
 pub mod process;

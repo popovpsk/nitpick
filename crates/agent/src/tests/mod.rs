@@ -1,5 +1,6 @@
 mod brief;
 mod claude;
+mod codex;
 mod command;
 mod env;
 mod jsonrpc;

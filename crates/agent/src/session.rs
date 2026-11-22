@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::claude::ClaudeDriver;
+use crate::codex::CodexDriver;
 use crate::process::{Environment, Exit, Grace, Invocation, Pipes, Process};
 use crate::registry::Registry;
 use crate::{Error, Event, Failure, HarnessKind, Launch, Outcome};
@@ -68,7 +69,8 @@ pub trait Driver: Send + Sync + 'static {
 pub fn driver_for(kind: HarnessKind) -> Result<Arc<dyn Driver>, Error> {
     match kind {
         HarnessKind::Claude => Ok(Arc::new(ClaudeDriver::new())),
-        HarnessKind::Codex | HarnessKind::Acp(_) | HarnessKind::Pi => Err(Error::Unsupported),
+        HarnessKind::Codex => Ok(Arc::new(CodexDriver::new())),
+        HarnessKind::Acp(_) | HarnessKind::Pi => Err(Error::Unsupported),
     }
 }
 
