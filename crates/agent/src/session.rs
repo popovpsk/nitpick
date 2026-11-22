@@ -8,9 +8,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::claude::ClaudeDriver;
 use crate::process::{Environment, Exit, Grace, Invocation, Pipes, Process};
 use crate::registry::Registry;
-use crate::{Error, Event, HarnessKind, Launch};
+use crate::{Error, Event, Failure, HarnessKind, Launch, Outcome};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
 const DRIVER_DRAIN: Duration = Duration::from_secs(1);
@@ -55,6 +56,7 @@ pub struct Channels {
 pub struct Plan {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    pub refusal: Option<Failure>,
 }
 
 pub trait Driver: Send + Sync + 'static {
@@ -65,9 +67,8 @@ pub trait Driver: Send + Sync + 'static {
 
 pub fn driver_for(kind: HarnessKind) -> Result<Arc<dyn Driver>, Error> {
     match kind {
-        HarnessKind::Claude | HarnessKind::Codex | HarnessKind::Acp(_) | HarnessKind::Pi => {
-            Err(Error::Unsupported)
-        }
+        HarnessKind::Claude => Ok(Arc::new(ClaudeDriver::new())),
+        HarnessKind::Codex | HarnessKind::Acp(_) | HarnessKind::Pi => Err(Error::Unsupported),
     }
 }
 
@@ -175,6 +176,9 @@ pub fn start_in(
         std::fs::create_dir_all(&launch.scratch)?;
     }
     let plan = driver.plan(&launch)?;
+    if let Some(failure) = plan.refusal {
+        return Ok(refused(failure));
+    }
     let invocation =
         Invocation::resolve_in(&launch.command, plan.args, &plan.env, env, &launch.cwd)?;
     let (process, pipes) = Process::spawn(&invocation)?;
@@ -214,6 +218,26 @@ pub fn start_in(
         handle: Arc::new(Handle { control }),
     };
     Ok((session, events_receiver))
+}
+
+fn refused(failure: Failure) -> (Session, flume::Receiver<Event>) {
+    let (events_sender, events_receiver) = flume::unbounded();
+    let (commands_sender, _) = flume::unbounded();
+    let (_, finished_receiver) = watch::channel(true);
+    let control = Arc::new(Control {
+        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        shutting_down: AtomicBool::new(false),
+        commands: commands_sender,
+        finished: finished_receiver,
+        task: Mutex::new(None),
+    });
+    let message = failure.message.clone();
+    let _ = events_sender.send(Event::TurnFinished(Outcome::Failed(failure)));
+    let _ = events_sender.send(Event::Exited(Some(message)));
+    let session = Session {
+        handle: Arc::new(Handle { control }),
+    };
+    (session, events_receiver)
 }
 
 struct Finish {

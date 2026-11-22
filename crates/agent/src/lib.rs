@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+pub mod claude;
 pub mod jsonrpc;
 pub mod lines;
 pub mod process;

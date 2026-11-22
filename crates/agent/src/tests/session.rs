@@ -17,13 +17,12 @@ fn launch(kind: HarnessKind) -> Launch {
 }
 
 #[rstest]
-#[case::claude(HarnessKind::Claude)]
 #[case::codex(HarnessKind::Codex)]
 #[case::pi(HarnessKind::Pi)]
 #[case::opencode(HarnessKind::Acp(AcpFlavor::OpenCode))]
 #[case::deepseek(HarnessKind::Acp(AcpFlavor::DeepSeek))]
 #[case::generic(HarnessKind::Acp(AcpFlavor::Generic))]
-fn no_harness_has_a_driver_yet(#[case] kind: HarnessKind) {
+fn harnesses_without_a_driver_are_unsupported(#[case] kind: HarnessKind) {
     assert!(matches!(
         Session::start(launch(kind)),
         Err(Error::Unsupported)
@@ -61,6 +60,7 @@ mod unix {
             Ok(Plan {
                 args: self.args.clone(),
                 env: vec![("NITPICK_TEST".into(), "1".into())],
+                ..Plan::default()
             })
         }
 

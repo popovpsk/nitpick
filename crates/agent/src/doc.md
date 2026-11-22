@@ -2,14 +2,13 @@
 
 Runs the review assistant: starts an installed agent CLI (Claude Code, Codex, an ACP agent,
 Pi) as a child process in the repository, feeds it prompts and turns its output into one
-stream of `Event`s. This stage holds the shared machinery (process handling, line reading,
-JSON-RPC framing, the session and registry) and the seam a harness driver plugs into; no
-driver exists yet, so `Session::start` returns `Error::Unsupported` for every `HarnessKind`.
-GPUI-free.
+stream of `Event`s. It holds the shared machinery (process handling, line reading,
+JSON-RPC framing, the session and registry), the seam a harness driver plugs into and the
+drivers; only Claude Code has one so far, `Session::start` returns `Error::Unsupported` for the
+other `HarnessKind`s. GPUI-free.
 
 Not here: UI, settings and persistence (`nitpick`, `app_db`), the prompt and brief texts, the
-`diff:` link format (`review_core`), the per-harness wire formats (the drivers, when they
-land).
+`diff:` link format (`review_core`).
 
 ## Files
 
@@ -27,6 +26,9 @@ land).
 - `registry.rs` — `Registry` of live sessions and `shutdown_all`.
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
+- `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
+- `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
+  `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand.
 - `tests/` — unit tests per module (`#[cfg(unix)]` for the ones that spawn `sh`).
 
 ## The driver seam
@@ -37,8 +39,11 @@ session creates); `run(Launch, Transport, Channels)` is the whole conversation, 
 reads the harness's stdout and writes its stdin through the boxed `Transport` and returns when
 the session is over. `Channels` carries the `flume::Receiver<Command>` (prompt, interrupt,
 shutdown, in call order) and the `flume::Sender<Event>`. `driver_for` is the only place that
-maps a `HarnessKind` to a driver. Tests run a driver on `tokio::io::duplex` halves
-without a process; `start_in` takes a registry and an `Environment` so tests start real
+maps a `HarnessKind` to a driver. A `Plan` may carry a `refusal` (a `Failure`) instead of
+arguments: `start_in` then launches nothing and returns a session that has already ended, whose
+stream holds `TurnFinished(Failed(..))` and `Exited(Some(message))`, so a failure the app handles
+by `FailureKind` (a resume that cannot work: `SessionLost`) never needs a process. Tests run a
+driver on `tokio::io::duplex` halves without a process; `start_in` takes a registry and an `Environment` so tests start real
 sessions without the login shell.
 
 ## Spec
@@ -98,7 +103,8 @@ sessions without the login shell.
   signals through its `signal`.
 - Modules are `pub` so drivers and tests reach them; the app is expected to use only the
   contract in `lib.rs`.
-- `Error::Unsupported` is a unit variant.
+- `Error::Unsupported` is a unit variant; no variant was added for a lost session, the app's
+  contract for it is `FailureKind::SessionLost` on the event stream.
 - No `futures` crate: the shutdown futures join `JoinHandle`s and a `watch` channel.
 - Drivers sit on `AsyncRead` + `AsyncWrite`, not on `Child`, so recorded sessions replay over
   `duplex` the same on every OS.

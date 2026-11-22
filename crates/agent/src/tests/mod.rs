@@ -1,3 +1,4 @@
+mod claude;
 mod command;
 mod env;
 mod jsonrpc;
