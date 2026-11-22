@@ -6,6 +6,7 @@ mod command;
 mod env;
 mod jsonrpc;
 mod lines;
+mod pi;
 mod process;
 mod prompt;
 mod session;

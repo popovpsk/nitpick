@@ -4,8 +4,7 @@ Runs the review assistant: starts an installed agent CLI (Claude Code, Codex, an
 Pi) as a child process in the repository, feeds it prompts and turns its output into one
 stream of `Event`s. It holds the shared machinery (process handling, line reading,
 JSON-RPC framing, the session and registry), the seam a harness driver plugs into and the
-drivers; Claude Code, Codex and the ACP agents (OpenCode, DeepSeek, any other) have one,
-`Session::start` returns `Error::Unsupported` for the other `HarnessKind`s. GPUI-free.
+drivers: Claude Code, Codex, the ACP agents (OpenCode, DeepSeek, any other) and Pi. GPUI-free.
 
 It also holds the texts the app sends: the system instructions, the tasks and the review brief
 (`prompt`, `brief`).
@@ -39,9 +38,11 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
 - `codex/` — the Codex driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see
   `codex/doc.md`. Written from documentation, not run against a real CLI.
+- `pi/` — the Pi driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see `pi/doc.md`.
+  Written from documentation, not run against a real CLI.
 - `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
   `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand. The Codex
-  tests use synthetic transcripts written in the test code, not fixtures; the ACP tests replay
+  and Pi tests use synthetic transcripts written in the test code, not fixtures; the ACP tests replay
   the OpenCode recordings and add scripted peers.
 - `tests/` — unit tests per module (`#[cfg(unix)]` for the ones that spawn `sh`).
 
@@ -152,8 +153,9 @@ sessions without the login shell.
   signals through its `signal`.
 - Modules are `pub` so drivers and tests reach them; the app is expected to use only the
   contract in `lib.rs`.
-- `Error::Unsupported` is a unit variant; no variant was added for a lost session, the app's
-  contract for it is `FailureKind::SessionLost` on the event stream.
+- `Error::Unsupported` is a unit variant that no driver produces any more; it stays part of the
+  contract the app matches on. No variant was added for a lost session, the app's contract for it
+  is `FailureKind::SessionLost` on the event stream.
 - No `futures` crate: the shutdown futures join `JoinHandle`s and a `watch` channel.
 - Drivers sit on `AsyncRead` + `AsyncWrite`, not on `Child`, so recorded sessions replay over
   `duplex` the same on every OS.

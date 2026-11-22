@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod jsonrpc;
 pub mod lines;
+pub mod pi;
 pub mod process;
 pub mod prompt;
 pub mod registry;

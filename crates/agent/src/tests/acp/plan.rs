@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::acp::{AcpDriver, VersionProbe, probe_program_version};
 use crate::session::{Driver, driver_for};
-use crate::{AcpFlavor, Error, HarnessKind, Launch};
+use crate::{AcpFlavor, HarnessKind, Launch};
 
 fn launch(flavor: AcpFlavor, command: &str) -> Launch {
     Launch {
@@ -119,12 +119,4 @@ fn a_program_that_does_not_exist_has_no_version() {
 #[case::generic(AcpFlavor::Generic)]
 fn every_acp_flavor_has_a_driver(#[case] flavor: AcpFlavor) {
     assert!(driver_for(HarnessKind::Acp(flavor)).is_ok());
-}
-
-#[test]
-fn pi_still_has_none() {
-    assert!(matches!(
-        driver_for(HarnessKind::Pi),
-        Err(Error::Unsupported)
-    ));
 }

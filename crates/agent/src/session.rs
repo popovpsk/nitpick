@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use crate::acp::AcpDriver;
 use crate::claude::ClaudeDriver;
 use crate::codex::CodexDriver;
+use crate::pi::PiDriver;
 use crate::process::{Environment, Exit, Grace, Invocation, Pipes, Process};
 use crate::registry::Registry;
 use crate::{Error, Event, Failure, HarnessKind, Launch, Outcome};
@@ -72,7 +73,7 @@ pub fn driver_for(kind: HarnessKind) -> Result<Arc<dyn Driver>, Error> {
         HarnessKind::Claude => Ok(Arc::new(ClaudeDriver::new())),
         HarnessKind::Codex => Ok(Arc::new(CodexDriver::new())),
         HarnessKind::Acp(flavor) => Ok(Arc::new(AcpDriver::new(flavor))),
-        HarnessKind::Pi => Err(Error::Unsupported),
+        HarnessKind::Pi => Ok(Arc::new(PiDriver::new())),
     }
 }
 
