@@ -1,23 +1,39 @@
+mod context;
+mod logic;
+mod messages;
 mod panel;
+mod run;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use ::agent::Session;
 use ::agent::process::{Environment, Invocation};
-use gpui::{Context, EventEmitter, SharedString, Subscription, Task};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, Window,
+};
+use gpui_component::input::{InputEvent, TextareaState};
+use gpui_component::message_scroller::MessageScrollerState;
 
+use crate::agent_profiles::Profile;
 use crate::localization::tr;
 use crate::settings_store::{SettingsStore, clamp_agent_panel_width, settings, update_settings};
 
+pub(super) use context::{ReviewContext, from_view};
 pub(super) use panel::frame;
+pub(super) use run::init;
+
+use logic::{OverviewState, Request};
+use messages::Message;
 
 pub(super) const SLIDE: Duration = Duration::from_millis(200);
 const WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 static WIDTH_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Phase {
     Idle,
@@ -44,6 +60,31 @@ pub(super) enum AgentEvent {
     OpenSettings,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Activity {
+    Working,
+    Thinking,
+    Tool(SharedString),
+    Notice(SharedString),
+}
+
+struct Turn {
+    request: Request,
+    retried: bool,
+    head: String,
+    assistant: Option<u64>,
+    tools: Vec<(String, SharedString)>,
+    activity: Activity,
+}
+
+struct Live {
+    session: Session,
+    cwd: PathBuf,
+    scratch: PathBuf,
+    brief_sent: bool,
+    _pump: Task<()>,
+}
+
 pub(super) struct AgentPanel {
     open: bool,
     closing: bool,
@@ -51,25 +92,61 @@ pub(super) struct AgentPanel {
     width: f32,
     phase: Phase,
     unread: bool,
-    profile_id: String,
+    profile: Profile,
     profile_name: SharedString,
     command: String,
+    model: Option<String>,
     lookup: Lookup,
     missing_hint: SharedString,
     lookup_generation: u64,
+    context: Option<Rc<ReviewContext>>,
+    loaded: bool,
+    load_generation: u64,
+    messages: Vec<Message>,
+    next_message: u64,
+    overview: OverviewState,
+    auto_attempted: Option<String>,
+    stale: bool,
+    scroll: Entity<MessageScrollerState>,
+    rows: usize,
+    input: Entity<TextareaState>,
+    live: Option<Live>,
+    generation: u64,
+    operation: u64,
+    turn: Option<Turn>,
+    seen: HashMap<String, u64>,
+    session_id: Option<String>,
     _close: Task<()>,
     _lookup: Task<()>,
+    _load: Task<()>,
+    _dispatch: Task<()>,
     _settings: Subscription,
+    _release: Subscription,
+    _input: Subscription,
 }
 
 impl EventEmitter<AgentEvent> for AgentPanel {}
 
 impl AgentPanel {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let agent = &settings(cx).agent;
         let profile = agent.active_profile();
         let command = agent.command(&profile);
+        let model = agent.model(&profile);
         let width = clamp_agent_panel_width(agent.panel_width).round();
+        let placeholder = tr().assistant_input_placeholder.clone();
+        let input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(1, 6)
+                .placeholder(placeholder)
+                .submit_on_enter(true)
+        });
+        let submit = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+            if let InputEvent::PressEnter { shift: false, .. } = event {
+                this.submit_input(window, cx);
+            }
+        });
+        let scroll = cx.new(|cx| MessageScrollerState::new(0, cx));
         Self {
             open: false,
             closing: false,
@@ -77,15 +154,37 @@ impl AgentPanel {
             width,
             phase: Phase::Idle,
             unread: false,
-            profile_id: profile.id,
-            profile_name: profile.name.into(),
+            profile_name: profile.name.clone().into(),
+            profile,
             missing_hint: tr().assistant_missing_hint(&command).into(),
             command,
+            model,
             lookup: Lookup::Checking,
             lookup_generation: 0,
+            context: None,
+            loaded: false,
+            load_generation: 0,
+            messages: Vec::new(),
+            next_message: 0,
+            overview: OverviewState::None,
+            auto_attempted: None,
+            stale: false,
+            scroll,
+            rows: 0,
+            input,
+            live: None,
+            generation: 0,
+            operation: 0,
+            turn: None,
+            seen: HashMap::new(),
+            session_id: None,
             _close: Task::ready(()),
             _lookup: Task::ready(()),
+            _load: Task::ready(()),
+            _dispatch: Task::ready(()),
             _settings: cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx)),
+            _release: cx.on_release(|this: &mut AgentPanel, _: &mut App| this.release()),
+            _input: submit,
         }
     }
 
@@ -152,16 +251,22 @@ impl AgentPanel {
         cx.notify();
     }
 
-    pub(super) fn can_request_overview(&self) -> bool {
-        false
+    pub(super) fn can_send(&self) -> bool {
+        self.context.is_some()
+            && self.loaded
+            && !self.phase.is_busy()
+            && self.lookup != Lookup::Missing
+            && !self.command.trim().is_empty()
     }
 
-    pub(super) fn request_overview(&mut self, _cx: &mut Context<Self>) {}
+    pub(super) fn can_request_overview(&self) -> bool {
+        self.can_send()
+    }
 
-    #[allow(dead_code)]
     pub(super) fn set_phase(&mut self, phase: Phase, cx: &mut Context<Self>) {
         self.unread = unread_after(self.unread, self.open, &phase);
         self.phase = phase;
+        self.sync_rows(cx);
         cx.notify();
     }
 
@@ -190,16 +295,29 @@ impl AgentPanel {
         let agent = &settings(cx).agent;
         let profile = agent.active_profile();
         let command = agent.command(&profile);
+        let model = agent.model(&profile);
         let enabled = agent.enabled;
-        let changed = profile.id != self.profile_id || command != self.command;
-        self.profile_id = profile.id;
-        self.profile_name = profile.name.into();
+        let switched = profile.id != self.profile.id;
+        let changed = switched || command != self.command || model != self.model;
+        self.profile_name = profile.name.clone().into();
+        self.profile = profile;
         self.command = command;
+        self.model = model;
         self.missing_hint = tr().assistant_missing_hint(&self.command).into();
         if !enabled {
             self.close(cx);
         }
         if changed {
+            self.end_process(cx);
+            self.session_id = None;
+            if !self.messages.is_empty() {
+                let notice = if switched {
+                    tr().assistant_notice_agent(&self.profile.name)
+                } else {
+                    tr().assistant_notice_settings.to_string()
+                };
+                self.add_notice(notice, cx);
+            }
             self.start_lookup(cx);
         }
         cx.notify();

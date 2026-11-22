@@ -47,8 +47,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   label as a cached `FileLabel`, open-file, viewed and layout controls) and the `Diff` element with its
   movable split divider; the sliding, resizable tree panel; the assistant panel's place in
   the body; `Render for ReviewView`.
-- `agent/` — the review assistant's panel (`AgentPanel`, an entity `ReviewView` holds); see
-  `agent/doc.md`.
+- `agent/` — the review assistant (`AgentPanel`, an entity `ReviewView` holds: the panel, the
+  conversation and the harness session of the review); see `agent/doc.md`. `ReviewView` feeds it
+  through `sync_agent`, which hands over a `ReviewContext` after an install, a discussions load,
+  a viewed-marks change and a hidden-files change. A single-commit view is skipped, so the
+  assistant always describes the whole review.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
@@ -643,6 +646,9 @@ wraps `gitlab` and `github`; nothing here names those crates).
   tooltip; not Zed's per-line author and date column.
 - Copy path, open in editor and open in browser live in context menus and key bindings, not
   in toolbar buttons.
+- The assistant is fed by push (`sync_agent`) rather than by reading `ReviewView` from the
+  panel: the panel is updated from inside `ReviewView`'s own updates, and reading the parent
+  back there would panic.
 - The assistant panel is non-modal like the tree panel, not a `Sheet` like the comments: the
   diff stays clickable beside it. Whether it is open is per-window state, closed at start and
   never saved, like the tree's visibility; only its width is a setting.

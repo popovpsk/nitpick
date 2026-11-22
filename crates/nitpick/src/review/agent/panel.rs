@@ -7,10 +7,14 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
+    input::Textarea,
+    message_scroller::MessageScroller,
+    v_flex,
 };
 use ui_resources::Icons;
 
+use super::logic::OverviewState;
 use super::{AgentEvent, AgentPanel, Lookup, Phase, SLIDE};
 use crate::localization::tr;
 use crate::review::diff_panel::TOOLBAR_HEIGHT_REMS;
@@ -115,6 +119,26 @@ impl AgentPanel {
                     .text_color(theme.muted_foreground)
                     .child(self.profile_name.clone()),
             )
+            .when(self.can_start_overview_from_title(), |el| {
+                el.child(
+                    Button::new("agent-title-overview")
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::new(Icons::Sparkles))
+                        .tooltip(s.assistant_request_overview.clone())
+                        .on_click(cx.listener(|this, _, _, cx| this.request_overview(cx))),
+                )
+            })
+            .when(!self.messages.is_empty() && !self.is_busy(), |el| {
+                el.child(
+                    Button::new("agent-new-conversation")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Plus)
+                        .tooltip(s.assistant_new_conversation.clone())
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_conversation(cx))),
+                )
+            })
             .child(
                 Button::new("agent-close")
                     .ghost()
@@ -203,6 +227,131 @@ impl AgentPanel {
             _ => None,
         }
     }
+
+    fn can_start_overview_from_title(&self) -> bool {
+        !self.messages.is_empty()
+            && self.overview == OverviewState::None
+            && self.can_request_overview()
+    }
+
+    fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !matches!(self.overview, OverviewState::Outdated { .. }) || self.is_busy() {
+            return None;
+        }
+        let s = tr();
+        let theme = cx.theme();
+        Some(
+            h_flex()
+                .flex_none()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .items_center()
+                .border_b_1()
+                .border_color(theme.border)
+                .bg(theme.warning.opacity(0.12))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .child(s.assistant_changed_banner.clone()),
+                )
+                .child(
+                    Button::new("agent-update-overview")
+                        .small()
+                        .label(s.assistant_update_overview.clone())
+                        .disabled(!self.can_request_overview())
+                        .on_click(cx.listener(|this, _, _, cx| this.request_overview(cx))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_conversation(&self, cx: &mut Context<Self>) -> AnyElement {
+        MessageScroller::new(
+            "agent-messages",
+            self.scroll.clone(),
+            cx.processor(|this, ix, _, cx| this.render_row(ix, cx)),
+        )
+        .with_jump_button_label(tr().assistant_jump_to_latest.clone())
+        .with_row_style(gpui::StyleRefinement::default().pb_3())
+        .size_full()
+        .into_any_element()
+    }
+
+    fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let s = tr();
+        let theme = cx.theme();
+        if self.lookup == Lookup::Missing {
+            return v_flex()
+                .flex_none()
+                .gap_2()
+                .p_3()
+                .border_t_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(self.missing_hint.clone()),
+                )
+                .child(
+                    Button::new("agent-footer-settings")
+                        .small()
+                        .label(s.assistant_open_settings.clone())
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(AgentEvent::OpenSettings))),
+                )
+                .into_any_element();
+        }
+        let busy = self.is_busy();
+        let action = if busy {
+            Button::new("agent-stop")
+                .danger()
+                .small()
+                .icon(Icon::new(Icons::Square))
+                .tooltip(s.assistant_stop.clone())
+                .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
+        } else {
+            Button::new("agent-send")
+                .primary()
+                .small()
+                .icon(Icon::new(Icons::Send))
+                .tooltip(s.assistant_send.clone())
+                .disabled(!self.can_send())
+                .on_click(cx.listener(|this, _, window, cx| this.submit_input(window, cx)))
+        };
+        let failure = if self.messages.is_empty() {
+            None
+        } else {
+            self.failure()
+        };
+        v_flex()
+            .flex_none()
+            .gap_2()
+            .p_3()
+            .border_t_1()
+            .border_color(theme.border)
+            .children(
+                failure.map(|message| div().text_sm().text_color(theme.danger).child(message)),
+            )
+            .when(busy, |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(s.assistant_input_busy.clone()),
+                )
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_end()
+                    .child(div().flex_1().min_w_0().child(Textarea::new(&self.input)))
+                    .child(action),
+            )
+            .into_any_element()
+    }
 }
 
 fn centered() -> gpui::Div {
@@ -220,16 +369,24 @@ impl Render for AgentPanel {
         let theme = cx.theme();
         let background = theme.sidebar;
         let title = self.render_title(cx);
-        let body = match self.lookup {
-            Lookup::Missing => self.render_missing(cx),
-            Lookup::Checking | Lookup::Found => self.render_empty(cx),
+        let banner = self.render_banner(cx);
+        let body = if !self.messages.is_empty() || self.is_busy() {
+            self.render_conversation(cx)
+        } else if self.lookup == Lookup::Missing {
+            self.render_missing(cx)
+        } else {
+            self.render_empty(cx)
         };
+        let footer = (self.lookup != Lookup::Missing || !self.messages.is_empty())
+            .then(|| self.render_footer(cx));
         v_flex()
             .id("agent-panel-content")
             .size_full()
             .min_w_0()
             .bg(background)
             .child(title)
+            .children(banner)
             .child(div().flex_1().min_h_0().child(body))
+            .children(footer)
     }
 }

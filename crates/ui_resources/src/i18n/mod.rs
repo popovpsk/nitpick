@@ -379,6 +379,34 @@ pub struct Strings {
     pub assistant_missing_title: SharedString,
     pub assistant_missing_hint_t: SharedString,
     pub assistant_open_settings: SharedString,
+    pub assistant_input_placeholder: SharedString,
+    pub assistant_input_busy: SharedString,
+    pub assistant_send: SharedString,
+    pub assistant_stop: SharedString,
+    pub assistant_you: SharedString,
+    pub assistant_changed_banner: SharedString,
+    pub assistant_update_overview: SharedString,
+    pub assistant_starting: SharedString,
+    pub assistant_working: SharedString,
+    pub assistant_thinking: SharedString,
+    pub assistant_new_conversation: SharedString,
+    pub assistant_jump_to_latest: SharedString,
+    pub assistant_notice_agent_t: SharedString,
+    pub assistant_notice_settings: SharedString,
+    pub assistant_notice_lost: SharedString,
+    pub assistant_notice_stopped: SharedString,
+    pub assistant_login_command_t: SharedString,
+    pub assistant_login_env_t: SharedString,
+    pub assistant_login_generic: SharedString,
+    pub assistant_usage_limit: SharedString,
+    pub assistant_context_too_long: SharedString,
+    pub assistant_model_not_found: SharedString,
+    pub assistant_failed_t: SharedString,
+    pub assistant_failed_plain: SharedString,
+    pub assistant_exited_t: SharedString,
+    pub assistant_exited_plain: SharedString,
+    pub assistant_start_failed_t: SharedString,
+    pub assistant_unsupported: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -500,6 +528,30 @@ impl Strings {
 
     pub fn assistant_missing_hint(&self, command: &str) -> String {
         fill(&self.assistant_missing_hint_t, &[command])
+    }
+
+    pub fn assistant_notice_agent(&self, agent: &str) -> String {
+        fill(&self.assistant_notice_agent_t, &[agent])
+    }
+
+    pub fn assistant_login_command(&self, command: &str) -> String {
+        fill(&self.assistant_login_command_t, &[command])
+    }
+
+    pub fn assistant_login_env(&self, variable: &str) -> String {
+        fill(&self.assistant_login_env_t, &[variable])
+    }
+
+    pub fn assistant_failed(&self, detail: &str) -> String {
+        fill(&self.assistant_failed_t, &[detail])
+    }
+
+    pub fn assistant_exited(&self, detail: &str) -> String {
+        fill(&self.assistant_exited_t, &[detail])
+    }
+
+    pub fn assistant_start_failed(&self, detail: &str) -> String {
+        fill(&self.assistant_start_failed_t, &[detail])
     }
 
     pub fn hidden_files_invalid(&self, patterns: &str) -> String {
@@ -739,6 +791,12 @@ mod tests {
                 &s.approved_by_t,
                 &s.assistant_custom_invalid_t,
                 &s.assistant_missing_hint_t,
+                &s.assistant_notice_agent_t,
+                &s.assistant_login_command_t,
+                &s.assistant_login_env_t,
+                &s.assistant_failed_t,
+                &s.assistant_exited_t,
+                &s.assistant_start_failed_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

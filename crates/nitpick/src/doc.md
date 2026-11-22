@@ -17,7 +17,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   at startup it makes the data and config folders owner-only (`restrict_to_owner`), since
   the log, `nitpick.db` and imported themes inside are created with the default mode. An
   app-level handler that touches a window defers the work: gpui runs it while the window that
-  dispatched the action is still borrowed, so updating that window directly fails.
+  dispatched the action is still borrowed, so updating that window directly fails. At startup
+  it also calls `review::init_agent` (assistant history pruning, the login-shell snapshot
+  prewarm, the sweep of stale scratch folders), and on quit it awaits `agent::shutdown_all()`
+  next to the database barrier, so no harness process outlives the app.
 - `db.rs` — the `app_db::Db` global (`init`: `nitpick.db` in the data folder, an in-memory
   one if that fails, so nothing breaks but nothing is kept), `db`, `barrier` for quit.
 - `app_menu.rs` — menu bar actions and `set_menus` (rebuilt on a language change).

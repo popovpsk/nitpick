@@ -56,6 +56,10 @@ pub use model::{LoadedReview, MrContext, ReviewSource};
 pub use pending::confirm_discard_comment;
 use viewed::SharedViewed;
 
+pub fn init_agent(cx: &mut App) {
+    agent::init(cx);
+}
+
 actions!(
     review,
     [
@@ -430,7 +434,7 @@ impl ReviewView {
                 this.reload(cx);
             }
         });
-        let agent = cx.new(agent::AgentPanel::new);
+        let agent = cx.new(|cx| agent::AgentPanel::new(window, cx));
         let agent_events =
             cx.subscribe(&agent, |_, _, event: &agent::AgentEvent, cx| match event {
                 agent::AgentEvent::OpenSettings => cx.emit(ReviewEvent::OpenSettings),
@@ -817,6 +821,7 @@ impl ReviewView {
                 }
                 self.request_blame(cx);
                 self.sync_find(cx);
+                self.sync_agent(cx);
             }
             Err(err) => {
                 log::warn!("review load failed: {err:#}");
@@ -846,6 +851,14 @@ impl ReviewView {
         });
     }
 
+    fn sync_agent(&mut self, cx: &mut Context<Self>) {
+        if let Some(context) = agent::from_view(self) {
+            let context = Rc::new(context);
+            self.agent
+                .update(cx, |panel, cx| panel.set_review(context, cx));
+        }
+    }
+
     fn sync_viewed(&mut self, cx: &mut Context<Self>) {
         let Some(review) = self.review.clone() else {
             return;
@@ -861,6 +874,7 @@ impl ReviewView {
             self.viewed = viewed;
             self.rebuild_rows();
             self.sync_since_viewed(cx);
+            self.sync_agent(cx);
             cx.emit(ReviewEvent::Changed);
             cx.notify();
         }
@@ -920,6 +934,7 @@ impl ReviewView {
         }
         if patterns_changed && self.apply_hide_rules(cx) {
             self.rebuild_rows();
+            self.sync_agent(cx);
             let current_hidden = self.current_file.is_some_and(|f| !self.is_tracked(f));
             if current_hidden || self.current_file.is_none() {
                 let next = self
@@ -1548,6 +1563,7 @@ impl ReviewView {
                         this.index_drafts();
                         this.rebuild_rows();
                         this.rebuild_annotations();
+                        this.sync_agent(cx);
                     }
                     Err(err) => {
                         log::warn!("discussions: {err}");

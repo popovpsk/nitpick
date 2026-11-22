@@ -112,6 +112,7 @@ fn main() {
         updater::init(cx, env!("CARGO_PKG_VERSION"), auto_update);
         zoom::init(cx);
         review::init_avatars(cx);
+        review::init_agent(cx);
         keymap::init(cx);
 
         cx.on_window_closed(|cx, id| {
@@ -126,9 +127,11 @@ fn main() {
         cx.on_app_quit(|cx| {
             window_registry::quitting(cx);
             let writes = db::barrier(cx);
+            let sessions = ::agent::shutdown_all();
             diagnostics::flush();
             async move {
                 writes.await;
+                sessions.await;
                 diagnostics::flush();
             }
         })

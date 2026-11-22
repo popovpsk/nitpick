@@ -445,7 +445,7 @@ fn split_words(template: &str) -> Vec<String> {
     words
 }
 
-fn checkout_of(repo: &Repo, branch: &str) -> Option<PathBuf> {
+pub(in crate::review) fn checkout_of(repo: &Repo, branch: &str) -> Option<PathBuf> {
     let worktrees = repo
         .worktrees()
         .inspect_err(|err| log::warn!("listing worktrees: {err}"))
