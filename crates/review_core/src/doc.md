@@ -37,6 +37,12 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - `blame.rs` — `marker_lines` (the lines a blame chip goes on), `initials` of an author
   name, `tint_index` (a stable palette slot for a commit id).
 - `blame_tests.rs` — marker placement, initials, tint stability.
+- `diff_link.rs` — `DiffLink { path, range: Option<(Side, first, last)> }` and the `diff:`
+  link format the review assistant writes: `parse`, `format`, `extract` (every `diff:`
+  link target of a markdown text, in order, repeats kept), `DiffLink::locate(&LineMap)`
+  (the first line of the range the patch shows).
+- `diff_link_tests.rs` — every form, percent-coding and round trips, refusals, extraction
+  from markdown, line checks.
 - `fuzzy.rs` — `fuzzy_match(query, text)` → score and matched byte offsets; `rank` over
   `(label, optional detail)` items; `highlight_ranges` (offsets → byte ranges of whole chars).
 - `language.rs` — `language_override(path)`: the highlighter language for a path by file
@@ -110,6 +116,22 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   language whose grammar is not compiled in renders as plain text. File names are matched
   case-insensitively on the last path component, `/` or `\` separated.
 
+- `diff:<path>[#R120[-R135]]`, `L` for the old side, `R` for the new. `parse` normalizes a
+  reversed range, takes `#R120-135` (second letter omitted) as the same side, and refuses
+  everything else: line 0, mixed sides, a sign or other characters in a number, an empty
+  path, a stray `%`, a path that is not UTF-8 once decoded. `format` writes a one-line range
+  as `#R120` and encodes every byte of the path except ASCII letters, digits, `-._~` and
+  `/`, so a path never breaks a markdown link target; `parse(format(x)) == x` for any path
+  and any normalized range. `parse` also takes a raw (unencoded) path, for models that skip
+  the encoding.
+- `extract` follows CommonMark far enough not to invent links: it reads only the
+  destination of an inline link whose `[` is not escaped (plain with balanced parentheses and
+  backslash escapes, or `<…>`, which may hold spaces), skips fenced code blocks and inline code
+  spans (a line at a time), ignores bare `diff:` text, autolinks and link labels, and drops
+  `diff:` targets that do not parse. Repeats are kept because the order of mentions is the
+  order of the review stops. `locate` scans at most 4096 lines of a range, so a model's huge
+  range cannot stall the UI thread; the file check (does the review contain the path) is the
+  caller's.
 - Fuzzy matching: the query's characters (whitespace dropped, case folded per char) must
   appear in order. An fzf-style DP picks the best-scoring alignment, not the greedy first
   one (approximately: the carried run bonus is not part of its state, as in fzf): each matched char scores, a char after `/` or `\` or at the start gets

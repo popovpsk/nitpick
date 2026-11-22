@@ -1,4 +1,5 @@
 pub mod blame;
+pub mod diff_link;
 pub mod fuzzy;
 pub mod hidden;
 pub mod language;
@@ -8,6 +9,7 @@ pub mod timestamp;
 pub mod tree;
 pub mod viewed;
 
+pub use diff_link::DiffLink;
 pub use fuzzy::{FuzzyMatch, Ranked, fuzzy_match, highlight_ranges, rank};
 pub use hidden::{HideRules, RuleError};
 pub use language::language_override;
@@ -19,6 +21,8 @@ pub use viewed::{ViewedStore, fingerprint, fingerprint_blobs, write_atomic};
 
 #[cfg(test)]
 mod blame_tests;
+#[cfg(test)]
+mod diff_link_tests;
 #[cfg(test)]
 mod fuzzy_tests;
 #[cfg(test)]

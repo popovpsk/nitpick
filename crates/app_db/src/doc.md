@@ -1,7 +1,8 @@
 # app_db
 
 The app's SQLite database (`nitpick.db` in the data folder) and the only crate that touches
-it: viewed marks per repository and the avatar cache. One thread owns the connection; every
+it: viewed marks per repository, the review assistant's sessions and conversations, and the
+avatar cache. One thread owns the connection; every
 call queues a job on it and returns a future for the answer, so callers on any thread never
 block and jobs run in the order they were called. GPUI-free.
 
@@ -11,10 +12,14 @@ written (`nitpick` `review/viewed.rs`), fetching avatars (`avatar_cache`).
 
 ## Files
 
-- `lib.rs` — `Db` (`open`, `open_in_memory`; `load_viewed`, `set_viewed`, `avatar`,
-  `put_avatar`, `prune_avatars`, `barrier`), `ViewedMark`, `Error`, the migrations.
+- `lib.rs` — `Db` (`open`, `open_in_memory`; `load_viewed`, `set_viewed`, `agent_session`,
+  `set_agent_session`, `clear_agent_session`, `agent_messages`, `add_agent_message`,
+  `clear_agent_messages`, `prune_agent`, `avatar`, `put_avatar`, `prune_avatars`,
+  `barrier`), `ViewedMark`, `AgentMessage` / `NewAgentMessage`, `AgentRole`, `AgentKind`,
+  `Error`, the migrations.
 - `tests.rs` — marks per repository, call order, expiry, avatars, reopening, a newer schema,
-  two openers creating the file at once.
+  two openers creating the file at once, the upgrade from schema 1, assistant message order,
+  session replacement, key-scoped clears, assistant pruning.
 
 ## Spec
 
@@ -36,6 +41,17 @@ written (`nitpick` `review/viewed.rs`), fetching avatars (`avatar_cache`).
 - `viewed` (repo, path, fingerprint → viewed_at): `load_viewed` first deletes that
   repository's marks older than `VIEWED_RETENTION_SECS` (180 days). `avatars` (url → png,
   fetched_at): `prune_avatars` drops entries older than `AVATAR_RETENTION_SECS` (90 days).
+- `agent_sessions` (repo, review, agent → session_id, updated_at): one resumable harness
+  session per review and agent profile; `set_agent_session` replaces it. `agent_messages`
+  (id, repo, review, role, kind, text, head, created_at): the conversation of a review,
+  shared by every agent profile and returned in `id` order (insertion order, whatever
+  `created_at` says). `review` is the caller's key for the review, `head` the revision a
+  message was written for. A stored `role` or `kind` this build does not know reads as
+  `Notice` / `Chat` with a warning, so one odd row never fails the whole load.
+  `clear_agent_session` and `clear_agent_messages` delete exactly one key's rows.
+  `prune_agent` deletes sessions by `updated_at` and messages by `created_at` older than
+  `AGENT_RETENTION_SECS` (180 days); unlike `load_viewed` it is global and the caller runs
+  it once at startup, as it does `prune_avatars`.
 
 ## Decisions
 
