@@ -89,8 +89,11 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
   (a wrapper that reports nothing) gets the benefit of the doubt. A refused CLI fails before
   any thread exists and emits no `Event::Session`.
 - Handshake failure: the pending and queued prompts each get one `TurnFinished(Failed(..))`; with
-  no prompt pending exactly one is emitted so the app always learns the failure (as with
-  `Plan::refusal`). The driver then returns and the supervisor adds `Exited`.
+  none pending exactly one is emitted whatever happened before (even after a cancelled prompt),
+  because a prompt may be on its way that the driver has not read yet. The rule can emit one
+  failure for which no prompt is owed, never drop one that is owed: the app turns a failure with no turn
+  into a failed panel state, but a turn ended only by `Exited` loses its classification and the
+  automatic recovery from `SessionLost`. The driver then returns and the supervisor adds `Exited`.
 - Bounded waits (`Limits`): `initialize` 30 s, thread calls 60 s, `turn/start` 30 s,
   `turn/interrupt` 10 s, and 15 s from an interrupt request to the end of the turn. A handshake
   or `turn/start` timeout fails the turn and ends the session. An interrupt that is not honored
@@ -102,8 +105,9 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
   `turn/start` is written) is remembered and sent as `turn/interrupt` once the turn id is known
   (from the `turn/start` answer or `turn/started`); queued prompts survive it. `Interrupt` with no
   turn active cancels the oldest queued prompt: it is never sent to the CLI and gets one
-  `TurnFinished(Interrupted)`, later prompts stay queued; with nothing queued it is a no-op. A
-  cancelled prompt counts as answered, so a failing handshake adds no extra failure for it. A
+  `TurnFinished(Cancelled)` (a turn whose `turn/start` was written ends `Interrupted`); later
+  prompts stay queued; with nothing queued it is a no-op. An `Interrupt` still unread when the
+  session ends is applied the same way before the remaining prompts get their failure. A
   refused `turn/interrupt` is logged and not fatal.
 - A rejected `turn/start` fails that turn with the classified error and the session goes on.
 - End of stdout, a failed write or a closed connection after the handshake fails the running turn

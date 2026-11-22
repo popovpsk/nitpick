@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use crate::process::{Grace, reap};
+use crate::process::{Environment, Grace, reap};
 use crate::session::Control;
 
 #[derive(Default)]
@@ -46,20 +46,20 @@ impl Registry {
             .collect()
     }
 
-    pub fn quit(&self, grace: Grace) {
+    pub fn quit(&self, grace: Grace, env: &Environment) {
         let controls: Vec<Arc<Control>> = self.lock().values().cloned().collect();
         if controls.is_empty() {
             return;
+        }
+        for control in &controls {
+            control.request_shutdown();
         }
         let groups: Vec<u32> = controls
             .iter()
             .filter_map(|control| control.leader())
             .collect();
-        if let Err(error) = reap(&groups, grace) {
+        if let Err(error) = reap(&groups, grace, env) {
             log::warn!("starting the process reaper: {error}");
-        }
-        for control in &controls {
-            control.request_shutdown();
         }
     }
 
@@ -73,5 +73,5 @@ pub fn shutdown_all() -> impl Future<Output = ()> + Send + 'static + use<> {
 }
 
 pub fn quit() {
-    Registry::global().quit(Grace::default());
+    Registry::global().quit(Grace::default(), &Environment::cached());
 }

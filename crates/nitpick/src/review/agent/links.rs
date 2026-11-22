@@ -225,8 +225,7 @@ pub(super) fn compose_question(input: &str, pending: Option<&PendingSelection>) 
             shown,
         };
     };
-    let question = shown.replace(&pending.marker, "");
-    let question = question.split_whitespace().collect::<Vec<_>>().join(" ");
+    let question = without_marker(&shown, &pending.marker);
     let prompt = prompt::selection_question(
         &question,
         &Selection {
@@ -238,6 +237,35 @@ pub(super) fn compose_question(input: &str, pending: Option<&PendingSelection>) 
         },
     );
     Question { shown, prompt }
+}
+
+pub(super) fn without_marker(text: &str, marker: &str) -> String {
+    let horizontal = |c: char| c == ' ' || c == '\t';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(marker) {
+        out.push_str(&rest[..at]);
+        rest = &rest[at + marker.len()..];
+        let kept = out.trim_end_matches(horizontal).len();
+        out.truncate(kept);
+        rest = rest.trim_start_matches(horizontal);
+        let line_start = out.is_empty() || out.ends_with('\n');
+        let newline = rest
+            .strip_prefix("\r\n")
+            .or_else(|| rest.strip_prefix('\n'));
+        match (line_start, newline) {
+            (true, Some(after)) => {
+                rest = after;
+                if out.ends_with("\n\n") {
+                    rest = rest.strip_prefix('\n').unwrap_or(rest);
+                }
+            }
+            (false, _) if !rest.is_empty() && newline.is_none() => out.push(' '),
+            _ => {}
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_owned()
 }
 
 pub(super) fn input_with_marker(current: &str, old: Option<&str>, marker: &str) -> String {

@@ -346,6 +346,7 @@ impl AgentPanel {
         match self.phase {
             Phase::Starting => {
                 self.operation += 1;
+                self.stale = false;
                 self._dispatch = Task::ready(());
                 self.set_phase(Phase::Idle, cx);
             }
@@ -712,6 +713,12 @@ impl AgentPanel {
             if logic::answered(&outcome) {
                 self.seen = turn.sent.clone();
             }
+            self.auto_attempted = logic::auto_attempted_after(
+                self.auto_attempted.as_deref(),
+                &turn.request,
+                &turn.head,
+                &outcome,
+            );
             if let Some(live) = self.live.as_mut() {
                 live.brief_delivered =
                     logic::brief_delivered(live.brief_delivered, turn.carried_brief, &outcome);
@@ -725,6 +732,10 @@ impl AgentPanel {
             Outcome::Interrupted => {
                 self.add_notice(tr().assistant_notice_stopped.to_string(), cx);
                 self.set_phase(Phase::Ready, cx);
+                self.after_turn(cx);
+            }
+            Outcome::Cancelled => {
+                self.set_phase(Phase::Idle, cx);
                 self.after_turn(cx);
             }
             Outcome::Failed(failure) => {
@@ -753,7 +764,9 @@ impl AgentPanel {
     ) -> bool {
         self.clear_session_id(cx);
         self.retire_live();
-        self.add_notice(tr().assistant_notice_lost.to_string(), cx);
+        if turn.is_some() {
+            self.add_notice(tr().assistant_notice_lost.to_string(), cx);
+        }
         match turn {
             Some(turn) if !turn.retried => self.dispatch(turn.request, true, cx),
             _ => {

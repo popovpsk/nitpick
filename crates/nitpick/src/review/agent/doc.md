@@ -153,8 +153,17 @@ Not here: running the harness (`agent` crate), the profile table and settings
   progress row (never stored); `TurnFinished` ends the turn; `Exited` is last and retires the
   session. A turn that ends in `SessionLost` clears the stored id, retires the session, adds a
   notice and sends the same request again once (`Turn::retried`); the old session's `Exited` is
-  never seen because the generation moved. Any other failure becomes `Phase::Failed` with a
-  localized text; an `Exited` during a turn becomes a failure too and leaves the panel ready for
+  never seen because the generation moved; a `SessionLost` with no turn running (a failed
+  setup after a cancel) only clears the id and shows the failure, with no notice and no re-send.
+  A turn that ends `Cancelled` (the prompt never reached the harness) stores and shows nothing
+  new and the phase returns to `Idle`: the user's question stays in the list, no stopped notice
+  is added (nothing was answered, so "partial" would be false), the brief and the comments stay
+  pending (`logic::answered` is false), and a cancelled overview or update pins `auto_attempted`
+  to the turn's head, so with `auto_overview` on it does not restart until the head, the
+  settings or an explicit request change; a Stop while the session is still starting clears
+  `stale` for the same reason. A cancelled question's pending selection is already cleared at
+  send, so its marker must be asked for again (`AskAgent`); the link stays in the stored message.
+  Any other failure becomes `Phase::Failed` with a localized text; an `Exited` during a turn becomes a failure too and leaves the panel ready for
   a new session that resumes the stored id.
 - While a turn runs the send button is a stop button (`Session::interrupt`; while still starting
   it cancels the start) and Enter sends nothing: the input stays editable for a draft and a line
@@ -231,9 +240,10 @@ Not here: running the harness (`agent` crate), the profile table and settings
   conversation" or another review. At send time `compose_question` checks whether the marker is
   still in the typed text: if so, `shown` is the text as typed (the marker renders as a link in
   the conversation) and `prompt` is `prompt::selection_question` over the text with the marker
-  removed, so the agent sees the link once, with the selected text in a code block; if the user
+  removed (`without_marker`: only the seam it leaves is tidied, so lines, lists and indented code
+  keep their shape), so the agent sees the link once, with the selected text in a code block; if the user
   deleted or edited the marker, the message goes out as plain text and nothing of the selection
-  is sent.
+  is sent. A marker with no other text sends the selection alone.
 - A selection that spans both sides of a unified view cannot be one `diff:` range, so the link
   covers the line the selection ended on, like adding a comment does; the agent still gets the
   whole selected text. The selection is not linked in the single-commit view, whose line numbers

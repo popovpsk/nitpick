@@ -896,6 +896,48 @@ fn a_question_with_the_marker_carries_the_selected_text() {
     );
 }
 
+#[rstest]
+#[case::at_the_start("M why is this here?", "why is this here?")]
+#[case::in_the_middle("why is M here?", "why is here?")]
+#[case::at_the_end("why is this here? M", "why is this here?")]
+#[case::marker_only("  M  ", "")]
+#[case::multi_line_question(
+    "first line\nM second line\n\nthird",
+    "first line\nsecond line\n\nthird"
+)]
+#[case::own_line_between_paragraphs("One.\n\nM\n\nTwo.", "One.\n\nTwo.")]
+#[case::own_line_between_lines("One.\nM\nTwo.", "One.\nTwo.")]
+#[case::own_line_at_the_end("One.\n\nM", "One.")]
+#[case::own_line_with_indentation("One.\n  M  \nTwo.", "One.\nTwo.")]
+#[case::crlf("One.\r\nM\r\nTwo.", "One.\r\nTwo.")]
+#[case::code_after_the_marker(
+    "M what does this do?\n\n    fn f() {\n        g();\n    }",
+    "what does this do?\n\n    fn f() {\n        g();\n    }"
+)]
+#[case::code_before_the_marker(
+    "    let x = 1;\n    let y = 2;\nM why?",
+    "let x = 1;\n    let y = 2;\nwhy?"
+)]
+#[case::spaces_inside_a_line_stay("a   b M c    d", "a   b c    d")]
+fn only_the_marker_and_its_seam_leave_the_question(#[case] input: &str, #[case] expected: &str) {
+    let marker = "[m](diff:a#R1)";
+    let input = input.replace('M', marker);
+    assert_eq!(links::without_marker(&input, marker), expected);
+}
+
+#[test]
+fn a_multi_line_question_keeps_its_lines_in_the_prompt() {
+    let pending = pending();
+    let input = format!("why?\n\n{}\n\n    indented\n- item", pending.marker);
+    let question = links::compose_question(&input, Some(&pending));
+    assert_eq!(question.shown, input);
+    assert!(
+        question
+            .prompt
+            .starts_with("why?\n\n    indented\n- item\n\nSelected: [src/a.rs R10-12]")
+    );
+}
+
 #[test]
 fn a_question_that_is_only_the_marker_sends_only_the_selection() {
     let pending = pending();
@@ -963,6 +1005,9 @@ fn failed() -> Outcome {
     false
 )]
 #[case::turn_without_brief_proves_nothing(false, false, Outcome::Completed, false)]
+#[case::cancelled_with_brief_delivers_nothing(false, true, Outcome::Cancelled, false)]
+#[case::cancelled_without_brief_delivers_nothing(false, false, Outcome::Cancelled, false)]
+#[case::delivered_stays_after_cancel(true, true, Outcome::Cancelled, true)]
 #[case::delivered_stays_after_failure(true, false, failed(), true)]
 #[case::delivered_stays_after_chat(true, false, Outcome::Completed, true)]
 #[case::delivered_stays_when_carried_again_fails(true, true, failed(), true)]
@@ -978,6 +1023,7 @@ fn the_brief_counts_as_delivered_when_an_answered_turn_carried_it(
 #[rstest]
 #[case::completed(Outcome::Completed, true)]
 #[case::interrupted(Outcome::Interrupted, true)]
+#[case::cancelled(Outcome::Cancelled, false)]
 #[case::failed(failed(), false)]
 fn only_a_completed_or_stopped_turn_counts_as_answered(
     #[case] outcome: Outcome,
@@ -1076,4 +1122,25 @@ fn a_guard_dropped_on_another_thread_still_disposes() {
     let guard = Guard::new(Arc::clone(&disposed), dispose);
     std::thread::spawn(move || drop(guard)).join().unwrap();
     assert_eq!(disposed.load(Ordering::SeqCst), 1);
+}
+
+#[rstest]
+#[case::cancelled_overview(Request::Overview, Outcome::Cancelled, Some("h0"), Some("h1"))]
+#[case::cancelled_overview_unset(Request::Overview, Outcome::Cancelled, None, Some("h1"))]
+#[case::cancelled_update(Request::Update { old_head: "h0".to_owned() }, Outcome::Cancelled, None, Some("h1"))]
+#[case::cancelled_chat(Request::Chat { prompt: "q".to_owned() }, Outcome::Cancelled, Some("h0"), Some("h0"))]
+#[case::cancelled_chat_unset(Request::Chat { prompt: "q".to_owned() }, Outcome::Cancelled, None, None)]
+#[case::completed_overview(Request::Overview, Outcome::Completed, Some("h0"), Some("h0"))]
+#[case::interrupted_overview(Request::Overview, Outcome::Interrupted, None, None)]
+#[case::failed_overview(Request::Overview, failed(), None, None)]
+fn a_cancelled_overview_request_is_not_retried_for_the_same_head(
+    #[case] request: Request,
+    #[case] outcome: Outcome,
+    #[case] current: Option<&str>,
+    #[case] expected: Option<&str>,
+) {
+    assert_eq!(
+        logic::auto_attempted_after(current, &request, "h1", &outcome).as_deref(),
+        expected
+    );
 }

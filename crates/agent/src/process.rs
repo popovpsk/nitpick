@@ -149,6 +149,12 @@ pub struct Snapshot {
 
 static SNAPSHOT: OnceLock<Snapshot> = OnceLock::new();
 
+pub fn cached_snapshot() -> &'static [(String, String)] {
+    SNAPSHOT
+        .get()
+        .map_or(&[], |snapshot| snapshot.vars.as_slice())
+}
+
 pub fn snapshot() -> &'static Snapshot {
     SNAPSHOT.get_or_init(capture)
 }
@@ -263,6 +269,14 @@ impl Environment {
         Self::merge(
             std::env::vars_os().collect(),
             &[],
+            dirs::home_dir().as_deref(),
+        )
+    }
+
+    pub fn cached() -> Self {
+        Self::merge(
+            std::env::vars_os().collect(),
+            cached_snapshot(),
             dirs::home_dir().as_deref(),
         )
     }
@@ -653,10 +667,11 @@ impl Drop for Process {
 }
 
 pub const REAPER_SCRIPT: &str = "trap '' HUP
+command -v sleep >/dev/null 2>&1 || exit 0
 term=$1
 kill=$2
 shift 2
-sleep \"$term\"
+sleep \"$term\" || exit 0
 for g in \"$@\"; do kill -s TERM -- \"-$g\" 2>/dev/null; done
 sleep \"$kill\"
 for g in \"$@\"; do kill -s KILL -- \"-$g\" 2>/dev/null; done
@@ -686,27 +701,49 @@ pub fn reaper_args(groups: &[u32], grace: Grace) -> Option<Vec<String>> {
     Some(args)
 }
 
+pub fn reaper_path(env: &Environment) -> Option<&OsStr> {
+    resolve_program("sleep", env.path(), &pathext()).map(|_| env.path())
+}
+
 #[cfg(unix)]
-pub fn reap(groups: &[u32], grace: Grace) -> std::io::Result<()> {
+pub fn spawn_reaper(
+    groups: &[u32],
+    grace: Grace,
+    path: &OsStr,
+) -> std::io::Result<Option<std::process::Child>> {
     use std::os::unix::process::CommandExt;
     let Some(args) = reaper_args(groups, grace) else {
-        return Ok(());
+        return Ok(None);
     };
     std::process::Command::new("/bin/sh")
         .args(args)
         .env_clear()
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", path)
         .current_dir("/")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .process_group(0)
         .spawn()
-        .map(drop)
+        .map(Some)
+}
+
+#[cfg(unix)]
+pub fn reap(groups: &[u32], grace: Grace, env: &Environment) -> std::io::Result<()> {
+    if reaper_args(groups, grace).is_none() {
+        return Ok(());
+    }
+    let Some(path) = reaper_path(env) else {
+        log::warn!(
+            "no `sleep` on the search path: the shutdown ladder cannot outlive the app, so the harnesses only see the end of their input"
+        );
+        return Ok(());
+    };
+    spawn_reaper(groups, grace, path).map(drop)
 }
 
 #[cfg(not(unix))]
-pub fn reap(_groups: &[u32], _grace: Grace) -> std::io::Result<()> {
+pub fn reap(_groups: &[u32], _grace: Grace, _env: &Environment) -> std::io::Result<()> {
     Ok(())
 }
 

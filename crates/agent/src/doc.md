@@ -86,11 +86,18 @@ sessions without the login shell.
 - Quitting the app (`agent::quit()`, called synchronously from the quit handler) cannot use the
   soft shutdown: gpui waits 200 ms for quit handlers and `net_runtime` is never dropped, so
   nothing in-process survives to step through 3 s and 2 s. On Unix `quit` spawns one detached
-  `/bin/sh` (own process group, stdio to `/dev/null`, `HUP` ignored, `/` as cwd, a fixed `PATH`)
-  that runs the same ladder after the app is gone: it sleeps 3 s, sends SIGTERM to every live
-  session's group, sleeps 2 s, sends SIGKILL. Stdin needs no step of its own: `quit` also asks
-  every driver to shut down, and the pipes close with the app at the latest, so the harness sees
-  EOF at once and a polite one (Claude Code finishing a token refresh) exits well inside the 3 s.
+  `/bin/sh` (own process group, stdio to `/dev/null`, `HUP` ignored, `/` as cwd) that runs the same
+  ladder after the app is gone: it sleeps 3 s, sends SIGTERM to every live session's group,
+  sleeps 2 s, sends SIGKILL. `quit` first asks every driver to shut down (which drops stdin), then
+  starts the reaper; the pipes close with the app at the latest, so the harness sees EOF at once
+  and a polite one (Claude Code finishing a token refresh) exits well inside the 3 s. The reaper
+  gets exactly the app's merged `PATH` (`Environment::cached()`, which never waits for the
+  login-shell snapshot) and nothing else, so `sleep` is found wherever the user's PATH has it
+  (NixOS has none in `/usr/bin`). The wait fails closed: `quit` does not start the reaper when
+  `sleep` is not on that PATH (it logs a warning), and the script itself exits before any signal
+  if `sleep` is missing or the first `sleep` fails. No portable wait exists in `sh` without
+  `sleep` (`read -t` is not POSIX), so without it a harness only gets stdin EOF: a leak is
+  possible, an early kill that costs the user's login is not.
   The reaper's script is a constant; the only data it receives are the two delays and the group
   ids, as arguments that are plain decimal numbers (ids outside 2..=`i32::MAX` are dropped), never
   interpolated into the script. A group id is its leader's pid and stays reserved while any member
@@ -101,6 +108,10 @@ sessions without the login shell.
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (process-wrap sets it because `KillOnDrop` is wrapped), so
   the OS terminates the whole tree when the app's handle closes; that is immediate, without the
   3 s wait, and `quit` there only asks the drivers to shut down.
+- A turn ends with one of `Outcome::Completed`, `Interrupted` (a turn that had been sent was
+  stopped), `Cancelled` (the prompt was dropped before anything was written to the harness, so
+  the harness never saw it) or `Failed`. The app decides a brief was delivered from the first
+  two only.
 - Dropping the last `Session` clone requests the same shutdown; the registry keeps only the
   control handle, so it never keeps a session alive. `shutdown()` aborts the supervisor if the
   session has not ended in 10 s (the drop of `Process` then kills the group).

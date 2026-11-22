@@ -60,6 +60,7 @@ pub enum Event {
 pub enum Outcome {
     Completed,
     Interrupted,
+    Cancelled,
     Failed(Failure),
 }
 

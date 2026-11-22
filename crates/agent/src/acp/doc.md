@@ -90,14 +90,14 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   after the turn ends. The command channel is polled in every phase, including while any setup
   request is awaited, and drained before a queued prompt is written. `Interrupt` with a turn
   active (from the moment `session/prompt` is written) sends one `session/cancel` and starts the
-  cancel wait; queued prompts survive it. `Interrupt` with no turn active cancels the oldest
-  queued prompt: it is never sent to the agent and gets one `TurnFinished(Interrupted)` at once,
-  later prompts stay queued, and with nothing queued it is a no-op. A cancelled prompt counts as
-  answered, so a failing setup (a lost session included) adds no extra failure for it, and it
-  does not consume the instructions block. An `Interrupt` still in the command channel when the
-  session ends is applied the same way (no turn active: it cancels the oldest queued prompt), so
-  a stop is never replaced by a failure such as `SessionLost`. The agent's text after a cancel that is
-  the note "The request was cancelled by the client." (either spelling, split over chunks) is not
+  cancel wait; queued prompts survive it, and the turn ends `Interrupted` when the agent answers
+  `cancelled` (or the cancel wait runs out). `Interrupt` with no turn active cancels the oldest
+  queued prompt: it is never sent to the agent and gets one `TurnFinished(Cancelled)` at once
+  (the agent never saw it, unlike an `Interrupted` turn), later prompts stay queued, and with
+  nothing queued it is a no-op. A cancelled prompt does not consume the instructions block or
+  the `Event::Session` announcement. An `Interrupt` still in the command channel when the session
+  ends is applied the same way, so a stop is never replaced by a failure such as `SessionLost`.
+  The agent's text after a cancel that is the note "The request was cancelled by the client." (either spelling, split over chunks) is not
   `Text`; any other text after a cancel is released whole.
 - Watchdog: no message of any kind from the agent for 120 s while no tool call is open (a call is
   open from its first update to its `completed` / `failed`, pending included) fails the turn with
@@ -109,8 +109,10 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
 - End of stdout, a failed write or a closed connection after the handshake fails the running turn
   (open tools closed as failed) and every queued prompt, one `TurnFinished(Failed(Other))` each;
   nothing is emitted between turns. A failure before the session is ready fails each queued
-  prompt, and exactly one turn when none is queued, so the app always learns it. The command
-  channel is drained first. `Shutdown` (or a dropped command channel) returns with no further
+  prompt, and one lone failure when none is queued, whether or not a prompt was cancelled before:
+  a prompt may be on its way and not yet in the channel, and the failure keeps its classification
+  (`SessionLost` drives the app's recovery) where only `Exited` would not. The command channel is
+  drained first. `Shutdown` (or a dropped command channel) returns with no further
   events. The driver never emits `Exited`.
 - `Plan` adds no arguments. The supervisor owns the process; closing stdin (what the driver does on
   return) is how OpenCode ends, with exit code 0.

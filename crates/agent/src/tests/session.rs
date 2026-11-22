@@ -408,10 +408,13 @@ mod unix {
         };
         let leader = session.control().leader().unwrap().to_string();
 
-        registry.quit(Grace {
-            stdin: Duration::from_secs(1),
-            term: Duration::from_secs(1),
-        });
+        registry.quit(
+            Grace {
+                stdin: Duration::from_secs(1),
+                term: Duration::from_secs(1),
+            },
+            &Environment::from_process(),
+        );
 
         assert_dies(&child).await;
         assert_dies(&leader).await;

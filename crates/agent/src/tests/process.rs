@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use crate::Error;
 use rstest::rstest;
 
-use crate::process::{Environment, Grace, Invocation, REAPER_SCRIPT, reaper_args};
+use crate::process::{Environment, Grace, Invocation, REAPER_SCRIPT, reaper_args, reaper_path};
 
 fn env_with(pairs: &[(&str, &str)]) -> Environment {
     let vars = pairs
@@ -54,6 +54,34 @@ fn the_reaper_gets_only_plain_group_numbers() {
 #[case::out_of_range(&[u32::MAX])]
 fn the_reaper_is_not_started_without_a_real_group(#[case] groups: &[u32]) {
     assert!(reaper_args(groups, Grace::default()).is_none());
+}
+
+#[test]
+fn the_reaper_script_checks_for_sleep_before_it_signals_anything() {
+    let check = REAPER_SCRIPT.find("command -v sleep").unwrap();
+    let guarded_wait = REAPER_SCRIPT.find("sleep \"$term\" || exit 0").unwrap();
+    let first_signal = REAPER_SCRIPT.find("kill -s TERM").unwrap();
+    assert!(check < guarded_wait && guarded_wait < first_signal);
+}
+
+#[test]
+fn the_reaper_needs_a_sleep_on_the_search_path() {
+    let with = tempfile::tempdir().unwrap();
+    let without = tempfile::tempdir().unwrap();
+    let program = with
+        .path()
+        .join(if cfg!(windows) { "sleep.exe" } else { "sleep" });
+    std::fs::write(&program, "").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut env = env_with(&[("PATH", "/nowhere")]);
+    env.set("PATH", &with.path().to_string_lossy());
+    assert_eq!(reaper_path(&env), Some(env.path()));
+    env.set("PATH", &without.path().to_string_lossy());
+    assert_eq!(reaper_path(&env), None);
 }
 
 #[test]
@@ -215,10 +243,94 @@ mod unix {
             stdin: Duration::from_secs(1),
             term: Duration::from_secs(1),
         };
-        crate::process::reap(&[leader], grace).unwrap();
+        crate::process::spawn_reaper(&[leader], grace, std::ffi::OsStr::new("/usr/bin:/bin"))
+            .unwrap();
 
         assert_dies(&child).await;
         assert_dies(&leader.to_string()).await;
+    }
+
+    fn executable(path: &std::path::Path, text: &str) {
+        std::fs::write(path, text).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    async fn alive(pid: &str) -> bool {
+        ps_state(pid)
+            .await
+            .is_some_and(|state| !state.starts_with('Z'))
+    }
+
+    #[tokio::test]
+    async fn a_reaper_without_sleep_signals_nothing() {
+        let (process, pipes) = Process::spawn(&sh("sleep 300 & echo $!; wait")).unwrap();
+        let leader = process.id().unwrap();
+        let mut lines = Lines::new(pipes.stdout);
+        let child = read_line(&mut lines).await;
+        let bare = tempfile::tempdir().unwrap();
+
+        let mut reaper =
+            crate::process::spawn_reaper(&[leader], Grace::IMMEDIATE, bare.path().as_os_str())
+                .unwrap()
+                .unwrap();
+        let status = tokio::task::spawn_blocking(move || reaper.wait())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(status.success());
+        assert!(alive(&leader.to_string()).await);
+        assert!(alive(&child).await);
+        drop(process);
+        assert_dies(&child).await;
+    }
+
+    #[tokio::test]
+    async fn a_reaper_whose_sleep_is_elsewhere_still_waits_before_signalling() {
+        let (process, pipes) = Process::spawn(&sh("sleep 300 & echo $!; wait")).unwrap();
+        let leader = process.id().unwrap();
+        let mut lines = Lines::new(pipes.stdout);
+        let child = read_line(&mut lines).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let started = dir.path().join("started");
+        let gate = dir.path().join("gate");
+        let script = format!(
+            "#!/bin/sh\n: > {started}\nwhile [ ! -e {gate} ]; do /bin/sleep 0.05; done\n",
+            started = started.display(),
+            gate = gate.display()
+        );
+        executable(&bin.join("sleep"), &script);
+
+        let grace = Grace {
+            stdin: Duration::from_secs(1),
+            term: Duration::from_secs(1),
+        };
+        let mut reaper = crate::process::spawn_reaper(&[leader], grace, bin.as_os_str())
+            .unwrap()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !started.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "the reaper never started waiting"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(alive(&leader.to_string()).await);
+        assert!(alive(&child).await);
+
+        std::fs::write(&gate, "").unwrap();
+        assert_dies(&child).await;
+        assert_dies(&leader.to_string()).await;
+        tokio::task::spawn_blocking(move || reaper.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(process);
     }
 
     #[tokio::test]

@@ -166,7 +166,6 @@ struct Conversation {
     capabilities: Capabilities,
     instructions_due: bool,
     announce: Option<String>,
-    cancelled: bool,
     queue: VecDeque<String>,
     normalizer: Normalizer,
     turn: Option<Turn>,
@@ -193,7 +192,6 @@ async fn converse(
         capabilities: Capabilities::default(),
         instructions_due: false,
         announce: None,
-        cancelled: false,
         queue: VecDeque::new(),
         normalizer: Normalizer::default(),
         turn: None,
@@ -426,8 +424,7 @@ impl Conversation {
     fn cancel_turn(&mut self) {
         let Some(turn) = self.turn.as_mut() else {
             if self.queue.pop_front().is_some() {
-                self.cancelled = true;
-                let _ = self.events.send(Event::TurnFinished(Outcome::Interrupted));
+                let _ = self.events.send(Event::TurnFinished(Outcome::Cancelled));
             }
             return;
         };
@@ -568,7 +565,7 @@ impl Conversation {
                 .send(Event::TurnFinished(Outcome::Failed(queued.clone())));
             answered += 1;
         }
-        if answered == 0 && at_least_one && !self.cancelled {
+        if answered == 0 && at_least_one {
             let _ = self
                 .events
                 .send(Event::TurnFinished(Outcome::Failed(queued)));

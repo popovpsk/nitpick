@@ -107,7 +107,6 @@ struct Conversation {
     queue: VecDeque<String>,
     normalizer: Normalizer,
     interrupt: Interrupt,
-    cancelled: bool,
 }
 
 async fn converse(launch: Launch, limits: Limits, transport: Transport, channels: Channels) {
@@ -124,7 +123,6 @@ async fn converse(launch: Launch, limits: Limits, transport: Transport, channels
         queue: VecDeque::new(),
         normalizer: Normalizer::default(),
         interrupt: Interrupt::default(),
-        cancelled: false,
     };
     let (stop, ready) = match conversation.handshake().await {
         Ok(()) => (conversation.serve().await, true),
@@ -335,14 +333,19 @@ impl Conversation {
                     self.interrupt
                         .deadline
                         .get_or_insert_with(|| Instant::now() + self.limits.stop);
-                } else if self.queue.pop_front().is_some() {
-                    self.cancelled = true;
-                    let _ = self.events.send(Event::TurnFinished(Outcome::Interrupted));
+                } else {
+                    self.cancel_queued();
                 }
             }
             Ok(Command::Shutdown) | Err(_) => return ControlFlow::Break(()),
         }
         ControlFlow::Continue(())
+    }
+
+    fn cancel_queued(&mut self) {
+        if self.queue.pop_front().is_some() {
+            let _ = self.events.send(Event::TurnFinished(Outcome::Cancelled));
+        }
     }
 
     fn on_incoming(&mut self, incoming: Incoming) {
@@ -396,11 +399,16 @@ impl Conversation {
     }
 
     fn end(&mut self, running: Outcome, queued: Failure, at_least_one: bool) {
-        for command in self.commands.try_iter() {
+        let pending: Vec<Command> = self.commands.try_iter().collect();
+        for command in pending {
             match command {
                 Command::Prompt(text) => self.queue.push_back(text),
                 Command::Shutdown => return,
-                Command::Interrupt => {}
+                Command::Interrupt => {
+                    if !self.normalizer.active() {
+                        self.cancel_queued();
+                    }
+                }
             }
         }
         let mut answered = 0;
@@ -415,7 +423,7 @@ impl Conversation {
                 .send(Event::TurnFinished(Outcome::Failed(queued.clone())));
             answered += 1;
         }
-        if answered == 0 && at_least_one && !self.cancelled {
+        if answered == 0 && at_least_one {
             let _ = self
                 .events
                 .send(Event::TurnFinished(Outcome::Failed(queued)));

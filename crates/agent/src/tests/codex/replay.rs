@@ -313,6 +313,10 @@ fn completed() -> Event {
     Event::TurnFinished(Outcome::Completed)
 }
 
+fn cancelled() -> Event {
+    Event::TurnFinished(Outcome::Cancelled)
+}
+
 fn interrupted() -> Event {
     Event::TurnFinished(Outcome::Interrupted)
 }
@@ -1276,7 +1280,7 @@ async fn an_interrupt_during_initialize_cancels_the_queued_prompt() {
     rig.prompt("overview");
     let (id, _) = rig.request("initialize").await;
     rig.send(Command::Interrupt);
-    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(rig.next().await, cancelled());
     rig.respond(id, json!({"userAgent": USER_AGENT})).await;
     rig.notification("initialized").await;
     let (id, _) = rig.request("thread/start").await;
@@ -1301,7 +1305,7 @@ async fn an_interrupt_during_thread_start_cancels_the_queued_prompt() {
     rig.notification("initialized").await;
     let (id, _) = rig.request("thread/start").await;
     rig.send(Command::Interrupt);
-    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(rig.next().await, cancelled());
     rig.respond(id, thread_result(THREAD)).await;
     assert_eq!(rig.next().await, session(THREAD));
     assert!(rig.reads_nothing().await);
@@ -1319,7 +1323,7 @@ async fn an_interrupt_during_resume_cancels_the_queued_prompt() {
     rig.notification("initialized").await;
     let (id, _) = rig.request("thread/resume").await;
     rig.send(Command::Interrupt);
-    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(rig.next().await, cancelled());
     rig.respond(id, thread_result("thread-old")).await;
     assert_eq!(rig.next().await, session("thread-old"));
     assert!(rig.reads_nothing().await);
@@ -1333,7 +1337,7 @@ async fn an_interrupt_cancels_only_the_oldest_queued_prompt() {
     rig.prompt("second");
     let (id, _) = rig.request("initialize").await;
     rig.send(Command::Interrupt);
-    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(rig.next().await, cancelled());
     rig.respond(id, json!({"userAgent": USER_AGENT})).await;
     rig.notification("initialized").await;
     let (id, _) = rig.request("thread/start").await;
@@ -1388,14 +1392,89 @@ async fn an_interrupt_with_nothing_queued_is_a_no_op_in_every_phase() {
 }
 
 #[tokio::test]
-async fn a_cancelled_prompt_gets_no_extra_failure_when_the_handshake_fails() {
+async fn a_cancelled_prompt_does_not_stop_a_later_prompt_getting_its_failure() {
+    let mut launch = launch();
+    launch.resume = Some("thread-old".into());
+    let mut rig = Rig::start_with(launch, Limits::default());
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, cancelled());
+    rig.prompt("question");
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/resume").await;
+    rig.respond_error(id, "no rollout found for thread id thread-old")
+        .await;
+    assert_eq!(
+        rig.next().await,
+        failed(
+            FailureKind::SessionLost,
+            "no rollout found for thread id thread-old"
+        )
+    );
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn a_failed_handshake_after_a_cancel_still_reports_for_a_prompt_on_its_way() {
     let mut rig = Rig::start();
     rig.prompt("overview");
     let (id, _) = rig.request("initialize").await;
     rig.send(Command::Interrupt);
-    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(rig.next().await, cancelled());
     rig.respond(id, json!({"userAgent": "nitpick/0.100.0 (x)"}))
         .await;
+    let events = rig.until_finished().await;
+    assert!(matches!(
+        &events[..],
+        [Event::TurnFinished(Outcome::Failed(_))]
+    ));
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_unread_when_the_setup_fails_cancels_the_oldest_prompt() {
+    let mut launch = launch();
+    launch.resume = Some("thread-old".into());
+    let mut rig = Rig::start_with(launch, Limits::default());
+    rig.prompt("overview");
+    rig.prompt("question");
+    let (id, _) = rig.request("initialize").await;
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/resume").await;
+    rig.send(Command::Interrupt);
+    rig.respond_error(id, "no rollout found for thread id thread-old")
+        .await;
+    assert_eq!(rig.next().await, cancelled());
+    assert_eq!(
+        rig.next().await,
+        failed(
+            FailureKind::SessionLost,
+            "no rollout found for thread id thread-old"
+        )
+    );
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_unread_at_the_end_of_output_leaves_the_queue_to_the_failures_while_a_turn_runs()
+ {
+    let mut rig = Rig::ready("one").await;
+    rig.start_turn("turn-1", "one").await;
+    rig.complete("turn-1", "completed").await;
+    assert_eq!(rig.until_finished().await.last(), Some(&completed()));
+    rig.prompt("two");
+    rig.request("turn/start").await;
+    rig.prompt("three");
+    rig.send(Command::Interrupt);
+    rig.hang_up().await;
+    assert_eq!(rig.next().await, failed(FailureKind::Other, STOPPED));
+    assert_eq!(rig.next().await, failed(FailureKind::Other, STOPPED));
     assert!(rig.no_events().await);
     rig.ends().await;
 }

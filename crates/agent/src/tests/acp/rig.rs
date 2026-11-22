@@ -363,6 +363,10 @@ pub fn interrupted() -> Event {
     Event::TurnFinished(Outcome::Interrupted)
 }
 
+pub fn cancelled_prompt() -> Event {
+    Event::TurnFinished(Outcome::Cancelled)
+}
+
 pub fn failed(kind: FailureKind, message: &str) -> Event {
     Event::TurnFinished(Outcome::Failed(Failure {
         kind,

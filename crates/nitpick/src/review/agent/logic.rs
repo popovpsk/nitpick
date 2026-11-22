@@ -187,7 +187,25 @@ pub(super) fn is_frame_paced(event: &Event) -> bool {
 pub(super) type Write = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 pub(super) fn answered(outcome: &Outcome) -> bool {
-    matches!(outcome, Outcome::Completed | Outcome::Interrupted)
+    match outcome {
+        Outcome::Completed | Outcome::Interrupted => true,
+        Outcome::Cancelled | Outcome::Failed(_) => false,
+    }
+}
+
+pub(super) fn auto_attempted_after(
+    current: Option<&str>,
+    request: &Request,
+    turn_head: &str,
+    outcome: &Outcome,
+) -> Option<String> {
+    let stopped_overview =
+        matches!(outcome, Outcome::Cancelled) && request.kind() == AgentKind::Overview;
+    if stopped_overview {
+        Some(turn_head.to_owned())
+    } else {
+        current.map(str::to_owned)
+    }
 }
 
 pub(super) fn brief_delivered(was: bool, carried: bool, outcome: &Outcome) -> bool {
