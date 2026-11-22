@@ -1,7 +1,9 @@
 use std::ffi::OsString;
 
 use crate::Error;
-use crate::process::{Environment, Invocation};
+use rstest::rstest;
+
+use crate::process::{Environment, Grace, Invocation, REAPER_SCRIPT, reaper_args};
 
 fn env_with(pairs: &[(&str, &str)]) -> Environment {
     let vars = pairs
@@ -9,6 +11,49 @@ fn env_with(pairs: &[(&str, &str)]) -> Environment {
         .map(|(key, value)| (OsString::from(key), OsString::from(value)))
         .collect();
     Environment::merge(vars, &[], None)
+}
+
+#[rstest]
+#[case::default_grace(3000, 2000, "3", "2")]
+#[case::rounds_up(1500, 1, "2", "1")]
+#[case::zero(0, 0, "0", "0")]
+fn the_reaper_waits_whole_seconds(
+    #[case] term_ms: u64,
+    #[case] kill_ms: u64,
+    #[case] term: &str,
+    #[case] kill: &str,
+) {
+    let grace = Grace {
+        stdin: std::time::Duration::from_millis(term_ms),
+        term: std::time::Duration::from_millis(kill_ms),
+    };
+    let args = reaper_args(&[4242], grace).unwrap();
+    assert_eq!(&args[2..], ["sh", term, kill, "4242"]);
+}
+
+#[test]
+fn the_reaper_gets_only_plain_group_numbers() {
+    let args = reaper_args(
+        &[0, 1, 2, 31337, i32::MAX as u32 + 1, u32::MAX],
+        Grace::default(),
+    )
+    .unwrap();
+    assert_eq!(args[0], "-c");
+    assert_eq!(args[1], REAPER_SCRIPT);
+    assert_eq!(&args[2..], ["sh", "3", "2", "2", "31337"]);
+    assert!(
+        args[3..]
+            .iter()
+            .all(|arg| arg.chars().all(|c| c.is_ascii_digit()))
+    );
+}
+
+#[rstest]
+#[case::none(&[])]
+#[case::reserved(&[0, 1])]
+#[case::out_of_range(&[u32::MAX])]
+fn the_reaper_is_not_started_without_a_real_group(#[case] groups: &[u32]) {
+    assert!(reaper_args(groups, Grace::default()).is_none());
 }
 
 #[test]
@@ -47,6 +92,7 @@ mod unix {
 
     use rstest::rstest;
 
+    use super::super::group::{assert_dies, ps_state};
     use super::*;
     use crate::lines::Lines;
     use crate::process::{Grace, Process, resolve_program};
@@ -74,28 +120,6 @@ mod unix {
             .expect("the child printed in time")
             .unwrap()
             .expect("the child printed a line")
-    }
-
-    async fn ps_state(pid: &str) -> Option<String> {
-        let output = tokio::process::Command::new("ps")
-            .args(["-o", "stat=", "-p", pid])
-            .output()
-            .await
-            .unwrap();
-        let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        (!state.is_empty()).then_some(state)
-    }
-
-    async fn assert_dies(pid: &str) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            match ps_state(pid).await {
-                None => return,
-                Some(state) if state.starts_with('Z') => return,
-                Some(_) if Instant::now() > deadline => panic!("process {pid} is still alive"),
-                Some(_) => tokio::time::sleep(Duration::from_millis(50)).await,
-            }
-        }
     }
 
     #[tokio::test]
@@ -174,6 +198,27 @@ mod unix {
         let exit = process.wait().await;
         assert!(exit.status.is_some_and(|status| status.success()));
         assert_dies(&pid).await;
+    }
+
+    #[tokio::test]
+    async fn the_reaper_ends_a_group_nobody_supervises() {
+        let (process, pipes) =
+            Process::spawn(&sh("trap '' TERM; sleep 300 & echo $!; wait")).unwrap();
+        let leader = process.id().unwrap();
+        let mut lines = Lines::new(pipes.stdout);
+        let child = read_line(&mut lines).await;
+        std::mem::forget(process);
+        std::mem::forget(pipes.stdin);
+        std::mem::forget(lines);
+
+        let grace = Grace {
+            stdin: Duration::from_secs(1),
+            term: Duration::from_secs(1),
+        };
+        crate::process::reap(&[leader], grace).unwrap();
+
+        assert_dies(&child).await;
+        assert_dies(&leader.to_string()).await;
     }
 
     #[tokio::test]

@@ -15,7 +15,7 @@ pub mod session;
 #[cfg(test)]
 mod tests;
 
-pub use registry::shutdown_all;
+pub use registry::{quit, shutdown_all};
 pub use session::Session;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

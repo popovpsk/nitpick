@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -79,6 +80,7 @@ pub fn driver_for(kind: HarnessKind) -> Result<Arc<dyn Driver>, Error> {
 
 pub struct Control {
     id: u64,
+    leader: Option<u32>,
     shutting_down: AtomicBool,
     commands: flume::Sender<Command>,
     finished: watch::Receiver<bool>,
@@ -88,6 +90,10 @@ pub struct Control {
 impl Control {
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    pub fn leader(&self) -> Option<u32> {
+        self.leader
     }
 
     pub fn is_finished(&self) -> bool {
@@ -177,9 +183,7 @@ pub fn start_in(
     driver: Arc<dyn Driver>,
     launch: Launch,
 ) -> Result<(Session, flume::Receiver<Event>), Error> {
-    if !launch.scratch.as_os_str().is_empty() {
-        std::fs::create_dir_all(&launch.scratch)?;
-    }
+    let scratch = Scratch::create(&launch.scratch)?;
     let plan = driver.plan(&launch)?;
     if let Some(failure) = plan.refusal {
         return Ok(refused(failure));
@@ -187,12 +191,14 @@ pub fn start_in(
     let invocation =
         Invocation::resolve_in(&launch.command, plan.args, &plan.env, env, &launch.cwd)?;
     let (process, pipes) = Process::spawn(&invocation)?;
+    scratch.keep();
 
     let (events_sender, events_receiver) = flume::unbounded();
     let (commands_sender, commands_receiver) = flume::unbounded();
     let (finished_sender, finished_receiver) = watch::channel(false);
     let control = Arc::new(Control {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        leader: process.id(),
         shutting_down: AtomicBool::new(false),
         commands: commands_sender,
         finished: finished_receiver,
@@ -225,12 +231,52 @@ pub fn start_in(
     Ok((session, events_receiver))
 }
 
+struct Scratch {
+    path: PathBuf,
+    created: bool,
+}
+
+impl Scratch {
+    fn create(path: &Path) -> std::io::Result<Scratch> {
+        if path.as_os_str().is_empty() {
+            return Ok(Scratch {
+                path: PathBuf::new(),
+                created: false,
+            });
+        }
+        let existed = path.exists();
+        std::fs::create_dir_all(path)?;
+        Ok(Scratch {
+            path: path.to_path_buf(),
+            created: !existed,
+        })
+    }
+
+    fn keep(mut self) {
+        self.created = false;
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.created
+            && let Err(error) = std::fs::remove_dir_all(&self.path)
+        {
+            log::debug!(
+                "removing the scratch folder {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
 fn refused(failure: Failure) -> (Session, flume::Receiver<Event>) {
     let (events_sender, events_receiver) = flume::unbounded();
     let (commands_sender, _) = flume::unbounded();
     let (_, finished_receiver) = watch::channel(true);
     let control = Arc::new(Control {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        leader: None,
         shutting_down: AtomicBool::new(false),
         commands: commands_sender,
         finished: finished_receiver,

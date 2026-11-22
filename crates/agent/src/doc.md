@@ -13,17 +13,18 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 ## Files
 
 - `lib.rs` — the contract: `HarnessKind`, `AcpFlavor`, `Launch`, `Event`, `Outcome`,
-  `Failure`, `FailureKind`, `Error`, `probe`; re-exports `Session` and `shutdown_all`. The app
+  `Failure`, `FailureKind`, `Error`, `probe`; re-exports `Session`, `shutdown_all` and `quit`. The app
   uses only these.
 - `process.rs` — command splitting, login-shell environment snapshot, environment merge and
   scrub, program lookup, `Invocation`, `Process` (spawn in a process group / job object, soft
-  shutdown, stderr tail), `drain`, `probe_version`, `on_runtime`.
+  shutdown, stderr tail), the quit-time reaper (`reap`, `reaper_args`), `drain`, `probe_version`,
+  `on_runtime`.
 - `lines.rs` — `Lines`: newline framing over any `AsyncRead` that survives bad UTF-8 and
   skips lines over 32 MiB.
 - `jsonrpc.rs` — line-framed JSON-RPC 2.0 over an `AsyncRead` + `AsyncWrite`: `connect`,
   `Client` (requests, notifications, replies to server requests), `Connection` (incoming
   notifications and server requests).
-- `registry.rs` — `Registry` of live sessions and `shutdown_all`.
+- `registry.rs` — `Registry` of live sessions, `shutdown_all` and `quit`.
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
 - `prompt.rs` — system instructions (`instructions(language, disk_matches_head)`), the overview
@@ -82,9 +83,30 @@ sessions without the login shell.
   terminated. A killed Claude Code can lose the user's login if it is mid token refresh, hence
   the order. After the leader is gone the group is killed once more, so a background command the
   agent started never outlives the session; dropping a `Process` does the same.
+- Quitting the app (`agent::quit()`, called synchronously from the quit handler) cannot use the
+  soft shutdown: gpui waits 200 ms for quit handlers and `net_runtime` is never dropped, so
+  nothing in-process survives to step through 3 s and 2 s. On Unix `quit` spawns one detached
+  `/bin/sh` (own process group, stdio to `/dev/null`, `HUP` ignored, `/` as cwd, a fixed `PATH`)
+  that runs the same ladder after the app is gone: it sleeps 3 s, sends SIGTERM to every live
+  session's group, sleeps 2 s, sends SIGKILL. Stdin needs no step of its own: `quit` also asks
+  every driver to shut down, and the pipes close with the app at the latest, so the harness sees
+  EOF at once and a polite one (Claude Code finishing a token refresh) exits well inside the 3 s.
+  The reaper's script is a constant; the only data it receives are the two delays and the group
+  ids, as arguments that are plain decimal numbers (ids outside 2..=`i32::MAX` are dropped), never
+  interpolated into the script. A group id is its leader's pid and stays reserved while any member
+  lives; once the group is empty the id may be reused, and within the 5 s after quit the reused
+  id would also have to become a group leader, which is accepted as unrealistic (the kill of an
+  empty group is a no-op). A process that left the group (its own `setsid`) is out of reach, as
+  in the in-process ladder. On Windows the job object is created with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (process-wrap sets it because `KillOnDrop` is wrapped), so
+  the OS terminates the whole tree when the app's handle closes; that is immediate, without the
+  3 s wait, and `quit` there only asks the drivers to shut down.
 - Dropping the last `Session` clone requests the same shutdown; the registry keeps only the
   control handle, so it never keeps a session alive. `shutdown()` aborts the supervisor if the
   session has not ended in 10 s (the drop of `Process` then kills the group).
+- `start_in` removes `Launch.scratch` when it returns an error or a refusal, but only if the
+  call created the folder: a pre-existing one (and its files) is left alone, and parents created
+  on the way stay. A started session keeps its folder; removing it later is the app's job.
 - `Session::start` is synchronous (it must report "not found" as an error) and so waits for the
   login-shell snapshot the first time; `process::prewarm()` starts it in the background, the
   app calls it at startup.

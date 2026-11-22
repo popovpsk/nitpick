@@ -652,6 +652,64 @@ impl Drop for Process {
     }
 }
 
+pub const REAPER_SCRIPT: &str = "trap '' HUP
+term=$1
+kill=$2
+shift 2
+sleep \"$term\"
+for g in \"$@\"; do kill -s TERM -- \"-$g\" 2>/dev/null; done
+sleep \"$kill\"
+for g in \"$@\"; do kill -s KILL -- \"-$g\" 2>/dev/null; done
+";
+
+fn whole_seconds(duration: Duration) -> u64 {
+    duration.as_secs() + u64::from(duration.subsec_nanos() > 0)
+}
+
+pub fn reaper_args(groups: &[u32], grace: Grace) -> Option<Vec<String>> {
+    let groups: Vec<String> = groups
+        .iter()
+        .filter(|group| (2..=i32::MAX as u32).contains(group))
+        .map(u32::to_string)
+        .collect();
+    if groups.is_empty() {
+        return None;
+    }
+    let mut args = vec![
+        "-c".to_owned(),
+        REAPER_SCRIPT.to_owned(),
+        "sh".to_owned(),
+        whole_seconds(grace.stdin).to_string(),
+        whole_seconds(grace.term).to_string(),
+    ];
+    args.extend(groups);
+    Some(args)
+}
+
+#[cfg(unix)]
+pub fn reap(groups: &[u32], grace: Grace) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    let Some(args) = reaper_args(groups, grace) else {
+        return Ok(());
+    };
+    std::process::Command::new("/bin/sh")
+        .args(args)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .current_dir("/")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(drop)
+}
+
+#[cfg(not(unix))]
+pub fn reap(_groups: &[u32], _grace: Grace) -> std::io::Result<()> {
+    Ok(())
+}
+
 pub(crate) async fn drain(task: &mut Option<JoinHandle<()>>, limit: Duration) {
     let Some(handle) = task.as_mut() else {
         return;

@@ -127,11 +127,10 @@ fn main() {
         cx.on_app_quit(|cx| {
             window_registry::quitting(cx);
             let writes = db::barrier(cx);
-            let sessions = ::agent::shutdown_all();
+            ::agent::quit();
             diagnostics::flush();
             async move {
                 writes.await;
-                sessions.await;
                 diagnostics::flush();
             }
         })

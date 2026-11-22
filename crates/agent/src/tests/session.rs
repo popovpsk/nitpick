@@ -43,10 +43,14 @@ mod unix {
 
     use tokio::io::AsyncWriteExt;
 
+    use super::super::group::assert_dies;
     use super::*;
     use crate::Event;
+    use crate::Failure;
+    use crate::FailureKind;
     use crate::lines::Lines;
     use crate::process::Environment;
+    use crate::process::Grace;
     use crate::registry::Registry;
     use crate::session::{BoxFuture, Channels, Command, Driver, Plan, Transport, start_in};
 
@@ -243,5 +247,174 @@ mod unix {
         .unwrap();
         assert!(scratch.is_dir());
         session.shutdown().await;
+    }
+
+    struct ScratchDriver {
+        refuse: bool,
+    }
+
+    impl Driver for ScratchDriver {
+        fn plan(&self, launch: &Launch) -> Result<Plan, Error> {
+            if self.refuse {
+                return Ok(Plan {
+                    refusal: Some(Failure {
+                        kind: FailureKind::SessionLost,
+                        message: "gone".into(),
+                    }),
+                    ..Plan::default()
+                });
+            }
+            std::fs::write(launch.scratch.join("settings.json"), "{}")?;
+            Ok(Plan::default())
+        }
+
+        fn run(&self, _launch: Launch, _transport: Transport, _channels: Channels) -> BoxFuture {
+            Box::pin(async {})
+        }
+    }
+
+    struct StubbornDriver;
+
+    impl Driver for StubbornDriver {
+        fn plan(&self, _launch: &Launch) -> Result<Plan, Error> {
+            Ok(Plan::default())
+        }
+
+        fn run(&self, _launch: Launch, transport: Transport, channels: Channels) -> BoxFuture {
+            Box::pin(async move {
+                let Transport { reader, writer } = transport;
+                let mut lines = Lines::new(reader);
+                if let Ok(Some(line)) = lines.next_line().await {
+                    let _ = channels.events.send(Event::Text(line));
+                }
+                let _held = writer;
+                std::future::pending::<()>().await;
+            })
+        }
+    }
+
+    fn start_scratch(
+        registry: &Arc<Registry>,
+        command: &str,
+        dir: &std::path::Path,
+        scratch: &std::path::Path,
+        refuse: bool,
+    ) -> Result<(Session, flume::Receiver<Event>), Error> {
+        start_in(
+            Arc::clone(registry),
+            Environment::from_process(),
+            Arc::new(ScratchDriver { refuse }),
+            Launch {
+                scratch: scratch.to_path_buf(),
+                ..launch_with(command, dir)
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_removes_the_scratch_folder_it_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        let scratch = dir.path().join("session");
+        let result = start_scratch(
+            &registry,
+            "no-such-program-for-nitpick",
+            dir.path(),
+            &scratch,
+            false,
+        );
+        assert!(matches!(result, Err(Error::NotFound(_))));
+        assert!(!scratch.exists());
+        assert!(dir.path().exists());
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_leaves_a_scratch_folder_that_was_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        let scratch = dir.path().join("session");
+        std::fs::create_dir(&scratch).unwrap();
+        std::fs::write(scratch.join("keep.txt"), "mine").unwrap();
+        let result = start_scratch(
+            &registry,
+            "no-such-program-for-nitpick",
+            dir.path(),
+            &scratch,
+            false,
+        );
+        assert!(matches!(result, Err(Error::NotFound(_))));
+        assert_eq!(
+            std::fs::read_to_string(scratch.join("keep.txt")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_session_leaves_no_scratch_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        let scratch = dir.path().join("session");
+        let (_session, events) =
+            start_scratch(&registry, "cat", dir.path(), &scratch, true).unwrap();
+        assert!(matches!(
+            next(&events).await,
+            Event::TurnFinished(crate::Outcome::Failed(_))
+        ));
+        assert!(!scratch.exists());
+        assert_eq!(registry.live(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_started_session_keeps_the_scratch_folder_and_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        let scratch = dir.path().join("session");
+        let (session, _events) =
+            start_scratch(&registry, "cat", dir.path(), &scratch, false).unwrap();
+        assert!(scratch.join("settings.json").is_file());
+        session.shutdown().await;
+        assert!(scratch.join("settings.json").is_file());
+    }
+
+    #[tokio::test]
+    async fn the_registry_lists_the_groups_of_live_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        assert!(registry.groups().is_empty());
+        let (session, _events) = start(&registry, "cat", dir.path()).unwrap();
+        let groups = registry.groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(Some(groups[0]), session.control().leader());
+        session.shutdown().await;
+        assert!(registry.groups().is_empty());
+    }
+
+    #[tokio::test]
+    async fn quitting_ends_a_group_that_ignores_stdin_and_sigterm_without_the_supervisor() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(Registry::default());
+        let (session, events) = start_in(
+            Arc::clone(&registry),
+            Environment::from_process(),
+            Arc::new(StubbornDriver),
+            launch_with(
+                r#"sh -c "trap '' TERM; sleep 300 & echo $!; wait""#,
+                dir.path(),
+            ),
+        )
+        .unwrap();
+        let Event::Text(child) = next(&events).await else {
+            panic!("expected the pid of the background command");
+        };
+        let leader = session.control().leader().unwrap().to_string();
+
+        registry.quit(Grace {
+            stdin: Duration::from_secs(1),
+            term: Duration::from_secs(1),
+        });
+
+        assert_dies(&child).await;
+        assert_dies(&leader).await;
+        assert_eq!(next(&events).await, Event::Exited(None));
     }
 }
