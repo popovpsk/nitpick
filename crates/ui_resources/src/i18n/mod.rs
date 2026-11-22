@@ -407,6 +407,12 @@ pub struct Strings {
     pub assistant_exited_plain: SharedString,
     pub assistant_start_failed_t: SharedString,
     pub assistant_unsupported: SharedString,
+    pub cmd_ask_assistant: SharedString,
+    pub cmd_next_stop: SharedString,
+    pub cmd_previous_stop: SharedString,
+    pub assistant_link_missing_t: SharedString,
+    pub assistant_no_overview: SharedString,
+    pub assistant_no_stops: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -552,6 +558,10 @@ impl Strings {
 
     pub fn assistant_start_failed(&self, detail: &str) -> String {
         fill(&self.assistant_start_failed_t, &[detail])
+    }
+
+    pub fn assistant_link_missing(&self, path: &str) -> String {
+        fill(&self.assistant_link_missing_t, &[path])
     }
 
     pub fn hidden_files_invalid(&self, patterns: &str) -> String {
@@ -797,6 +807,7 @@ mod tests {
                 &s.assistant_failed_t,
                 &s.assistant_exited_t,
                 &s.assistant_start_failed_t,
+                &s.assistant_link_missing_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

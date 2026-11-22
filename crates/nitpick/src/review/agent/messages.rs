@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use app_db::{AgentKind, AgentMessage, AgentRole};
 use gpui::{
     AnyElement, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
@@ -10,9 +12,12 @@ use gpui_component::{
     v_flex,
 };
 
+use review_core::DiffLink;
+
+use super::links::{LinkKind, classify};
 use super::{Activity, AgentPanel};
 use crate::localization::tr;
-use crate::review::comments::opens_in_browser;
+use crate::review::OpenDiffLink;
 
 pub(super) struct Message {
     pub id: u64,
@@ -20,6 +25,7 @@ pub(super) struct Message {
     pub kind: AgentKind,
     pub head: String,
     pub text: String,
+    pub links: Rc<[DiffLink]>,
     notice: Option<SharedString>,
     view: Option<Entity<TextViewState>>,
     _observe: Option<Subscription>,
@@ -40,6 +46,7 @@ impl Message {
             kind,
             head,
             text,
+            links: Rc::default(),
             notice,
             view: None,
             _observe: None,
@@ -62,10 +69,16 @@ pub(super) fn agent_markdown(view: &Entity<TextViewState>) -> TextView {
     TextView::new(view)
         .selectable(true)
         .stream_fade(true)
-        .on_link_click(|url, event, _, cx| {
-            if (event.standard_click() || event.is_middle_click()) && opens_in_browser(url) {
+        .link(|link, _| (classify(&link.url) != LinkKind::Ignored).then(|| link.clone()))
+        .on_link_click(|url, event, window, cx| match classify(url) {
+            LinkKind::Diff if event.standard_click() => {
+                let url = url.to_string();
+                window.dispatch_action(Box::new(OpenDiffLink { url }), cx);
+            }
+            LinkKind::Browser if event.standard_click() || event.is_middle_click() => {
                 cx.open_url(url);
             }
+            _ => {}
         })
 }
 

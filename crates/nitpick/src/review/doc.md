@@ -51,7 +51,11 @@ wraps `gitlab` and `github`; nothing here names those crates).
   conversation and the harness session of the review); see `agent/doc.md`. `ReviewView` feeds it
   through `sync_agent`, which hands over a `ReviewContext` after an install, a discussions load,
   a viewed-marks change and a hidden-files change. A single-commit view is skipped, so the
-  assistant always describes the whole review.
+  assistant always describes the whole review. The other direction lives here too:
+  `open_diff_link` (the `OpenDiffLink` action a click on a `diff:` link dispatches),
+  `step_stop` (`AgentNextStop` / `AgentPrevStop` and the panel's stop buttons) and `ask_agent`
+  (`AskAgent`, which reads the diff's selected lines and text); `commit_picker.rs` provides
+  `show_all_changes` for leaving a single-commit view.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
@@ -492,6 +496,20 @@ wraps `gitlab` and `github`; nothing here names those crates).
   The assistant button spins while a turn runs and is highlighted while a finished overview
   waits unread behind the closed panel. The panel sits at the right edge of the body, after the
   diff and before a right-hand tree, and never covers the diff.
+- `diff:` links of the assistant go through `open_diff_link`, modeled on `reveal_discussion`:
+  the file is found by path, then by the `old_path` of a renamed file (`agent::plan_link`); a file
+  not in the diff shows a warning notification and nothing else; the file is shown even when the
+  hide rules hide it (it then has no tree row); a line the file's shown line map does not have
+  keeps the view on the file; otherwise the diff is focused and scrolled to the first line of the
+  range that exists, on the old side for `L` links. In the single-commit view the link is parked
+  in `pending_link`, the review returns to the whole comparison (`show_all_changes`, the same
+  reload the commits picker's "All changes" does) and `install` resumes it once the new review is
+  in (dropped when the load fails or a commit is still shown); a second click meanwhile replaces
+  the parked link instead of starting another return. With "since last view" on and an interdiff
+  for the target file, the mode is switched off first (synchronously) because its line numbers
+  differ; the scroll is skipped while content is still pending, which after that switch it never is.
+  `AskAgent` puts a link to the selection into the assistant's input; the selection is not
+  linked in the single-commit view or on the old side of an interdiff (`agent/doc.md`).
 - Approve button (left of the refresh button): "Approve" (with the count when others
   approved), "Approved" in the success style once the user approved (a click withdraws on
   GitLab), or just the count when the user can't approve (their own request); hidden when
@@ -649,6 +667,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
 - The assistant is fed by push (`sync_agent`) rather than by reading `ReviewView` from the
   panel: the panel is updated from inside `ReviewView`'s own updates, and reading the parent
   back there would panic.
+- A `diff:` link never edits what the user sees beyond the file and the scroll position: it
+  does not toggle the viewed mark, hide rules or settings. Leaving the single-commit view and the
+  interdiff is the one exception, because a link's line numbers only mean something in the whole
+  comparison.
 - The assistant panel is non-modal like the tree panel, not a `Sheet` like the comments: the
   diff stays clickable beside it. Whether it is open is per-window state, closed at start and
   never saved, like the tree's visibility; only its width is a setting.

@@ -97,7 +97,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   focused) and re-applying the theme when `ui_scale` or `code_zoom` change.
 - `keymap.rs` — `COMMANDS`, the registry of every user-facing shortcut (id, group, key
   context, default keys with `secondary-` for ⌘/Ctrl, action, title); `init` and `apply`
-  build the live keymap; `keys`, `conflict`, `assign`, `reset` for the settings screen.
+  build the live keymap; `keys`, `conflict`, `assign`, `reset` for the settings screen. Actions
+  that carry data (`OpenDiffLink`, dispatched by a click on an assistant link) are not commands.
 - `keymap_tests.rs` — defaults parse on every OS and never repeat a key in one context.
 - `shortcut_dialog.rs` — the dialog that records a new shortcut (`ShortcutRecorder`), and
   the keystroke chip helper the settings list shares with it.

@@ -133,6 +133,14 @@ impl ReviewView {
         let Some(commit) = self.commit_picker.shas.get(entry).cloned() else {
             return;
         };
+        self.switch_commit(commit, cx);
+    }
+
+    pub(super) fn show_all_changes(&mut self, cx: &mut Context<Self>) {
+        self.switch_commit(None, cx);
+    }
+
+    fn switch_commit(&mut self, commit: Option<String>, cx: &mut Context<Self>) {
         if commit == self.commit {
             return;
         }

@@ -8,6 +8,7 @@ use app_db::{AgentKind, AgentMessage, AgentRole, NewAgentMessage};
 use gpui::{App, AppContext as _, AsyncApp, Context, SharedString, Task, WeakEntity, Window};
 
 use super::context::{self, ReviewContext, Workdir};
+use super::links;
 use super::logic::{self, OverviewState, Request};
 use super::messages::Message;
 use super::{Activity, AgentPanel, Live, Lookup, Phase, Turn};
@@ -135,6 +136,7 @@ impl AgentPanel {
             self.reload_conversation(cx);
             cx.notify();
         } else if head_changed {
+            self.refresh_stops();
             self.evaluate(cx);
             cx.notify();
         }
@@ -175,6 +177,8 @@ impl AgentPanel {
         self.stale = false;
         self.seen.clear();
         self.session_id = None;
+        self.pending = None;
+        self.refresh_stops();
         self.load_generation += 1;
         let generation = self.load_generation;
         let Some(context) = self.context.clone() else {
@@ -216,6 +220,7 @@ impl AgentPanel {
         let rows = self.rows;
         self.scroll.update(cx, |scroll, cx| scroll.reset(rows, cx));
         self.loaded = true;
+        self.refresh_stops();
         self.evaluate(cx);
         cx.notify();
     }
@@ -277,8 +282,10 @@ impl AgentPanel {
         if text.is_empty() || !self.can_send() {
             return;
         }
+        let question = links::compose_question(&text, self.pending.as_ref());
+        self.pending = None;
         self.input.update(cx, |input, cx| input.clean(window, cx));
-        self.send_chat(text.clone(), text, cx);
+        self.send_chat(question.shown, question.prompt, cx);
     }
 
     pub(super) fn send_chat(&mut self, shown: String, prompt: String, cx: &mut Context<Self>) {
@@ -356,6 +363,8 @@ impl AgentPanel {
         self.seen.clear();
         self.session_id = None;
         self.stale = false;
+        self.pending = None;
+        self.refresh_stops();
         cx.notify();
     }
 
@@ -746,6 +755,7 @@ impl AgentPanel {
             created_at: now(),
         };
         self.persist(stored, cx);
+        self.refresh_stops();
     }
 
     pub(super) fn add_notice(&mut self, text: String, cx: &mut Context<Self>) {
@@ -799,6 +809,7 @@ impl AgentPanel {
         self.scroll
             .update(cx, |scroll, cx| scroll.splice(ix..ix, 1, cx));
         self.rows += 1;
+        self.refresh_stops();
         cx.notify();
         ix
     }
@@ -808,6 +819,7 @@ impl AgentPanel {
         self.scroll
             .update(cx, |scroll, cx| scroll.splice(ix..ix + 1, 0, cx));
         self.rows -= 1;
+        self.refresh_stops();
     }
 
     pub(super) fn index_of(&self, id: u64) -> Option<usize> {

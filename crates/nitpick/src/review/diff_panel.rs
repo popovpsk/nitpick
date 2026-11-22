@@ -29,10 +29,11 @@ use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    AddComment, Busy, COMMENT_LANE, COMMENT_MARKER, CrossHint, FindFile, FindInFile, FocusDiff,
-    FocusTree, LoadState, LoadedReview, NextChange, NextFile, PreviousChange, PreviousFile,
-    PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleAgent, ToggleBlame, ToggleTree,
-    ToggleViewed, agent, comment_list, comments, file_actions,
+    AddComment, AgentNextStop, AgentPrevStop, AskAgent, Busy, COMMENT_LANE, COMMENT_MARKER,
+    CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview, NextChange,
+    NextFile, OpenDiffLink, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
+    ReviewView, TREE_SLIDE, ToggleAgent, ToggleBlame, ToggleTree, ToggleViewed, agent,
+    comment_list, comments, file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -1300,6 +1301,30 @@ impl Render for ReviewView {
                 } else {
                     this.toggle_agent(cx);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &AskAgent, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.ask_agent(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &AgentNextStop, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_stop(agent::Step::Next, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &AgentPrevStop, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.step_stop(agent::Step::Previous, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, action: &OpenDiffLink, window, cx| {
+                this.open_diff_link(&action.url, window, cx);
             }))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| {
                 this.open_file_search(window, cx);

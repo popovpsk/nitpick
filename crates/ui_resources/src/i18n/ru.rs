@@ -400,4 +400,10 @@ pub static RU: Strings = lang! {
     assistant_exited_plain: "Ассистент неожиданно остановился.",
     assistant_start_failed_t: "Не удалось запустить ассистента: {}",
     assistant_unsupported: "Этот агент пока не поддерживается.",
+    cmd_ask_assistant: "Спросить ассистента о выделении",
+    cmd_next_stop: "Следующая остановка обзора",
+    cmd_previous_stop: "Предыдущая остановка обзора",
+    assistant_link_missing_t: "Ассистент сослался на файл, которого нет в этом ревью: {}",
+    assistant_no_overview: "Обзора ещё нет. Сначала попросите его у ассистента.",
+    assistant_no_stops: "В обзоре нет ссылок на это ревью.",
 };

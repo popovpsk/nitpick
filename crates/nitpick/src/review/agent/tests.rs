@@ -10,7 +10,7 @@ use app_db::AgentKind;
 use forge::ForgeKind;
 use git_repo::Repo;
 use gpui::SharedString;
-use review_core::{FileStatus, Side};
+use review_core::{DiffLink, FileStatus, Side};
 use rstest::rstest;
 use ui_resources::i18n::Lang;
 
@@ -18,11 +18,12 @@ use super::context::{
     BriefInputs, DiscussionInput, FileInput, WorkdirPlan, assemble, disk_matches, language_name,
     local_head, resolve_workdir, review_key, thread_position,
 };
+use super::links::{self, LinkKind, Step, Target};
 use super::logic::{
     self, LoadAction, OverviewState, Problem, Request, classify, coalesce, compose_chat, exit_text,
     limit_text, load_action, overview_state, problem_text,
 };
-use super::{Lookup, Phase, locate_in, unread_after};
+use super::{LinkPlan, Lookup, PendingSelection, Phase, locate_in, unread_after};
 use crate::agent_profiles::LoginHint;
 use crate::review::ReviewSource;
 
@@ -626,4 +627,323 @@ fn bursts_of_text_are_merged_but_other_events_keep_their_place() {
         ]
     );
     assert!(coalesce(Vec::new()).is_empty());
+}
+
+fn brief_file(path: &str, old_path: Option<&str>) -> brief::File {
+    brief::File {
+        path: path.to_owned(),
+        old_path: old_path.map(str::to_owned),
+        status: brief::Status::Modified,
+        added: None,
+        removed: None,
+    }
+}
+
+fn link(path: &str, range: Option<(Side, u32, u32)>) -> DiffLink {
+    DiffLink {
+        path: path.to_owned(),
+        range,
+    }
+}
+
+#[test]
+fn stops_keep_links_to_files_of_the_review_in_order() {
+    let files = [
+        brief_file("src/a.rs", None),
+        brief_file("src/new name.rs", Some("src/old.rs")),
+    ];
+    let overview = "\
+1. [entry](diff:src/a.rs#R3-R5)
+2. [renamed](diff:src/new%20name.rs#R1-R2) and [old name](diff:src/old.rs#L9)
+3. [outside](diff:src/elsewhere.rs#R1) and [web](https://example.com)
+4. [whole file](diff:src/a.rs)
+```
+[in code](diff:src/a.rs#R99)
+```
+";
+    assert_eq!(
+        links::stops(overview, &files),
+        vec![
+            link("src/a.rs", Some((Side::New, 3, 5))),
+            link("src/new name.rs", Some((Side::New, 1, 2))),
+            link("src/old.rs", Some((Side::Old, 9, 9))),
+            link("src/a.rs", None),
+        ]
+    );
+}
+
+#[test]
+fn stops_drop_only_repeats_that_follow_each_other() {
+    let files = [brief_file("a.rs", None), brief_file("b.rs", None)];
+    let overview = "[x](diff:a.rs#R1) [y](diff:a.rs#R1) [z](diff:b.rs#R2) [w](diff:a.rs#R1)";
+    assert_eq!(
+        links::stops(overview, &files),
+        vec![
+            link("a.rs", Some((Side::New, 1, 1))),
+            link("b.rs", Some((Side::New, 2, 2))),
+            link("a.rs", Some((Side::New, 1, 1))),
+        ]
+    );
+}
+
+#[test]
+fn stops_of_a_review_without_files_are_empty() {
+    assert!(links::stops("[x](diff:a.rs#R1)", &[]).is_empty());
+}
+
+#[rstest]
+#[case::next_from_nothing(None, 3, Step::Next, Some(0))]
+#[case::previous_from_nothing(None, 3, Step::Previous, Some(2))]
+#[case::next_in_the_middle(Some(0), 3, Step::Next, Some(1))]
+#[case::previous_in_the_middle(Some(2), 3, Step::Previous, Some(1))]
+#[case::next_wraps(Some(2), 3, Step::Next, Some(0))]
+#[case::previous_wraps(Some(0), 3, Step::Previous, Some(2))]
+#[case::single_stop_next(Some(0), 1, Step::Next, Some(0))]
+#[case::no_stops(None, 0, Step::Next, None)]
+#[case::cursor_past_the_end_starts_over(Some(7), 3, Step::Next, Some(0))]
+fn the_cursor_walks_the_stops_and_wraps(
+    #[case] cursor: Option<usize>,
+    #[case] len: usize,
+    #[case] step: Step,
+    #[case] expected: Option<usize>,
+) {
+    assert_eq!(links::step_cursor(cursor, len, step), expected);
+}
+
+#[rstest]
+#[case::first_match(None, "b.rs", Some(1))]
+#[case::next_match_after_the_cursor(Some(1), "b.rs", Some(3))]
+#[case::wraps_to_an_earlier_match(Some(3), "b.rs", Some(1))]
+#[case::not_a_stop_keeps_the_cursor(Some(2), "z.rs", Some(2))]
+#[case::not_a_stop_without_cursor(None, "z.rs", None)]
+fn clicking_a_stop_moves_the_cursor_to_it(
+    #[case] cursor: Option<usize>,
+    #[case] clicked: &str,
+    #[case] expected: Option<usize>,
+) {
+    let stops = [
+        link("a.rs", None),
+        link("b.rs", None),
+        link("c.rs", None),
+        link("b.rs", None),
+    ];
+    assert_eq!(
+        links::cursor_after_click(&stops, &link(clicked, None), cursor),
+        expected
+    );
+}
+
+#[rstest]
+#[case::none_yet(None, 7, Some("– / 7"))]
+#[case::first(Some(0), 7, Some("1 / 7"))]
+#[case::last(Some(6), 7, Some("7 / 7"))]
+#[case::empty(None, 0, None)]
+fn the_position_label_counts_from_one(
+    #[case] cursor: Option<usize>,
+    #[case] len: usize,
+    #[case] expected: Option<&str>,
+) {
+    assert_eq!(links::position_label(cursor, len).as_deref(), expected);
+}
+
+#[rstest]
+#[case::diff("diff:a.rs#R1", LinkKind::Diff)]
+#[case::diff_any_case("DIFF:a.rs", LinkKind::Diff)]
+#[case::https("https://example.com", LinkKind::Browser)]
+#[case::mailto("mailto:a@example.com", LinkKind::Browser)]
+#[case::file("file:///etc/passwd", LinkKind::Ignored)]
+#[case::javascript("javascript:alert(1)", LinkKind::Ignored)]
+#[case::relative("src/a.rs", LinkKind::Ignored)]
+#[case::empty("", LinkKind::Ignored)]
+#[case::multibyte("diff\u{e9}x", LinkKind::Ignored)]
+fn only_diff_and_web_links_are_followed(#[case] url: &str, #[case] expected: LinkKind) {
+    assert_eq!(links::classify(url), expected);
+}
+
+const LINK_PATCH: &str = "diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1,3 +1,3 @@
+ one
+-two
++TWO
+ three
+";
+
+fn plan(link: &DiffLink, files: &[(&str, Option<&str>)]) -> LinkPlan {
+    let maps = review_core::line_maps(LINK_PATCH);
+    links::plan_link(link, files.iter().copied(), |file| {
+        link.locate(&maps[file.min(maps.len() - 1)])
+    })
+}
+
+#[rstest]
+#[case::new_line(link("a.rs", Some((Side::New, 2, 2))), Some((Side::New, 2)))]
+#[case::old_line(link("a.rs", Some((Side::Old, 2, 2))), Some((Side::Old, 2)))]
+#[case::range_outside_the_patch(
+    link("a.rs", Some((Side::New, 50, 60))),
+    None
+)]
+#[case::line_zero(
+    link("a.rs", Some((Side::New, 0, 0))),
+    None
+)]
+#[case::whole_file(link("a.rs", None), None)]
+fn a_link_scrolls_to_the_first_line_the_patch_has(
+    #[case] link: DiffLink,
+    #[case] scroll: Option<(Side, u32)>,
+) {
+    assert_eq!(
+        plan(&link, &[("a.rs", Some("a.rs"))]),
+        LinkPlan::Open(Target { file: 0, scroll })
+    );
+}
+
+#[test]
+fn a_range_scrolls_to_its_first_line_inside_the_patch() {
+    assert_eq!(
+        plan(&link("a.rs", Some((Side::New, 0, 3))), &[("a.rs", None)]),
+        LinkPlan::Open(Target {
+            file: 0,
+            scroll: Some((Side::New, 1))
+        })
+    );
+}
+
+#[rstest]
+#[case::by_new_path("b.rs", Some(1))]
+#[case::by_old_path("was.rs", Some(1))]
+#[case::unknown("c.rs", None)]
+fn a_link_finds_its_file_by_path_or_old_path(#[case] path: &str, #[case] file: Option<usize>) {
+    let files = [("a.rs", None), ("b.rs", Some("was.rs"))];
+    let expected = match file {
+        Some(file) => LinkPlan::Open(Target { file, scroll: None }),
+        None => LinkPlan::NotInReview,
+    };
+    assert_eq!(plan(&link(path, None), &files), expected);
+}
+
+#[test]
+fn a_path_equal_to_one_file_and_the_old_path_of_another_prefers_the_current_name() {
+    let files = [("x.rs", Some("a.rs")), ("a.rs", None)];
+    assert_eq!(
+        plan(&link("a.rs", None), &files),
+        LinkPlan::Open(Target {
+            file: 1,
+            scroll: None
+        })
+    );
+}
+
+#[rstest]
+#[case::same_side_ordered(Side::New, 4, Side::New, 9, (Side::New, 4, 9))]
+#[case::same_side_reversed(Side::Old, 9, Side::Old, 4, (Side::Old, 4, 9))]
+#[case::single_line(Side::New, 5, Side::New, 5, (Side::New, 5, 5))]
+#[case::mixed_sides_end_on_the_pointer(Side::Old, 3, Side::New, 8, (Side::New, 8, 8))]
+fn a_selection_becomes_one_side_range(
+    #[case] side: Side,
+    #[case] start: u32,
+    #[case] end_side: Side,
+    #[case] end: u32,
+    #[case] expected: (Side, u32, u32),
+) {
+    assert_eq!(links::selection_span(side, start, end_side, end), expected);
+}
+
+#[rstest]
+#[case::plain(false, false, Side::New, true)]
+#[case::old_side_plain(false, false, Side::Old, true)]
+#[case::commit_view(true, false, Side::New, false)]
+#[case::interdiff_new(false, true, Side::New, true)]
+#[case::interdiff_old(false, true, Side::Old, false)]
+fn a_selection_is_linked_only_where_its_numbers_are_the_reviews(
+    #[case] commit_view: bool,
+    #[case] since: bool,
+    #[case] side: Side,
+    #[case] expected: bool,
+) {
+    assert_eq!(
+        links::can_link_selection(commit_view, since, side),
+        expected
+    );
+}
+
+fn pending() -> PendingSelection {
+    PendingSelection::new(
+        "src/a.rs".to_owned(),
+        Side::New,
+        10,
+        12,
+        "let x = 1;\nlet y = 2;",
+    )
+}
+
+#[test]
+fn the_marker_is_the_link_the_agent_gets() {
+    let pending = pending();
+    assert_eq!(pending.marker, "[src/a.rs R10-12](diff:src/a.rs#R10-R12)");
+}
+
+#[test]
+fn a_question_with_the_marker_carries_the_selected_text() {
+    let pending = pending();
+    let input = format!("why is {} here?", pending.marker);
+    let question = links::compose_question(&input, Some(&pending));
+    assert_eq!(question.shown, input);
+    assert_eq!(
+        question.prompt,
+        "why is here?\n\nSelected: [src/a.rs R10-12](diff:src/a.rs#R10-R12)\n```\nlet x = 1;\nlet y = 2;\n```\n"
+    );
+}
+
+#[test]
+fn a_question_that_is_only_the_marker_sends_only_the_selection() {
+    let pending = pending();
+    let question = links::compose_question(&format!("  {}  ", pending.marker), Some(&pending));
+    assert_eq!(question.shown, pending.marker);
+    assert!(question.prompt.starts_with("Selected: [src/a.rs R10-12]"));
+}
+
+#[rstest]
+#[case::deleted_marker("what does this do?")]
+#[case::edited_marker("what does [src/a.rs R10-13](diff:src/a.rs#R10-R13) do?")]
+fn a_question_without_the_marker_goes_out_as_typed(#[case] input: &str) {
+    let question = links::compose_question(input, Some(&pending()));
+    assert_eq!(question.shown, input);
+    assert_eq!(question.prompt, input);
+}
+
+#[test]
+fn a_question_without_a_pending_selection_is_trimmed_text() {
+    let question = links::compose_question("  hello \n", None);
+    assert_eq!(question.shown, "hello");
+    assert_eq!(question.prompt, "hello");
+}
+
+#[test]
+fn a_long_selection_is_cut_at_a_character_boundary() {
+    let text = "é".repeat(30_000);
+    let pending = PendingSelection::new("a.rs".to_owned(), Side::New, 1, 1, &text);
+    assert_eq!(pending.text.chars().count(), 20_000);
+}
+
+#[rstest]
+#[case::empty_input("", None, "[m](diff:a#R1) ")]
+#[case::appended_after_text("why", None, "why [m](diff:a#R1) ")]
+#[case::appended_after_whitespace("why ", None, "why [m](diff:a#R1) ")]
+#[case::replaces_the_old_marker(
+    "see [o](diff:a#R2) now",
+    Some("[o](diff:a#R2)"),
+    "see [m](diff:a#R1) now"
+)]
+#[case::old_marker_already_gone("see now", Some("[o](diff:a#R2)"), "see now [m](diff:a#R1) ")]
+fn the_marker_goes_into_the_input(
+    #[case] current: &str,
+    #[case] old: Option<&str>,
+    #[case] expected: &str,
+) {
+    assert_eq!(
+        links::input_with_marker(current, old, "[m](diff:a#R1)"),
+        expected
+    );
 }

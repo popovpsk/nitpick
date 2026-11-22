@@ -108,6 +108,14 @@ fn selection_question_for_one_old_line_without_a_question() {
 }
 
 #[test]
+fn selection_link_is_the_link_the_question_carries() {
+    let selected = selection("src/a.rs", Side::New, 12, 10, "x");
+    let link = selection_link(&selected);
+    assert_eq!(link, "[src/a.rs R10-12](diff:src/a.rs#R10-R12)");
+    assert!(selection_question("q", &selected).contains(&format!("Selected: {link}\n")));
+}
+
+#[test]
 fn selection_question_orders_swapped_ends() {
     let text = selection_question("q", &selection("a.rs", Side::New, 9, 4, "x"));
     assert!(text.contains("[a.rs R4-9](diff:a.rs#R4-R9)"));

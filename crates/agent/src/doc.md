@@ -30,7 +30,8 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
 - `prompt.rs` — system instructions (`instructions(language, disk_matches_head)`), the overview
-  and update tasks, `with_brief`, `with_new_comments`, `selection_question` and `Selection`.
+  and update tasks, `with_brief`, `with_new_comments`, `selection_link`, `selection_question`
+  and `Selection`.
 - `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
   fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
 - `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.

@@ -103,7 +103,7 @@ pub fn with_new_comments(threads: &[Thread], message: &str) -> String {
     )
 }
 
-pub fn selection_question(question: &str, selection: &Selection<'_>) -> String {
+pub fn selection_link(selection: &Selection<'_>) -> String {
     let (start, end) = if selection.start <= selection.end {
         (selection.start, selection.end)
     } else {
@@ -123,6 +123,10 @@ pub fn selection_question(question: &str, selection: &Selection<'_>) -> String {
         format!("{letter}{start}-{end}")
     };
     let label = escape_label(&format!("{} {range}", brief::single_line(selection.path)));
+    format!("[{label}]({link})")
+}
+
+pub fn selection_question(question: &str, selection: &Selection<'_>) -> String {
     let fence = "`".repeat(fence_length(selection.text));
     let mut out = String::new();
     let question = question.trim_end();
@@ -130,7 +134,7 @@ pub fn selection_question(question: &str, selection: &Selection<'_>) -> String {
         out.push_str(question);
         out.push_str("\n\n");
     }
-    out.push_str(&format!("Selected: [{label}]({link})\n"));
+    out.push_str(&format!("Selected: {}\n", selection_link(selection)));
     out.push_str(&fence);
     out.push('\n');
     out.push_str(selection.text);

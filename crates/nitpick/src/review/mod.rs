@@ -42,7 +42,9 @@ use gpui_component::{
     input::{InputEvent, TextareaState},
     notification::Notification,
 };
-use review_core::{FileStatus, FileTree, HideRules, LineKind, Progress, Side, TreeShape};
+use review_core::{
+    DiffLink, FileStatus, FileTree, HideRules, LineKind, Progress, Side, TreeShape, diff_link,
+};
 
 use crate::localization::tr;
 use crate::settings_store::{
@@ -83,8 +85,17 @@ actions!(
         FindInFile,
         AddComment,
         ToggleAgent,
+        AskAgent,
+        AgentNextStop,
+        AgentPrevStop,
     ]
 );
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = review, no_json)]
+pub struct OpenDiffLink {
+    pub url: String,
+}
 
 pub(super) const COMMENT_MARKER: &str = "comment-line";
 pub(super) const COMMENT_LANE: &str = "comment-lane";
@@ -373,6 +384,7 @@ pub struct ReviewView {
     blob_checking: bool,
     _blob_check: Task<()>,
     pending_jump: Option<bool>,
+    pending_link: Option<DiffLink>,
     _interdiff: Task<()>,
     search_opens: usize,
     busy: Option<Busy>,
@@ -435,10 +447,14 @@ impl ReviewView {
             }
         });
         let agent = cx.new(|cx| agent::AgentPanel::new(window, cx));
-        let agent_events =
-            cx.subscribe(&agent, |_, _, event: &agent::AgentEvent, cx| match event {
+        let agent_events = cx.subscribe_in(
+            &agent,
+            window,
+            |this, _, event: &agent::AgentEvent, window, cx| match event {
                 agent::AgentEvent::OpenSettings => cx.emit(ReviewEvent::OpenSettings),
-            });
+                agent::AgentEvent::Stop(step) => this.step_stop(*step, window, cx),
+            },
+        );
         let agent_sync = cx.observe(&agent, |_, _, cx| cx.notify());
         let branch_pickers = branch_picker::BranchPickers::new(window, cx);
         let commit_picker = commit_picker::CommitPicker::new(window, cx);
@@ -529,6 +545,7 @@ impl ReviewView {
             blob_checking: false,
             _blob_check: Task::ready(()),
             pending_jump: None,
+            pending_link: None,
             _interdiff: Task::ready(()),
             search_opens: 0,
             busy: None,
@@ -755,6 +772,7 @@ impl ReviewView {
                     });
                 if unchanged {
                     self.retry_failed_blame(cx);
+                    self.resume_pending_link(cx);
                     cx.notify();
                     return;
                 }
@@ -822,9 +840,11 @@ impl ReviewView {
                 self.request_blame(cx);
                 self.sync_find(cx);
                 self.sync_agent(cx);
+                self.resume_pending_link(cx);
             }
             Err(err) => {
                 log::warn!("review load failed: {err:#}");
+                self.pending_link = None;
                 let message: SharedString = format!("{err:#}").into();
                 self.commit = self
                     .review
@@ -1679,6 +1699,140 @@ impl ReviewView {
                 .update(cx, |state, cx| state.scroll_to_line(position, cx));
         }
         cx.notify();
+    }
+
+    pub fn open_diff_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(link) = diff_link::parse(url) else {
+            return;
+        };
+        self.agent
+            .update(cx, |panel, cx| panel.note_link_clicked(&link, cx));
+        self.go_to_link(link, window, cx);
+    }
+
+    fn go_to_link(&mut self, link: DiffLink, window: &mut Window, cx: &mut Context<Self>) {
+        if self.review.is_none() {
+            return;
+        }
+        if self.commit.is_some() || self.pending_link.is_some() {
+            let leaving = self.commit.is_some();
+            self.pending_link = Some(link);
+            if leaving {
+                self.show_all_changes(cx);
+            }
+            return;
+        }
+        self.navigate_to(&link, window, cx);
+    }
+
+    fn resume_pending_link(&mut self, cx: &mut Context<Self>) {
+        let Some(link) = self.pending_link.take() else {
+            return;
+        };
+        if self.commit.is_some() || self.review.as_ref().is_some_and(|r| r.commit.is_some()) {
+            return;
+        }
+        let view = cx.entity();
+        let handle = self.window_handle;
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                view.update(cx, |this, cx| this.navigate_to(&link, window, cx))
+            });
+        });
+    }
+
+    fn navigate_to(&mut self, link: &DiffLink, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let plan = agent::plan_link(
+            link,
+            review
+                .files
+                .iter()
+                .map(|file| (file.path.as_str(), Some(file.old_path.as_str()))),
+            |file| link.locate(review.files[file].shown_map()),
+        );
+        let target = match plan {
+            agent::LinkPlan::Open(target) => target,
+            agent::LinkPlan::NotInReview => {
+                let message = tr().assistant_link_missing(&link.path);
+                self.notify(Notification::warning(message), cx);
+                return;
+            }
+        };
+        if self.since_mode && self.interdiff_key(target.file).is_some() {
+            self.toggle_since_mode(cx);
+        }
+        if self.current_file != Some(target.file) {
+            self.show_file(target.file, cx);
+        }
+        self.focus_diff(window, cx);
+        if let Some((side, line)) = target.scroll
+            && !self.content_pending()
+        {
+            let path = review.files[target.file].path.clone();
+            let side = match side {
+                Side::New => DiffSide::Modified,
+                Side::Old => DiffSide::Original,
+            };
+            self.change_cursor = None;
+            self.diff.update(cx, |state, cx| {
+                state.scroll_to_line(DiffLinePosition::new(path, side, line as usize), cx)
+            });
+        }
+        cx.notify();
+    }
+
+    fn step_stop(&mut self, step: agent::Step, window: &mut Window, cx: &mut Context<Self>) {
+        let outcome = self.agent.update(cx, |panel, cx| panel.step_stop(step, cx));
+        match outcome {
+            agent::StopStep::Go(link) => self.go_to_link(link, window, cx),
+            agent::StopStep::NoOverview => {
+                self.notify(Notification::info(tr().assistant_no_overview.clone()), cx)
+            }
+            agent::StopStep::NoStops => {
+                self.notify(Notification::info(tr().assistant_no_stops.clone()), cx)
+            }
+        }
+    }
+
+    pub fn ask_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !settings(cx).agent.enabled || !matches!(self.load_state, LoadState::Ready) {
+            return;
+        }
+        let selection = self.selection_for_agent(cx);
+        self.agent
+            .update(cx, |panel, cx| panel.ask(selection, window, cx));
+    }
+
+    fn selection_for_agent(&self, cx: &App) -> Option<agent::PendingSelection> {
+        let review = self.review.as_ref()?;
+        let diff = self.diff.read(cx);
+        let range = diff.selected_lines()?;
+        let side_of = |side: DiffSide| match side {
+            DiffSide::Modified => Side::New,
+            DiffSide::Original => Side::Old,
+        };
+        let (side, start, end) = agent::selection_span(
+            side_of(range.side()),
+            u32::try_from(range.start()).ok()?,
+            side_of(range.end_side()),
+            u32::try_from(range.end()).ok()?,
+        );
+        let interdiff = self.interdiff.is_some() || self.interdiff_loading.is_some();
+        if !agent::can_link_selection(self.commit.is_some(), interdiff, side) {
+            return None;
+        }
+        let file = review.file_index(range.path().as_str())?;
+        let path = review.files[file].path.to_string();
+        Some(agent::PendingSelection::new(
+            path,
+            side,
+            start,
+            end,
+            &diff.selected_text(cx),
+        ))
     }
 
     pub fn thread_collapsed(&self, discussion: &DiscussionView) -> bool {

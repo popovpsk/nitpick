@@ -400,4 +400,10 @@ pub static EN: Strings = lang! {
     assistant_exited_plain: "The assistant stopped unexpectedly.",
     assistant_start_failed_t: "The assistant could not start: {}",
     assistant_unsupported: "This agent is not supported yet.",
+    cmd_ask_assistant: "Ask the assistant about the selection",
+    cmd_next_stop: "Next stop of the overview",
+    cmd_previous_stop: "Previous stop of the overview",
+    assistant_link_missing_t: "The assistant linked a file that is not in this review: {}",
+    assistant_no_overview: "There is no overview yet. Ask the assistant for one first.",
+    assistant_no_stops: "The overview has no links into this review.",
 };
