@@ -4,9 +4,9 @@ The Codex driver: runs `<command> app-server` as a read-only JSON-RPC peer over 
 resumes one thread per session, sends one `turn/start` per prompt and turns the server's
 notifications into `Event`s. GPUI-free.
 
-The driver is written from the documentation of Codex 0.171 and from recorded captures of CLI
-0.146.1; it has not been run against a real CLI. The replay tests use synthetic transcripts, so
-every wire fact below is documented, not verified.
+The driver is written from the documentation of Codex 0.171 and from wire captures of CLI
+0.146.1 made outside this repository; it has not been run against a real CLI. The replay tests
+use synthetic transcripts, so every wire fact below is documented, not verified.
 
 Not here: starting or killing the process (`session`, `process`), the JSON-RPC framing
 (`jsonrpc`), the instruction text (`Launch.instructions` comes from the app).
@@ -23,7 +23,7 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
 ## Invariants and spec
 
 - Command line after the user's command: `app-server`, nothing else. The session needs no scratch
-  folder and the plan has no environment.
+  folder and its `Plan` has no environment.
 - Wire: JSON-RPC without the `"jsonrpc"` tag (`Options::tag_version = false`). Order:
   `initialize` (`clientInfo` `nitpick`, `capabilities: {"experimentalApi": true}`), the
   `initialized` notification with `params: {}`, `thread/start` or `thread/resume`, then one

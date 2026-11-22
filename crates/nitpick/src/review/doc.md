@@ -3,12 +3,13 @@
 One review: a branch comparison, a merge request (a GitLab merge request or a GitHub pull
 request, through `forge`) or the uncommitted changes of the work tree, loaded into a file
 tree, a diff of one file at a time, per-file "viewed" marks, an optional blame of the shown
-file and, for a merge request, its discussions.
+file, for a merge request its discussions, and a side panel with the review assistant.
 `ReviewView` is the entity; the window creates one per opened review.
 
 Not here: choosing what to review (`workspace/start.rs`), the git operations
 (`git_repo`), the tree and viewed models (`review_core`), the hosts' APIs (`forge`, which
-wraps `gitlab` and `github`; nothing here names those crates).
+wraps `gitlab` and `github`; nothing here names those crates), running the assistant's agent
+(`agent`; the panel's own logic is `agent/doc.md`).
 
 ## Files
 
@@ -51,16 +52,16 @@ wraps `gitlab` and `github`; nothing here names those crates).
   conversation and the harness session of the review); see `agent/doc.md`. `ReviewView` feeds it
   through `sync_agent`, which hands over a `ReviewContext` after an install, a discussions load,
   a viewed-marks change and a hidden-files change. A single-commit view is skipped, so the
-  assistant always describes the whole review. The other direction lives here too:
+  assistant always describes the whole review. The other direction lives in `mod.rs`:
   `open_diff_link` (the `OpenDiffLink` action a click on a `diff:` link dispatches),
   `step_stop` (`AgentNextStop` / `AgentPrevStop` and the panel's stop buttons) and `ask_agent`
-  (`AskAgent`, which reads the diff's selected lines and text); `commit_picker.rs` provides
-  `show_all_changes` for leaving a single-commit view.
+  (`AskAgent`, which reads the diff's selected lines and text).
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
   commit's label and tooltip) and its fuzzy `Picker`, entries built when it opens, and the
-  pick → a reload of the same review at that commit.
+  pick → a reload of the same review at that commit; `show_all_changes` is the same reload
+  without a commit, which a `diff:` link uses to leave a single-commit view.
 - `avatars.rs` — the `Avatars` global (`init`): an in-memory map from avatar URL to the
   decoded picture (loading, ready or missing), filled by `request` (disk cache through
   `avatar_cache`, else a download on `net_runtime` with the matching forge's token, a stale
@@ -492,7 +493,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   the tree's view options (the eye). A viewed file is tinted green with a check; striking its
   name through is another switch there (`strike_viewed`, off by default).
 - Header buttons on the right, in order: refresh, comments (merge requests only), assistant
-  (`Icons::Sparkles`, every review kind, while `agent.enabled`; `ToggleAgent`, ⌘/Ctrl-Shift-A).
+  (`Icons::Sparkles`, every review kind, while `agent.enabled`; `ToggleAgent`).
   The assistant button spins while a turn runs and is highlighted while a finished overview
   waits unread behind the closed panel. The panel sits at the right edge of the body, after the
   diff and before a right-hand tree, and never covers the diff.
@@ -671,7 +672,4 @@ wraps `gitlab` and `github`; nothing here names those crates).
   does not toggle the viewed mark, hide rules or settings. Leaving the single-commit view and the
   interdiff is the one exception, because a link's line numbers only mean something in the whole
   comparison.
-- The assistant panel is non-modal like the tree panel, not a `Sheet` like the comments: the
-  diff stays clickable beside it. Whether it is open is per-window state, closed at start and
-  never saved, like the tree's visibility; only its width is a setting.
 - Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.

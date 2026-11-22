@@ -2,12 +2,10 @@
 
 Runs the review assistant: starts an installed agent CLI (Claude Code, Codex, an ACP agent,
 Pi) as a child process in the repository, feeds it prompts and turns its output into one
-stream of `Event`s. It holds the shared machinery (process handling, line reading,
-JSON-RPC framing, the session and registry), the seam a harness driver plugs into and the
-drivers: Claude Code, Codex, the ACP agents (OpenCode, DeepSeek, any other) and Pi. GPUI-free.
-
-It also holds the texts the app sends: the system instructions, the tasks and the review brief
-(`prompt`, `brief`).
+stream of `Event`s. It holds the shared machinery (process handling, line reading, JSON-RPC
+framing, the session and registry), the seam a harness driver plugs into, the drivers
+(Claude Code, Codex, the ACP agents OpenCode, DeepSeek and any other, Pi) and the texts the app
+sends (`prompt`, `brief`). GPUI-free.
 
 Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` from review data
 (`nitpick`), the `diff:` link format (`review_core`, which `prompt` calls).
@@ -139,9 +137,10 @@ sessions without the login shell.
 - A thread's digest is its id, resolved flag, position and every note's author and body in full
   (not the truncated rendering), as compact JSON; the fingerprint is FNV-1a 64 of it, stable
   across runs and Rust versions so the app may persist it. `changed_since` compares by thread id.
-- `instructions` is the Appendix text with the answer language (a display name, empty means
-  English) and the disk rule; the head and base ids come from the brief, so after a head change
-  the app sends a fresh brief along with `update_task`.
+- `instructions` is the fixed text (read-only rules, the untrusted-data rule, the `diff:` link
+  format) with the disk rule and the answer language (a display name, empty means English); the
+  head and base ids come from the brief, so after a head change the app sends a fresh brief
+  along with `update_task`.
 - A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` and
   the text in a code fence one backtick longer than any run inside it (at least three); the link
   comes from `review_core::diff_link::format`.
@@ -153,9 +152,9 @@ sessions without the login shell.
   signals through its `signal`.
 - Modules are `pub` so drivers and tests reach them; the app is expected to use only the
   contract in `lib.rs`.
-- `Error::Unsupported` is a unit variant that no driver produces any more; it stays part of the
-  contract the app matches on. No variant was added for a lost session, the app's contract for it
-  is `FailureKind::SessionLost` on the event stream.
+- `Error::Unsupported` stays in the contract the app matches on, though every `HarnessKind` has a
+  driver. A lost session is not an `Error`: the app's contract for it is
+  `FailureKind::SessionLost` on the event stream.
 - No `futures` crate: the shutdown futures join `JoinHandle`s and a `watch` channel.
 - Drivers sit on `AsyncRead` + `AsyncWrite`, not on `Child`, so recorded sessions replay over
   `duplex` the same on every OS.

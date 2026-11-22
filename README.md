@@ -20,6 +20,7 @@ macOS · Windows · Linux
 - **Progress that survives pushes** — viewed marks stick to the file's exact version: a new push brings back only the files it touched, and *since last view* shows just what changed since you read it.
 - **Hide the noise** — gitignore-style patterns for lock files, generated code and mocks (`mocks/`), per repository or everywhere.
 - **GitLab and GitHub without the browser** — open merge requests by list, URL or `!123`; read, reply, resolve, edit and approve right in the diff, with every code thread in one list.
+- **An assistant that reads the change with you** — uses the agent CLI you already have installed and logged in (Claude Code, Codex, OpenCode, Pi, deepseek-harness or any ACP agent). It explains what the change does, suggests a reading order with links that jump straight to the diff line, and answers questions about the code or your selection. It runs read-only: its editing tools are turned off, and nitpick never touches your files.
 - **Your own changes** — review staged, unstaged and untracked files before you commit.
 
 ## Everything you'd expect

@@ -2,13 +2,14 @@
 
 The app's SQLite database (`nitpick.db` in the data folder) and the only crate that touches
 it: viewed marks per repository, the review assistant's sessions and conversations, and the
-avatar cache. One thread owns the connection; every
-call queues a job on it and returns a future for the answer, so callers on any thread never
-block and jobs run in the order they were called. GPUI-free.
+avatar cache. One thread owns the connection; every call queues a job on it and returns a
+future for the answer, so callers on any thread never block and jobs run in the order they
+were called. GPUI-free.
 
 Not here: settings and the recent list (JSON, `nitpick`'s `settings_store.rs` /
 `recent.rs`), the in-memory viewed map (`review_core::ViewedStore`), when marks are loaded or
-written (`nitpick` `review/viewed.rs`), fetching avatars (`avatar_cache`).
+written (`nitpick` `review/viewed.rs`), the assistant's conversation logic
+(`nitpick` `review/agent/`), fetching avatars (`avatar_cache`).
 
 ## Files
 

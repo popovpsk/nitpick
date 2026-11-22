@@ -7,7 +7,7 @@ serves three flavors (OpenCode, DeepSeek, Generic) that differ only in `flavor.r
 
 Not here: starting or killing the process (`session`, `process`), the JSON-RPC framing
 (`jsonrpc`), the instruction text (`Launch.instructions` comes from the app), the `acp`
-argument itself (it is part of the user's command; the plan adds no arguments).
+argument itself (it is part of the user's command; `Driver::plan` adds no arguments).
 
 ## Files
 

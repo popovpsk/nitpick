@@ -2,10 +2,10 @@
 
 The review model the UI draws: the changed-file tree with folder compression and viewed
 roll-up, the per-repository store of "viewed" marks, the map from a diff line to the
-old/new line pair GitLab positions need, where blame chips go, the fuzzy matcher every
-picker filters with, the syntax language of paths the diff component does not recognise,
-and the check an SVG passes before the image preview renders it. GPUI-free and git-free;
-only the store does file I/O.
+old/new line pair GitLab positions need, where blame chips go, the `diff:` links the review
+assistant writes and the app follows, the fuzzy matcher every picker filters with, the syntax
+language of paths the diff component does not recognise, and the check an SVG passes before
+the image preview renders it. GPUI-free and git-free; only the store does file I/O.
 
 Not here: producing the file list or the patch (`git_repo`), talking to GitLab or GitHub (`forge`),
 drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the picker UI
@@ -115,7 +115,6 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   `None` keeps the component's detection. Names are gpui-component highlighter names; a
   language whose grammar is not compiled in renders as plain text. File names are matched
   case-insensitively on the last path component, `/` or `\` separated.
-
 - `diff:<path>[#R120[-R135]]`, `L` for the old side, `R` for the new. `parse` normalizes a
   reversed range, takes `#R120-135` (second letter omitted) as the same side, and refuses
   everything else: line 0, mixed sides, a sign or other characters in a number, an empty

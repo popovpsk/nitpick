@@ -3,9 +3,11 @@
 The application binary: startup (logging, secrets, settings, themes, language, updater), the
 app menu, one window per repository, settings, and the glue that runs `git_repo` on GPUI's
 background executor and the `forge` clients / network git on `net_runtime`. Folder modules hold the
-window (`workspace/`) and the review itself (`review/`); this file covers the crate-root files.
+window (`workspace/`) and the review itself (`review/`, with the review assistant's panel in
+`review/agent/`); this file covers the crate-root files, among them the assistant's profiles and
+settings.
 
-Not here: git (`git_repo`), the host clients (`forge` over `gitlab` and `github`; the app
+Not here: git (`git_repo`), running the assistant's agent CLIs (`agent`), the host clients (`forge` over `gitlab` and `github`; the app
 uses only `forge`), the tree / viewed / line-map model
 (`review_core`), token sealing (`secret_store`), icons and strings (`ui_resources`),
 packaging (`Cargo.toml` `[package.metadata.packager]`).
