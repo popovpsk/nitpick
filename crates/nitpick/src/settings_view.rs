@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -27,12 +27,13 @@ use ui_resources::i18n::{Lang, Strings};
 use ui_resources::themes::ZedThemeFile;
 use updater::UpdateState;
 
+use crate::agent_profiles::{Profile, format_custom_agents, parse_custom_agents, set_override};
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
 use crate::review::{HostOs, editor_presets};
 use crate::settings_store::{
-    LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines, apply_saved_theme,
-    apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
+    CustomAgent, LangChoice, SettingsStore, ThemeChoice, TreeSide, UI_SCALES, WrapLines,
+    apply_saved_theme, apply_theme, end_syntax_preview, preview_syntax_colors, repo_key, settings,
     syntax_palette_names, update_settings,
 };
 use crate::shortcut_dialog::{self, keystroke_element, where_label};
@@ -48,6 +49,10 @@ const HIDDEN_MAX_ROWS: usize = 30;
 const HIDDEN_FIELD_WIDTH: f32 = 440.;
 const HIDDEN_EXAMPLE: &str = "package-lock.json\n*.min.js\n*.pb.go\nmocks/\n__snapshots__/\ndist/";
 const EDITOR_SAVE_DELAY: Duration = Duration::from_millis(400);
+const AGENT_SAVE_DELAY: Duration = Duration::from_millis(400);
+const AGENT_CUSTOM_MIN_ROWS: usize = 3;
+const AGENT_CUSTOM_MAX_ROWS: usize = 10;
+const AGENT_CUSTOM_EXAMPLE: &str = "my-agent = my-agent acp";
 
 fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
     let (_, errors) = review_core::HideRules::new(patterns, &[]);
@@ -234,6 +239,88 @@ impl ForgeForm {
     }
 }
 
+struct AgentForm {
+    profile: Profile,
+    profile_name: SharedString,
+    command: Entity<InputState>,
+    model: Entity<InputState>,
+    command_baseline: String,
+    model_baseline: String,
+    custom: Entity<TextareaState>,
+    custom_baseline: Vec<CustomAgent>,
+    custom_invalid: Option<SharedString>,
+    custom_empty: bool,
+    generation: Rc<Cell<u64>>,
+    custom_generation: Rc<Cell<u64>>,
+    status: ForgeStatus,
+    _check: Task<()>,
+    _subscriptions: [Subscription; 3],
+}
+
+fn stored<'a>(map: &'a BTreeMap<String, String>, id: &str) -> &'a str {
+    map.get(id).map_or("", |value| value.trim())
+}
+
+impl AgentForm {
+    fn new(window: &mut Window, cx: &mut Context<SettingsView>) -> Self {
+        let current = settings(cx).agent.clone();
+        let profile = current.active_profile();
+        let command_text = stored(&current.commands, &profile.id).to_string();
+        let model_text = stored(&current.models, &profile.id).to_string();
+        let command = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(profile.default_command.clone())
+                .default_value(command_text.clone())
+        });
+        let model = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr().assistant_model_placeholder.clone())
+                .default_value(model_text.clone())
+        });
+        let custom_text = format_custom_agents(&current.custom);
+        let custom_empty = custom_text.is_empty();
+        let custom = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(AGENT_CUSTOM_MIN_ROWS, AGENT_CUSTOM_MAX_ROWS)
+                .default_value(custom_text)
+        });
+        let on_fields = |this: &mut SettingsView,
+                         _: Entity<InputState>,
+                         event: &InputEvent,
+                         cx: &mut Context<SettingsView>| {
+            if matches!(event, InputEvent::Change) {
+                this.schedule_agent_save(cx);
+            }
+        };
+        let subscriptions = [
+            cx.subscribe(&command, on_fields),
+            cx.subscribe(&model, on_fields),
+            cx.subscribe(&custom, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_custom_save(cx);
+                }
+            }),
+        ];
+        Self {
+            profile_name: profile.name.clone().into(),
+            profile,
+            command,
+            model,
+            command_baseline: command_text,
+            model_baseline: model_text,
+            custom,
+            custom_baseline: current.custom,
+            custom_invalid: None,
+            custom_empty,
+            generation: Rc::default(),
+            custom_generation: Rc::default(),
+            status: ForgeStatus::Idle,
+            _check: Task::ready(()),
+            _subscriptions: subscriptions,
+        }
+    }
+}
+
 struct HiddenRules {
     input: Entity<TextareaState>,
     invalid: Option<SharedString>,
@@ -346,6 +433,7 @@ pub struct SettingsView {
     editor_generation: Rc<Cell<u64>>,
     editor_baseline: String,
     _editor_subscription: Subscription,
+    agent: AgentForm,
     hidden_global: HiddenRules,
     repo_rules: Vec<RepoRules>,
     repo: Option<(PathBuf, SharedString)>,
@@ -387,6 +475,7 @@ impl SettingsView {
                     this.schedule_editor_save(cx);
                 }
             });
+        let agent = AgentForm::new(window, cx);
         let zed_discovery = cx.spawn(async move |this, cx| {
             let files = cx
                 .background_spawn(async { ui_resources::themes::zed_theme_files() })
@@ -415,6 +504,7 @@ impl SettingsView {
             editor_generation: Rc::default(),
             editor_baseline: current.editor_command.clone(),
             _editor_subscription: editor_subscription,
+            agent,
             hidden_global: HiddenRules::new(global_input),
             repo_rules: Vec::new(),
             repo: None,
@@ -432,6 +522,7 @@ impl SettingsView {
             |this, window, cx| {
                 this.reload_hidden(false, window, cx);
                 this.reload_editor_command(window, cx);
+                this.reload_agent(window, cx);
                 cx.notify();
             },
         ));
@@ -545,6 +636,145 @@ impl SettingsView {
             });
         })
         .detach();
+    }
+
+    fn schedule_agent_save(&mut self, cx: &mut Context<Self>) {
+        let generation = self.agent.generation.get() + 1;
+        self.agent.generation.set(generation);
+        let counter = self.agent.generation.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(AGENT_SAVE_DELAY).await;
+            if counter.get() != generation {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| this.save_agent_fields(cx));
+        })
+        .detach();
+    }
+
+    fn save_agent_fields(&mut self, cx: &mut Context<Self>) {
+        let id = self.agent.profile.id.clone();
+        let command = self.agent.command.read(cx).value().trim().to_string();
+        let model = self.agent.model.read(cx).value().trim().to_string();
+        self.agent.command_baseline = command.clone();
+        self.agent.model_baseline = model.clone();
+        let current = &settings(cx).agent;
+        if stored(&current.commands, &id) == command && stored(&current.models, &id) == model {
+            return;
+        }
+        update_settings(cx, move |s| {
+            set_override(&mut s.agent.commands, &id, &command);
+            set_override(&mut s.agent.models, &id, &model);
+        });
+    }
+
+    fn schedule_custom_save(&mut self, cx: &mut Context<Self>) {
+        let text = self.agent.custom.read(cx).value();
+        self.agent.custom_empty = text.is_empty();
+        let parsed = parse_custom_agents(&text);
+        self.agent.custom_invalid = (!parsed.ignored.is_empty()).then(|| {
+            tr().assistant_custom_invalid(&parsed.ignored.join(", "))
+                .into()
+        });
+        let generation = self.agent.custom_generation.get() + 1;
+        self.agent.custom_generation.set(generation);
+        let counter = self.agent.custom_generation.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(AGENT_SAVE_DELAY).await;
+            if counter.get() != generation {
+                return;
+            }
+            let agents = parsed.agents;
+            let _ = this.update(cx, |this, cx| {
+                this.agent.custom_baseline = agents.clone();
+                if settings(cx).agent.custom != agents {
+                    update_settings(cx, move |s| s.agent.custom = agents);
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.agent.generation.set(self.agent.generation.get() + 1);
+        self.save_agent_fields(cx);
+        update_settings(cx, move |s| s.agent.active = id);
+        self.reload_agent(window, cx);
+    }
+
+    fn reload_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = settings(cx).agent.clone();
+        let profile = current.active_profile();
+        let switched = profile.id != self.agent.profile.id;
+        if switched {
+            self.agent.generation.set(self.agent.generation.get() + 1);
+            self.agent.status = ForgeStatus::Idle;
+            self.agent._check = Task::ready(());
+        }
+        if profile != self.agent.profile {
+            let placeholder = profile.default_command.clone();
+            self.agent.command.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx)
+            });
+            self.agent.profile_name = profile.name.clone().into();
+            self.agent.profile = profile;
+        }
+        let id = self.agent.profile.id.as_str();
+        let command = stored(&current.commands, id).to_string();
+        let model = stored(&current.models, id).to_string();
+        for (input, baseline, saved) in [
+            (
+                &self.agent.command,
+                &mut self.agent.command_baseline,
+                command,
+            ),
+            (&self.agent.model, &mut self.agent.model_baseline, model),
+        ] {
+            let focused = input.read(cx).focus_handle(cx).contains_focused(window, cx);
+            if (focused && !switched) || *baseline == saved {
+                continue;
+            }
+            *baseline = saved.clone();
+            input.update(cx, |state, cx| state.set_value(saved, window, cx));
+        }
+        let focused = self
+            .agent
+            .custom
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        if !focused && self.agent.custom_baseline != current.custom {
+            self.agent.custom_baseline = current.custom.clone();
+            self.agent.custom_invalid = None;
+            let text = format_custom_agents(&current.custom);
+            self.agent.custom_empty = text.is_empty();
+            self.agent
+                .custom
+                .update(cx, |state, cx| state.set_value(text, window, cx));
+        }
+    }
+
+    fn check_agent(&mut self, cx: &mut Context<Self>) {
+        let kind = self.agent.profile.kind;
+        let typed = self.agent.command.read(cx).value().trim().to_string();
+        let command = if typed.is_empty() {
+            self.agent.profile.default_command.clone()
+        } else {
+            typed
+        };
+        self.agent._check = cx.spawn(async move |this, cx| {
+            let result = agent::probe(&command, kind).await;
+            let _ = this.update(cx, |this, cx| {
+                this.agent.status = match result {
+                    Ok(version) => ForgeStatus::Ok(version.into()),
+                    Err(err) => ForgeStatus::Failed(err.to_string().into()),
+                };
+                cx.notify();
+            });
+        });
+        self.agent.status = ForgeStatus::Checking;
+        cx.notify();
     }
 
     fn schedule_hidden_save(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
@@ -784,7 +1014,6 @@ fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> Set
         )
         .item(SettingItem::render(move |_, _, cx| {
             let status = status_view.read(cx).form(kind).status.clone();
-            let theme = cx.theme();
             let save_view = status_view.clone();
             h_flex()
                 .w_full()
@@ -804,25 +1033,185 @@ fn forge_group(view: &Entity<SettingsView>, kind: ForgeKind, s: &Strings) -> Set
                         save_view.update(cx, |this, cx| this.save_forge(kind, cx))
                     }),
                 )
-                .child(match status {
-                    ForgeStatus::Idle => div().into_any_element(),
-                    ForgeStatus::Checking => div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(tr().checking.clone())
-                        .into_any_element(),
-                    ForgeStatus::Ok(text) => div()
-                        .text_sm()
-                        .text_color(theme.success)
-                        .child(text)
-                        .into_any_element(),
-                    ForgeStatus::Failed(text) => div()
-                        .text_sm()
-                        .text_color(theme.danger)
-                        .child(text)
-                        .into_any_element(),
-                })
+                .child(status_line(status, cx))
         }))
+}
+
+fn status_line(status: ForgeStatus, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let (text, color) = match status {
+        ForgeStatus::Idle => return div().into_any_element(),
+        ForgeStatus::Checking => (tr().checking.clone(), theme.muted_foreground),
+        ForgeStatus::Ok(text) => (text, theme.success),
+        ForgeStatus::Failed(text) => (text, theme.danger),
+    };
+    div()
+        .text_sm()
+        .text_color(color)
+        .child(text)
+        .into_any_element()
+}
+
+fn agent_dropdown(view: Entity<SettingsView>, cx: &App) -> AnyElement {
+    let label = view.read(cx).agent.profile_name.clone();
+    Button::new("settings-agent")
+        .small()
+        .label(label)
+        .dropdown_caret(true)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
+            let agent = &settings(cx).agent;
+            let current = agent.active_profile().id;
+            agent.profiles().into_iter().fold(menu, |menu, profile| {
+                let checked = profile.id == current;
+                let view = view.clone();
+                let id = profile.id;
+                menu.item(PopupMenuItem::new(profile.name).checked(checked).on_click(
+                    move |_, window, cx| {
+                        let id = id.clone();
+                        view.update(cx, |this, cx| this.select_agent(id, window, cx))
+                    },
+                ))
+            })
+        })
+        .into_any_element()
+}
+
+fn agent_custom_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let form = &view.read(cx).agent;
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .max_w(px(FIELD_MAX_WIDTH))
+                .child(Textarea::new(&form.custom).font_family(theme.mono_font_family.clone()))
+                .when(form.custom_empty, |field| {
+                    field.child(
+                        div()
+                            .absolute()
+                            .top(px(9.))
+                            .left(px(11.))
+                            .text_sm()
+                            .line_height(rems(1.25))
+                            .font_family(theme.mono_font_family.clone())
+                            .text_color(theme.muted_foreground.opacity(0.45))
+                            .child(AGENT_CUSTOM_EXAMPLE),
+                    )
+                }),
+        )
+        .children(
+            form.custom_invalid
+                .clone()
+                .map(|invalid| div().text_xs().text_color(theme.danger).child(invalid)),
+        )
+        .into_any_element()
+}
+
+fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> SettingGroup {
+    let dropdown_view = view.clone();
+    let command_view = view.clone();
+    let model_view = view.clone();
+    let check_view = view.clone();
+    let custom_view = view.clone();
+    let mut group = SettingGroup::new()
+        .title(s.assistant.clone())
+        .description(s.assistant_desc.clone())
+        .item(
+            SettingItem::new(
+                s.assistant_show.clone(),
+                SettingField::switch(
+                    |cx| settings(cx).agent.enabled,
+                    |value, cx| update_settings(cx, |s| s.agent.enabled = value),
+                ),
+            )
+            .description(s.assistant_show_desc.clone()),
+        )
+        .item(
+            SettingItem::new(
+                s.assistant_agent.clone(),
+                SettingField::render(move |_, _, cx| agent_dropdown(dropdown_view.clone(), cx)),
+            )
+            .description(s.assistant_agent_desc.clone()),
+        )
+        .item(
+            SettingItem::new(
+                s.assistant_command.clone(),
+                SettingField::render(move |_, _, cx| {
+                    div()
+                        .w_full()
+                        .max_w(px(FIELD_MAX_WIDTH))
+                        .child(Input::new(&command_view.read(cx).agent.command).small())
+                }),
+            )
+            .layout(Axis::Vertical)
+            .description(s.assistant_command_desc.clone()),
+        )
+        .item(
+            SettingItem::new(
+                s.assistant_model.clone(),
+                SettingField::render(move |_, _, cx| {
+                    div()
+                        .w_full()
+                        .max_w(px(FIELD_MAX_WIDTH))
+                        .child(Input::new(&model_view.read(cx).agent.model).small())
+                }),
+            )
+            .layout(Axis::Vertical)
+            .description(s.assistant_model_desc.clone()),
+        )
+        .item(SettingItem::render(move |_, _, cx| {
+            let status = check_view.read(cx).agent.status.clone();
+            let checking = matches!(status, ForgeStatus::Checking);
+            let click_view = check_view.clone();
+            h_flex()
+                .w_full()
+                .gap_2()
+                .justify_start()
+                .items_center()
+                .child(
+                    Button::new("agent-check")
+                        .small()
+                        .icon(IconName::Check)
+                        .label(tr().assistant_check.clone())
+                        .loading(checking)
+                        .disabled(checking)
+                        .on_click(move |_, _, cx| {
+                            click_view.update(cx, |this, cx| this.check_agent(cx))
+                        }),
+                )
+                .child(status_line(status, cx))
+        }));
+    if !profile.has_sandbox() {
+        let message = s.assistant_no_sandbox.clone();
+        group = group.item(SettingItem::render(move |_, _, cx| {
+            div()
+                .text_sm()
+                .text_color(cx.theme().warning)
+                .child(message.clone())
+        }));
+    }
+    group
+        .item(
+            SettingItem::new(
+                s.assistant_auto_overview.clone(),
+                SettingField::switch(
+                    |cx| settings(cx).agent.auto_overview,
+                    |value, cx| update_settings(cx, |s| s.agent.auto_overview = value),
+                ),
+            )
+            .description(s.assistant_auto_overview_desc.clone()),
+        )
+        .item(
+            SettingItem::new(
+                s.assistant_custom.clone(),
+                SettingField::render(move |_, _, cx| agent_custom_field(&custom_view, cx)),
+            )
+            .layout(Axis::Vertical)
+            .description(s.assistant_custom_desc.clone()),
+        )
 }
 
 fn theme_label(choice: &ThemeChoice) -> SharedString {
@@ -1356,6 +1745,7 @@ impl Render for SettingsView {
                     .layout(Axis::Vertical)
                     .description(s.editor_command_desc.clone()),
                 );
+        let assistant = agent_group(&view, &self.agent.profile, s);
         let gitlab = forge_group(&view, ForgeKind::GitLab, s);
         let github = forge_group(&view, ForgeKind::GitHub, s);
         let global_view = view.clone();
@@ -1413,6 +1803,7 @@ impl Render for SettingsView {
                             .group(general)
                             .group(appearance)
                             .group(review)
+                            .group(assistant)
                             .group(gitlab)
                             .group(github),
                         SettingPage::new(s.hidden_files_setting.clone()).group(hidden),

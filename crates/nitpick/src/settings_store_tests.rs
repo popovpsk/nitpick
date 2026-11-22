@@ -1,7 +1,10 @@
 use forge::ForgeKind;
 use rstest::rstest;
 
-use super::{Settings, SyntaxPalettes, WrapLines, fit_split_ratio};
+use super::{
+    AgentSettings, CustomAgent, Settings, SyntaxPalettes, WrapLines, clamp_agent_panel_width,
+    fit_split_ratio,
+};
 
 #[test]
 fn settings_without_syntax_colors_still_load() {
@@ -97,4 +100,71 @@ fn split_ratio_keeps_both_columns_usable(
     #[case] expected: f32,
 ) {
     assert!((fit_split_ratio(ratio, width) - expected).abs() < 1e-6);
+}
+
+#[test]
+fn settings_without_the_agent_field_get_its_defaults() {
+    let settings: Settings = serde_json::from_str(r#"{ "theme": "system" }"#).unwrap();
+    assert_eq!(settings.agent, AgentSettings::default());
+    assert!(settings.agent.enabled);
+    assert!(!settings.agent.auto_overview);
+    assert_eq!(settings.agent.active, "claude");
+    assert!(settings.agent.commands.is_empty());
+    assert!(settings.agent.models.is_empty());
+    assert!(settings.agent.custom.is_empty());
+    assert_eq!(settings.agent.panel_width, 480.);
+}
+
+#[test]
+fn a_partial_agent_section_fills_in_the_rest() {
+    let settings: Settings =
+        serde_json::from_str(r#"{ "agent": { "auto_overview": true } }"#).unwrap();
+    assert!(settings.agent.auto_overview);
+    assert!(settings.agent.enabled);
+    assert_eq!(settings.agent.active, "claude");
+    assert_eq!(settings.agent.panel_width, 480.);
+}
+
+#[test]
+fn the_agent_section_round_trips() {
+    let settings = Settings {
+        agent: AgentSettings {
+            enabled: false,
+            auto_overview: true,
+            active: "custom:mine".to_string(),
+            commands: [("claude".to_string(), "my-claude-code".to_string())].into(),
+            models: [("claude".to_string(), "opus".to_string())].into(),
+            custom: vec![CustomAgent {
+                name: "mine".to_string(),
+                command: "mine --acp".to_string(),
+            }],
+            panel_width: 620.,
+        },
+        ..Settings::default()
+    };
+    let text = serde_json::to_string(&settings).unwrap();
+    let back: Settings = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.agent, settings.agent);
+}
+
+#[rstest]
+#[case::kept(480., 480.)]
+#[case::lower_bound(320., 320.)]
+#[case::too_narrow(10., 320.)]
+#[case::upper_bound(900., 900.)]
+#[case::too_wide(5000., 900.)]
+#[case::not_a_number(f32::NAN, 480.)]
+#[case::infinite(f32::INFINITY, 480.)]
+fn the_agent_panel_width_stays_in_range(#[case] width: f32, #[case] expected: f32) {
+    assert_eq!(clamp_agent_panel_width(width), expected);
+}
+
+#[rstest]
+#[case::too_narrow("10", 320.)]
+#[case::too_wide("5000.5", 900.)]
+#[case::fine("600", 600.)]
+fn a_stored_agent_panel_width_is_clamped_on_load(#[case] stored: &str, #[case] expected: f32) {
+    let settings: Settings =
+        serde_json::from_str(&format!(r#"{{ "agent": {{ "panel_width": {stored} }} }}"#)).unwrap();
+    assert_eq!(settings.agent.panel_width, expected);
 }

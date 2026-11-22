@@ -32,10 +32,22 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   tree's path), `HideScope`, `add_hide_pattern`; `collapse_viewed_folders`, `tree_comments`, `strike_viewed`; diff display (`show_whole_file`,
   `WrapLines`); the comments sheet's order (`CommentSort`, newest first by default); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
-  narrower).
-- `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub included)
-  still loads; the GitHub host default and override; syntax
-  palettes per appearance; fitting the split ratio to a width.
+  narrower); `AgentSettings` (the assistant: `enabled`, `auto_overview`, `active`, per-profile
+  `commands` and `models`, `custom` agents, `panel_width`, read through `clamp_agent_panel_width`
+  into 320–900) and `CustomAgent`.
+- `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub and `agent`
+  included) still loads; the GitHub host default and override; syntax
+  palettes per appearance; fitting the split ratio to a width; the `agent` section round-trips
+  and its panel width is clamped.
+- `agent_profiles.rs` — the assistant's profile model over `AgentSettings`, GPUI-free: the
+  built-in table (`claude`, `codex`, `opencode`, `deepseek`, `pi`), custom profiles
+  (`custom:<name>`, generic ACP), `profiles`, `profile`, `active_profile` (falls back to
+  `claude`), `command` (the override when not blank, else the default), `model` (`None` when
+  blank), `Profile::has_sandbox` (Claude Code off Windows and Codex have one),
+  `Profile::login_hint`, `set_override`, and `parse_custom_agents` / `format_custom_agents`
+  for the settings text field (`name = command` per line).
+- `agent_profiles_tests.rs` — the table, fallbacks, overrides, sandbox and login hints per
+  profile, and the custom-agents text round trip.
 - `settings_window.rs` — the settings window: `open` raises the existing one or creates it
   (centred on the opener's display; a floating window, as in Zed, so it stays above the
   repository windows; no `tabbing_identifier`, because gpui adds any window that has one as a
@@ -58,7 +70,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   the button and the status only where the updater is built in), then theme and syntax colors (hover
   previews), Zed theme import, review options (the editor command is saved 400 ms
   after typing stops by a detached task, and reloads when the saved value differs from the
-  one it last loaded or saved and the field is not focused), hidden-file patterns (all
+  one it last loaded or saved and the field is not focused), the assistant group (see
+  Rules), hidden-file patterns (all
   repositories, then one block per repository — the window it was opened from first, then
   every other open repository and every repository that has rules, by name, each with its
   path under the title (`hidden_roots`, `RepoRules`; a block whose repository lost its rules
@@ -134,6 +147,17 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   also bound by gpui-component itself (the diff's arrows, `tab`) is flagged, since the deeper
   built-in binding wins where that control has focus.
 
+- Assistant settings group: the dropdown sets `agent.active`; the command and model fields
+  always show the stored override of the profile `active_profile` resolves (an empty field
+  shows the default command as its placeholder) and are saved 400 ms after typing by writing
+  both values for the profile on screen, read when the timer fires, so a profile switch never
+  carries one profile's text to another. Switching flushes the pending text to the old
+  profile first, then reloads both fields and clears the "Check" status. "Check" runs
+  `agent::probe` on what is typed (the default when empty), so it works before the save. The
+  custom-agents field saves the parsed list and keeps the lines it ignored (reported under
+  the field) until the settings change from elsewhere; the no-sandbox warning is built into
+  the group only for a profile without one, from the cached profile, so `render` never
+  resolves profiles.
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
   highlight fields. `Theme::change` (theme switch, theme files reloaded, startup) restores
   the theme's own palette, so a `Theme` global observer re-applies the chosen one; it writes
@@ -199,4 +223,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   and the repository section follows the window it was last opened from.
 - Syntax colors default to the app theme's; the choices are the palettes of every registered
   theme of the current appearance, bundled or imported, one choice per appearance.
+- The assistant's profiles are not stored: `settings.json` holds only the user's overrides
+  (`commands`, `models`) and custom agents, so a changed built-in default reaches everyone who
+  has not overridden it. A custom agent whose name is empty, repeats an earlier one or a
+  built-in id (any case) is neither a profile nor kept by the field.
 - Zed themes are imported as files (converted once), not read from Zed at startup.

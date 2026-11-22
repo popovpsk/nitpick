@@ -353,6 +353,24 @@ pub struct Strings {
     pub editor_failed: SharedString,
     pub file_not_on_disk_t: SharedString,
     pub file_outside_checkout_t: SharedString,
+    pub assistant: SharedString,
+    pub assistant_desc: SharedString,
+    pub assistant_show: SharedString,
+    pub assistant_show_desc: SharedString,
+    pub assistant_agent: SharedString,
+    pub assistant_agent_desc: SharedString,
+    pub assistant_command: SharedString,
+    pub assistant_command_desc: SharedString,
+    pub assistant_model: SharedString,
+    pub assistant_model_desc: SharedString,
+    pub assistant_model_placeholder: SharedString,
+    pub assistant_check: SharedString,
+    pub assistant_auto_overview: SharedString,
+    pub assistant_auto_overview_desc: SharedString,
+    pub assistant_custom: SharedString,
+    pub assistant_custom_desc: SharedString,
+    pub assistant_custom_invalid_t: SharedString,
+    pub assistant_no_sandbox: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -466,6 +484,10 @@ impl Strings {
 
     pub fn hidden_files_repo(&self, repo: &str) -> String {
         fill(&self.hidden_files_repo_t, &[repo])
+    }
+
+    pub fn assistant_custom_invalid(&self, lines: &str) -> String {
+        fill(&self.assistant_custom_invalid_t, &[lines])
     }
 
     pub fn hidden_files_invalid(&self, patterns: &str) -> String {
@@ -703,6 +725,7 @@ mod tests {
                 &s.review_hint_t,
                 &s.code_text_size_desc_t,
                 &s.approved_by_t,
+                &s.assistant_custom_invalid_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

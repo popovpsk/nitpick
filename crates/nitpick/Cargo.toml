@@ -61,6 +61,7 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 git_repo = { path = "../git_repo" }
 forge = { path = "../forge" }
 avatar_cache = { path = "../avatar_cache" }
+agent = { path = "../agent" }
 app_db = { path = "../app_db" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 review_core = { path = "../review_core" }

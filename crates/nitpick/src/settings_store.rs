@@ -159,6 +159,75 @@ pub struct Settings {
     pub comment_sort: CommentSort,
     #[serde(default)]
     pub editor_command: String,
+    #[serde(default)]
+    pub agent: AgentSettings,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomAgent {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_overview: bool,
+    #[serde(default = "default_agent_active")]
+    pub active: String,
+    #[serde(default)]
+    pub commands: BTreeMap<String, String>,
+    #[serde(default)]
+    pub models: BTreeMap<String, String>,
+    #[serde(default)]
+    pub custom: Vec<CustomAgent>,
+    #[serde(
+        default = "default_agent_panel_width",
+        deserialize_with = "deserialize_agent_panel_width"
+    )]
+    pub panel_width: f32,
+}
+
+pub const AGENT_PANEL_WIDTH_RANGE: (f32, f32) = (320., 900.);
+
+fn default_agent_active() -> String {
+    "claude".to_string()
+}
+
+fn default_agent_panel_width() -> f32 {
+    480.
+}
+
+pub fn clamp_agent_panel_width(width: f32) -> f32 {
+    if !width.is_finite() {
+        return default_agent_panel_width();
+    }
+    width.clamp(AGENT_PANEL_WIDTH_RANGE.0, AGENT_PANEL_WIDTH_RANGE.1)
+}
+
+fn deserialize_agent_panel_width<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    f32::deserialize(deserializer).map(clamp_agent_panel_width)
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_overview: false,
+            active: default_agent_active(),
+            commands: BTreeMap::new(),
+            models: BTreeMap::new(),
+            custom: Vec::new(),
+            panel_width: default_agent_panel_width(),
+        }
+    }
 }
 
 pub const UI_SCALE_RANGE: (u16, u16) = (80, 150);
@@ -232,6 +301,7 @@ impl Default for Settings {
             wrap_lines: WrapLines::default(),
             comment_sort: CommentSort::default(),
             editor_command: String::new(),
+            agent: AgentSettings::default(),
         }
     }
 }
