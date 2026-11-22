@@ -171,6 +171,7 @@ pub fn settings_json(cwd: &Path, os: Os) -> String {
         let cwd = std::path::absolute(cwd).unwrap_or_else(|_| cwd.to_path_buf());
         settings["sandbox"] = json!({
             "enabled": true,
+            "allowUnsandboxedCommands": false,
             "filesystem": {"denyWrite": [cwd.to_string_lossy()]},
         });
     }

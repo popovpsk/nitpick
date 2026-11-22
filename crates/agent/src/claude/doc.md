@@ -27,10 +27,13 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   `--permission-prompt-tool`, plan mode.
 - Environment added: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`,
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, all `1`.
-- `settings.json` is `{"disableAllHooks":true,"sandbox":{"enabled":true,"filesystem":
-  {"denyWrite":[<absolute cwd>]}}}`; on Windows there is no `sandbox` block (no sandbox there).
+- `settings.json` is `{"disableAllHooks":true,"sandbox":{"enabled":true,
+  "allowUnsandboxedCommands":false,"filesystem":{"denyWrite":[<absolute cwd>]}}}`; on Windows there is no `sandbox` block (no sandbox there).
   `denyWrite` on the cwd is required: without it a shell write inside the cwd succeeds; with it
-  the write fails with "operation not permitted".
+  the write fails with "operation not permitted". Unsandboxed retries (the Bash tool's
+  `dangerouslyDisableSandbox`) are switched off by `allowUnsandboxedCommands: false`, so the model
+  does not attempt them; on 2.1.330 `dontAsk` mode also refuses such a retry and lists it in
+  `permission_denials`, which is a second line of defence, not the one relied on.
 - Windows argv holds only words and paths of files in `scratch`: instructions and settings never
   go into arguments. The platform is a parameter (`Os`) of the builders so that shape is tested on
   every OS.
@@ -89,6 +92,13 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   only letters, digits, `-`, `_`). Otherwise `plan` returns `Plan::refusal` and nothing is
   launched. A wrapper command that points the CLI elsewhere is not known to the check.
 - The lookup is injectable (`ClaudeDriver::with_lookup`) so tests never read the home folder.
+
+## Known limits
+
+- User-level sandbox settings from `~/.claude/settings.json` (for example
+  `sandbox.excludedCommands`) still merge in under `--setting-sources user`: a command the user
+  excluded from their own sandbox runs unsandboxed here too. That is the user's configuration and
+  is left alone.
 
 ## Decisions
 

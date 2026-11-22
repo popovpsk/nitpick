@@ -107,6 +107,7 @@ struct Conversation {
     queue: VecDeque<String>,
     normalizer: Normalizer,
     interrupt: Interrupt,
+    cancelled: bool,
 }
 
 async fn converse(launch: Launch, limits: Limits, transport: Transport, channels: Channels) {
@@ -123,6 +124,7 @@ async fn converse(launch: Launch, limits: Limits, transport: Transport, channels
         queue: VecDeque::new(),
         normalizer: Normalizer::default(),
         interrupt: Interrupt::default(),
+        cancelled: false,
     };
     let (stop, ready) = match conversation.handshake().await {
         Ok(()) => (conversation.serve().await, true),
@@ -333,6 +335,9 @@ impl Conversation {
                     self.interrupt
                         .deadline
                         .get_or_insert_with(|| Instant::now() + self.limits.stop);
+                } else if self.queue.pop_front().is_some() {
+                    self.cancelled = true;
+                    let _ = self.events.send(Event::TurnFinished(Outcome::Interrupted));
                 }
             }
             Ok(Command::Shutdown) | Err(_) => return ControlFlow::Break(()),
@@ -410,7 +415,7 @@ impl Conversation {
                 .send(Event::TurnFinished(Outcome::Failed(queued.clone())));
             answered += 1;
         }
-        if answered == 0 && at_least_one {
+        if answered == 0 && at_least_one && !self.cancelled {
             let _ = self
                 .events
                 .send(Event::TurnFinished(Outcome::Failed(queued)));

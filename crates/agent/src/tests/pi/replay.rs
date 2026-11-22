@@ -13,6 +13,7 @@ use crate::{Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
 
 const WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(100);
+const STATE_REQUEST_ID: &str = "nitpick-state";
 const STOPPED: &str = "The assistant stopped before it finished the reply.";
 
 struct Peer {
@@ -79,6 +80,12 @@ impl Rig {
         let id = request["id"].clone();
         let mut answer = answer.clone();
         answer["id"] = id;
+        self.write_values(&[answer]).await;
+    }
+
+    async fn answer_state_late(&mut self, answer: &Value) {
+        let mut answer = answer.clone();
+        answer["id"] = json!(STATE_REQUEST_ID);
         self.write_values(&[answer]).await;
     }
 
@@ -916,4 +923,129 @@ async fn dropping_the_command_channel_ends_the_driver() {
     tokio::time::timeout(WAIT, driver).await.unwrap().unwrap();
     assert!(events.try_recv().is_err());
     drop(peer);
+}
+
+fn interrupted() -> Event {
+    Event::TurnFinished(Outcome::Interrupted)
+}
+
+#[tokio::test]
+async fn an_interrupt_while_get_state_is_pending_cancels_the_queued_prompt() {
+    let mut rig = Rig::start();
+    rig.prompt("overview");
+    assert_eq!(rig.read().await["type"], "get_state");
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+
+    rig.answer_state_late(&state("nitpick-s1", 0)).await;
+    assert_eq!(rig.next().await, session_event("nitpick-s1"));
+    assert!(
+        rig.reads_nothing().await,
+        "the cancelled prompt is never written"
+    );
+    assert!(rig.no_events().await);
+
+    let events = rig
+        .turn("again", &[accepted("nitpick-prompt-1"), settled(false)])
+        .await;
+    assert_eq!(events, vec![completed()]);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn only_the_oldest_queued_prompt_is_cancelled() {
+    let mut rig = Rig::start();
+    rig.prompt("first");
+    rig.prompt("second");
+    assert_eq!(rig.read().await["type"], "get_state");
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+
+    rig.answer_state_late(&state("nitpick-s1", 0)).await;
+    assert_eq!(rig.next().await, session_event("nitpick-s1"));
+    let request = rig.read().await;
+    assert_eq!(request["message"], "second");
+    rig.write_values(&[
+        accepted("nitpick-prompt-1"),
+        delta("text_delta", "ok"),
+        settled(false),
+    ])
+    .await;
+    assert_eq!(rig.until_finished().await, vec![text("ok"), completed()]);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_arriving_with_the_state_answer_never_lets_the_prompt_through() {
+    for _ in 0..20 {
+        let mut rig = Rig::start();
+        rig.prompt("first");
+        rig.prompt("second");
+        assert_eq!(rig.read().await["type"], "get_state");
+        rig.answer_state_late(&state("nitpick-s1", 0)).await;
+        rig.send(Command::Interrupt);
+        let first = rig.next().await;
+        let second = rig.next().await;
+        assert!(
+            (first == session_event("nitpick-s1") && second == interrupted())
+                || (first == interrupted() && second == session_event("nitpick-s1")),
+            "{first:?} {second:?}"
+        );
+        assert_eq!(rig.read().await["message"], "second");
+        rig.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn an_interrupt_after_the_prompt_is_written_stops_the_turn_before_pis_response() {
+    let mut rig = Rig::ready("nitpick-s1").await;
+    rig.prompt("overview");
+    assert_eq!(rig.read().await["type"], "prompt");
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.read().await["type"], "clear_queue");
+    assert_eq!(rig.read().await["type"], "abort");
+    rig.write_values(&[
+        accepted("nitpick-prompt-1"),
+        assistant_end("aborted", None),
+        settled(true),
+    ])
+    .await;
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+    assert!(rig.no_events().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_with_nothing_queued_is_a_no_op() {
+    let mut rig = Rig::start();
+    rig.send(Command::Interrupt);
+    rig.answer_state(&state("nitpick-s1", 0)).await;
+    assert_eq!(rig.next().await, session_event("nitpick-s1"));
+    rig.send(Command::Interrupt);
+    assert!(rig.reads_nothing().await);
+    assert!(rig.no_events().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_lost_session_after_a_cancel_adds_no_second_finish() {
+    let mut rig = Rig::with(Some("nitpick-gone"), Limits::default());
+    rig.prompt("overview");
+    assert_eq!(rig.read().await["type"], "get_state");
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+    rig.answer_state_late(&state("nitpick-gone", 0)).await;
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn a_state_timeout_after_a_cancel_adds_no_second_finish() {
+    let mut rig = Rig::with(None, limits(150, 150));
+    rig.prompt("overview");
+    assert_eq!(rig.read().await["type"], "get_state");
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+    assert!(rig.no_events().await);
+    rig.ends().await;
 }

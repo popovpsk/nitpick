@@ -28,8 +28,14 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   do the work. Then `session/new {cwd, mcpServers: []}` (`cwd` absolute, `mcpServers` required),
   or a resume; `session/prompt {sessionId, prompt: [text blocks]}` per turn; `session/cancel
   {sessionId}` (a notification) to stop one. JSON-RPC carries the `"jsonrpc":"2.0"` tag.
-- `Event::Session` is emitted once, after the session exists and the model and mode options are
-  set, with the id from the answer (the requested id when a resume answer carries none).
+- `Event::Session` is emitted once, with the id from the answer (the requested id when a resume
+  answer carries none). A resumed session, a session of an agent that declares `systemPrompt` and
+  a new session with empty instructions announce it once the session exists and the model and
+  mode options are set. A new session whose instructions travel in the first prompt announces it
+  only when that prompt has been answered (any `stopReason`, `cancelled` included; an RPC error or
+  no answer does not count): the app resumes the stored id, and the instructions are never sent
+  on the resume path, so an id must not be stored before they were delivered. The event then
+  comes just before that turn's `TurnFinished`.
 - Resume (`Launch.resume` set): `sessionCapabilities.resume` declared selects `session/resume`;
   else `loadSession` selects `session/load` (DeepSeek never loads); neither is a lost session.
   Both take `{sessionId, cwd, mcpServers}` and the `cwd` must equal the original one.
@@ -45,7 +51,8 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   resume call carry `systemPrompt {mode: "append", text}` (no agent in the recordings declares it,
   so the `text` field name is not verified). Otherwise the instructions are the first text block
   of the first prompt of a new session, and the block is dropped only after a prompt got an
-  answer, so a failed first prompt is retried with it. A resumed session never gets them again.
+  answer, so a failed first prompt is retried with it and a prompt cancelled before it was
+  sent leaves it for the next one. A resumed session never gets them again.
   Empty instructions are not sent.
 - Options: an option with `category: "model"` and a `Launch.model` that is not already its
   `currentValue` is set through `session/set_config_option {sessionId, configId, value}`; values
@@ -80,8 +87,16 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   hands notifications and answers over different channels, so the driver drains the notification
   queue when the answer arrives.
 - Prompts: one turn at a time. A `Prompt` during a turn or a pending call is queued and sent
-  after the turn ends. `Interrupt` counts only while a turn runs: it sends one `session/cancel`
-  and starts the cancel wait; queued prompts survive it. The agent's text after a cancel that is
+  after the turn ends. The command channel is polled in every phase, including while any setup
+  request is awaited, and drained before a queued prompt is written. `Interrupt` with a turn
+  active (from the moment `session/prompt` is written) sends one `session/cancel` and starts the
+  cancel wait; queued prompts survive it. `Interrupt` with no turn active cancels the oldest
+  queued prompt: it is never sent to the agent and gets one `TurnFinished(Interrupted)` at once,
+  later prompts stay queued, and with nothing queued it is a no-op. A cancelled prompt counts as
+  answered, so a failing setup (a lost session included) adds no extra failure for it, and it
+  does not consume the instructions block. An `Interrupt` still in the command channel when the
+  session ends is applied the same way (no turn active: it cancels the oldest queued prompt), so
+  a stop is never replaced by a failure such as `SessionLost`. The agent's text after a cancel that is
   the note "The request was cancelled by the client." (either spelling, split over chunks) is not
   `Text`; any other text after a cancel is released whole.
 - Watchdog: no message of any kind from the agent for 120 s while no tool call is open (a call is

@@ -90,7 +90,10 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   `set_editor_text` expect no reply and get none; any other method name, known or not, is
   answered.
 - Stop: `Interrupt` while a turn runs writes `clear_queue`, then `abort` (`abort` alone would let
-  Pi go on with its queue), once per turn; with no turn running it does nothing. The turn then ends
+  Pi go on with its queue), once per turn, from the moment the `prompt` command is written (also before Pi's `response` to
+  it). With no turn active, `Interrupt` cancels the oldest queued prompt instead: it is never
+  written to Pi and gets one `TurnFinished(Interrupted)` at once, later prompts stay queued, and
+  with nothing queued it is a no-op. The turn then ends
   at `agent_settled` (`aborted: true`), and queued prompts survive and go out after it. If the turn
   has not ended `Limits::stop` (15 s) after the request, the driver emits a `Notice`, ends the
   running turn as `Interrupted`, fails every queued prompt (`Failed(Other)`) and returns; the
@@ -99,7 +102,10 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   above. A silent Pi fails the queued prompts with "Pi did not answer get_state within <limit>".
   A turn that streams nothing for a long time is not cut off.
 - Prompts: one turn at a time. A `Prompt` during a handshake or a turn is queued and sent after
-  the turn's `agent_settled`.
+  the turn's `agent_settled`. The command channel is polled in every phase, including while the
+  `get_state` answer is awaited, and drained before a queued prompt is written, so an `Interrupt`
+  never falls into the gap between the state check and the write. A cancelled prompt counts as
+  answered: a lost session or a state timeout adds no extra failure for it.
 - End of stdout (or a failed write) fails the running turn (open tools closed as failed) and every
   queued prompt, one `TurnFinished(Failed(Other))` each; nothing is emitted between turns. A
   handshake that ends this way emits one failure when nothing was queued. The command channel is

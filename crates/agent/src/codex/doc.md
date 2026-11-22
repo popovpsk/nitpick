@@ -97,9 +97,14 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
   emits a `Notice`, ends the running turn as `Interrupted` and ends the session; the next
   session resumes the thread. A turn that streams nothing for a long time is not cut off.
 - Prompts: one turn at a time. A `Prompt` during a turn, a handshake or a pending call is queued
-  and sent after the turn ends. `Interrupt` counts only while a turn runs; a request made before
-  the turn id is known is sent once it is (from the `turn/start` answer or `turn/started`);
-  queued prompts survive it. A refused `turn/interrupt` is logged and not fatal.
+  and sent after the turn ends. The command channel is polled in every phase, including while a
+  handshake request or `turn/start` is awaited. `Interrupt` with a turn active (from the moment
+  `turn/start` is written) is remembered and sent as `turn/interrupt` once the turn id is known
+  (from the `turn/start` answer or `turn/started`); queued prompts survive it. `Interrupt` with no
+  turn active cancels the oldest queued prompt: it is never sent to the CLI and gets one
+  `TurnFinished(Interrupted)`, later prompts stay queued; with nothing queued it is a no-op. A
+  cancelled prompt counts as answered, so a failing handshake adds no extra failure for it. A
+  refused `turn/interrupt` is logged and not fatal.
 - A rejected `turn/start` fails that turn with the classified error and the session goes on.
 - End of stdout, a failed write or a closed connection after the handshake fails the running turn
   (open tools closed as failed) and every queued prompt, one `TurnFinished(Failed(Other))` each;

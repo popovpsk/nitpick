@@ -107,6 +107,7 @@ fn unix_settings_sandbox_the_cwd_read_only() {
         .expect("settings are JSON");
     assert_eq!(settings["disableAllHooks"], true);
     assert_eq!(settings["sandbox"]["enabled"], true);
+    assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
     assert_eq!(
         settings["sandbox"]["filesystem"]["denyWrite"],
         serde_json::json!([Path::new("/work/toy").to_string_lossy()])
@@ -182,6 +183,7 @@ fn planning_a_new_session_writes_the_files_and_picks_an_id() {
     )
     .unwrap();
     assert_eq!(settings["sandbox"]["enabled"], true);
+    assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
     assert_eq!(
         arg_after(&plan.args, "--settings").map(PathBuf::from),
         Some(scratch.path().join("settings.json"))

@@ -431,14 +431,16 @@ async fn a_failed_first_prompt_sends_the_instructions_again() {
         .await;
     assert_eq!(
         rig.until_finished().await,
-        vec![
-            session(SESSION),
-            failed(FailureKind::Other, "model overloaded")
-        ]
+        vec![failed(FailureKind::Other, "model overloaded")]
     );
     rig.prompt("second");
-    let (_, params) = rig.read_prompt().await;
+    let (id, params) = rig.read_prompt().await;
     assert_eq!(blocks(&params), ["Be brief.", "second"]);
+    rig.finish_prompt(id, "end_turn").await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![session(SESSION), completed()]
+    );
     rig.stop().await;
 }
 
@@ -1183,5 +1185,238 @@ async fn an_update_for_another_session_is_ignored() {
         rig.until_finished().await,
         vec![session(SESSION), text("ours"), completed()]
     );
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_during_initialize_cancels_the_queued_prompt() {
+    let mut rig = Rig::start(AcpFlavor::Generic);
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"protocolVersion": 1, "agentCapabilities": {}}))
+        .await;
+    rig.new_session(json!([])).await;
+    assert_eq!(rig.next().await, session(SESSION));
+    assert!(
+        rig.peer().reads_nothing().await,
+        "the cancelled prompt is never sent"
+    );
+    rig.prompt("later");
+    let (_, params) = rig.read_prompt().await;
+    assert_eq!(blocks(&params), ["later"]);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_during_session_new_cancels_the_queued_prompt() {
+    let mut rig = Rig::start(AcpFlavor::Generic);
+    rig.prompt("overview");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"sessionId": SESSION})).await;
+    assert_eq!(rig.next().await, session(SESSION));
+    assert!(rig.peer().reads_nothing().await);
+    rig.stop().await;
+}
+
+#[rstest]
+#[case::resume(RESUME_AND_LOAD, "session/resume")]
+#[case::load(LOAD_ONLY, "session/load")]
+#[tokio::test]
+async fn an_interrupt_while_resuming_cancels_the_queued_prompt(
+    #[case] capabilities: &str,
+    #[case] method: &str,
+) {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, resuming(), relaxed());
+    rig.prompt("overview");
+    rig.initialize(capabilities).await;
+    let (id, _) = rig.request(method).await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({})).await;
+    assert_eq!(rig.next().await, session("ses_old"));
+    assert!(rig.peer().reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_while_the_model_is_set_cancels_the_queued_prompt() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("b"), relaxed());
+    rig.prompt("overview");
+    rig.initialize(NOTHING).await;
+    rig.new_session(model_option("a")).await;
+    let (id, _) = rig.request("session/set_config_option").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({})).await;
+    assert_eq!(rig.next().await, session(SESSION));
+    assert!(rig.peer().reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn only_the_oldest_queued_prompt_is_cancelled_and_the_next_carries_the_instructions() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_instructions(None), relaxed());
+    rig.prompt("first");
+    rig.prompt("second");
+    rig.initialize(NOTHING).await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.new_session(json!([])).await;
+    let (id, params) = rig.read_prompt().await;
+    assert_eq!(blocks(&params), ["Be brief.", "second"]);
+    assert!(
+        rig.no_events().await,
+        "the id waits for the answered prompt"
+    );
+    rig.finish_prompt(id, "end_turn").await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![session(SESSION), completed()]
+    );
+    assert!(rig.peer().reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_with_nothing_queued_is_a_no_op_in_every_setup_phase() {
+    let mut rig = Rig::start(AcpFlavor::Generic);
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert!(rig.no_events().await);
+    rig.respond(id, json!({"protocolVersion": 1, "agentCapabilities": {}}))
+        .await;
+    let (id, _) = rig.request("session/new").await;
+    rig.send(Command::Interrupt);
+    rig.respond(id, json!({"sessionId": SESSION})).await;
+    assert_eq!(rig.next().await, session(SESSION));
+    rig.send(Command::Interrupt);
+    assert!(rig.no_events().await);
+    rig.prompt("go");
+    rig.read_prompt().await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_prompt_gets_no_extra_failure_when_setup_fails() {
+    let mut rig = Rig::start(AcpFlavor::Generic);
+    rig.prompt("overview");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond_error(id, -32603, "boom", Value::Null).await;
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_prompt_gets_no_extra_failure_when_the_session_is_lost() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, resuming(), relaxed());
+    rig.prompt("overview");
+    rig.prompt("second");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"protocolVersion": 1, "agentCapabilities": {}}))
+        .await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![failed(
+            FailureKind::SessionLost,
+            "The agent cannot resume a session."
+        )]
+    );
+    assert!(rig.no_events().await);
+    rig.ends().await;
+
+    let mut rig = Rig::start_with(AcpFlavor::Generic, resuming(), relaxed());
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"protocolVersion": 1, "agentCapabilities": {}}))
+        .await;
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_already_queued_when_the_session_ends_cancels_the_oldest_prompt() {
+    let mut rig = Rig::start(AcpFlavor::Generic);
+    rig.prompt("overview");
+    rig.prompt("second");
+    rig.initialize(NOTHING).await;
+    rig.request("session/new").await;
+    rig.send(Command::Interrupt);
+    rig.hang_up().await;
+    assert_eq!(rig.next().await, interrupted());
+    assert_eq!(
+        rig.until_finished().await,
+        vec![failed(FailureKind::Other, NOT_READY)]
+    );
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[rstest]
+#[case::end_turn("end_turn", completed())]
+#[case::cancelled("cancelled", interrupted())]
+#[tokio::test]
+async fn a_new_session_without_a_system_prompt_is_announced_after_the_first_answer(
+    #[case] reason: &str,
+    #[case] outcome: Event,
+) {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_instructions(None), relaxed());
+    rig.prompt("first");
+    rig.ready(NOTHING).await;
+    let (id, params) = rig.read_prompt().await;
+    assert_eq!(blocks(&params), ["Be brief.", "first"]);
+    assert!(rig.no_events().await);
+    rig.finish_prompt(id, reason).await;
+    assert_eq!(rig.until_finished().await, vec![session(SESSION), outcome]);
+    rig.prompt("second");
+    let (id, _) = rig.read_prompt().await;
+    rig.finish_prompt(id, "end_turn").await;
+    assert_eq!(rig.until_finished().await, vec![completed()]);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_new_session_whose_first_prompt_is_never_answered_is_never_announced() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_instructions(None), relaxed());
+    rig.prompt("first");
+    rig.ready(NOTHING).await;
+    rig.read_prompt().await;
+    rig.hang_up().await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![failed(FailureKind::Other, STOPPED)]
+    );
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
+
+#[tokio::test]
+async fn a_resumed_session_and_a_system_prompt_session_are_announced_at_once() {
+    let mut rig = Rig::start_with(
+        AcpFlavor::Generic,
+        with_instructions(Some("ses_old")),
+        relaxed(),
+    );
+    rig.initialize(RESUME_AND_LOAD).await;
+    let (id, _) = rig.request("session/resume").await;
+    rig.respond(id, json!({})).await;
+    assert_eq!(rig.next().await, session("ses_old"));
+    rig.stop().await;
+
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_instructions(None), relaxed());
+    rig.initialize(SYSTEM_PROMPT).await;
+    rig.new_session(json!([])).await;
+    assert_eq!(rig.next().await, session(SESSION));
     rig.stop().await;
 }

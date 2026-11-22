@@ -1269,3 +1269,133 @@ async fn the_driver_never_emits_exited() {
     assert!(!events.iter().any(|event| matches!(event, Event::Exited(_))));
     rig.ends().await;
 }
+
+#[tokio::test]
+async fn an_interrupt_during_initialize_cancels_the_queued_prompt() {
+    let mut rig = Rig::start();
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/start").await;
+    rig.respond(id, thread_result(THREAD)).await;
+    assert_eq!(rig.next().await, session(THREAD));
+    assert!(
+        rig.reads_nothing().await,
+        "the cancelled prompt is never sent"
+    );
+    rig.prompt("later");
+    let (_, params) = rig.request("turn/start").await;
+    assert_eq!(params["input"][0]["text"], "later");
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_during_thread_start_cancels_the_queued_prompt() {
+    let mut rig = Rig::start();
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/start").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, thread_result(THREAD)).await;
+    assert_eq!(rig.next().await, session(THREAD));
+    assert!(rig.reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_during_resume_cancels_the_queued_prompt() {
+    let mut launch = launch();
+    launch.resume = Some("thread-old".into());
+    let mut rig = Rig::start_with(launch, Limits::default());
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/resume").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, thread_result("thread-old")).await;
+    assert_eq!(rig.next().await, session("thread-old"));
+    assert!(rig.reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_cancels_only_the_oldest_queued_prompt() {
+    let mut rig = Rig::start();
+    rig.prompt("first");
+    rig.prompt("second");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/start").await;
+    rig.respond(id, thread_result(THREAD)).await;
+    rig.start_turn("turn-1", "second").await;
+    rig.complete("turn-1", "completed").await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![session(THREAD), completed()]
+    );
+    assert!(rig.reads_nothing().await);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_after_turn_start_is_written_interrupts_the_turn_not_the_queue() {
+    let mut rig = Rig::ready("slow").await;
+    rig.prompt("next");
+    let (id, _) = rig.request("turn/start").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, session(THREAD));
+    assert!(rig.no_events().await, "nothing is cancelled locally");
+    rig.respond(id, json!({"turn": {"id": "turn-1"}})).await;
+    let (id, params) = rig.request("turn/interrupt").await;
+    assert_eq!(params["turnId"], "turn-1");
+    rig.respond(id, json!({})).await;
+    rig.complete("turn-1", "interrupted").await;
+    assert_eq!(rig.until_finished().await, vec![interrupted()]);
+    rig.start_turn("turn-2", "next").await;
+    rig.complete("turn-2", "completed").await;
+    assert_eq!(rig.until_finished().await, vec![completed()]);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupt_with_nothing_queued_is_a_no_op_in_every_phase() {
+    let mut rig = Rig::start();
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert!(rig.no_events().await);
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, _) = rig.request("thread/start").await;
+    rig.send(Command::Interrupt);
+    rig.respond(id, thread_result(THREAD)).await;
+    assert_eq!(rig.next().await, session(THREAD));
+    rig.send(Command::Interrupt);
+    assert!(rig.no_events().await);
+    rig.prompt("go");
+    rig.request("turn/start").await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_prompt_gets_no_extra_failure_when_the_handshake_fails() {
+    let mut rig = Rig::start();
+    rig.prompt("overview");
+    let (id, _) = rig.request("initialize").await;
+    rig.send(Command::Interrupt);
+    assert_eq!(rig.next().await, interrupted());
+    rig.respond(id, json!({"userAgent": "nitpick/0.100.0 (x)"}))
+        .await;
+    assert!(rig.no_events().await);
+    rig.ends().await;
+}
