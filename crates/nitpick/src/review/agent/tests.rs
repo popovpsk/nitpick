@@ -5,7 +5,7 @@ use std::process::Command;
 
 use ::agent::brief::{self, Brief};
 use ::agent::process::Environment;
-use ::agent::{Event, Failure, FailureKind};
+use ::agent::{Event, Failure, FailureKind, Outcome};
 use app_db::AgentKind;
 use forge::ForgeKind;
 use git_repo::Repo;
@@ -20,8 +20,8 @@ use super::context::{
 };
 use super::links::{self, LinkKind, Step, Target};
 use super::logic::{
-    self, LoadAction, OverviewState, Problem, Request, classify, coalesce, compose_chat, exit_text,
-    limit_text, load_action, overview_state, problem_text,
+    self, Guard, Launching, LoadAction, OverviewState, Problem, Request, classify, coalesce,
+    compose_chat, exit_text, limit_text, load_action, overview_state, problem_text,
 };
 use super::{LinkPlan, Lookup, PendingSelection, Phase, locate_in, unread_after};
 use crate::agent_profiles::LoginHint;
@@ -946,4 +946,134 @@ fn the_marker_goes_into_the_input(
         links::input_with_marker(current, old, "[m](diff:a#R1)"),
         expected
     );
+}
+
+fn failed() -> Outcome {
+    Outcome::Failed(failure(FailureKind::Other, "boom"))
+}
+
+#[rstest]
+#[case::first_turn_completed(false, true, Outcome::Completed, true)]
+#[case::first_turn_interrupted(false, true, Outcome::Interrupted, true)]
+#[case::first_turn_failed_stays_pending(false, true, failed(), false)]
+#[case::first_turn_lost_stays_pending(
+    false,
+    true,
+    Outcome::Failed(failure(FailureKind::SessionLost, "gone")),
+    false
+)]
+#[case::turn_without_brief_proves_nothing(false, false, Outcome::Completed, false)]
+#[case::delivered_stays_after_failure(true, false, failed(), true)]
+#[case::delivered_stays_after_chat(true, false, Outcome::Completed, true)]
+#[case::delivered_stays_when_carried_again_fails(true, true, failed(), true)]
+fn the_brief_counts_as_delivered_when_an_answered_turn_carried_it(
+    #[case] was: bool,
+    #[case] carried: bool,
+    #[case] outcome: Outcome,
+    #[case] expected: bool,
+) {
+    assert_eq!(logic::brief_delivered(was, carried, &outcome), expected);
+}
+
+#[rstest]
+#[case::completed(Outcome::Completed, true)]
+#[case::interrupted(Outcome::Interrupted, true)]
+#[case::failed(failed(), false)]
+fn only_a_completed_or_stopped_turn_counts_as_answered(
+    #[case] outcome: Outcome,
+    #[case] expected: bool,
+) {
+    assert_eq!(logic::answered(&outcome), expected);
+}
+
+#[rstest]
+#[case::new_session(false, false, false)]
+#[case::new_session_with_old_answers(false, true, false)]
+#[case::resumed_without_any_answer(true, false, false)]
+#[case::resumed_after_an_answer(true, true, true)]
+fn a_resumed_session_has_the_brief_only_when_the_conversation_holds_an_answer(
+    #[case] resumed: bool,
+    #[case] answered_before: bool,
+    #[case] expected: bool,
+) {
+    assert_eq!(logic::resumed_delivered(resumed, answered_before), expected);
+}
+
+#[rstest]
+#[case::live_session_with_messages(true, true, false, true)]
+#[case::nothing_ran(false, true, false, false)]
+#[case::empty_conversation(true, false, false, false)]
+#[case::already_noticed(true, true, true, false)]
+fn a_settings_notice_needs_a_used_session_and_no_notice_before_it(
+    #[case] used: bool,
+    #[case] has_messages: bool,
+    #[case] last_is_notice: bool,
+    #[case] expected: bool,
+) {
+    assert_eq!(
+        logic::settings_notice(used, has_messages, last_is_notice),
+        expected
+    );
+}
+
+#[rstest]
+#[case::same("claude", "claude", None, "claude", "claude", None, true)]
+#[case::padding(
+    "claude",
+    "claude --model x",
+    Some("opus"),
+    "claude",
+    " claude --model x ",
+    Some(" opus "),
+    true
+)]
+#[case::blank_model_is_none("claude", "claude", None, "claude", "claude", Some("  "), true)]
+#[case::command("claude", "claude", None, "claude", "claude --model", None, false)]
+#[case::model("claude", "claude", Some("a"), "claude", "claude", Some("b"), false)]
+#[case::profile("claude", "claude", None, "codex", "claude", None, false)]
+fn launch_settings_compare_after_trimming(
+    #[case] old_profile: &str,
+    #[case] old_command: &str,
+    #[case] old_model: Option<&str>,
+    #[case] new_profile: &str,
+    #[case] new_command: &str,
+    #[case] new_model: Option<&str>,
+    #[case] same: bool,
+) {
+    assert_eq!(
+        Launching::new(old_profile, old_command, old_model)
+            == Launching::new(new_profile, new_command, new_model),
+        same
+    );
+}
+
+#[test]
+fn an_untaken_guard_disposes_its_value_when_dropped() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let disposed = Arc::new(AtomicUsize::new(0));
+    fn dispose(count: Arc<AtomicUsize>) {
+        count.fetch_add(1, Ordering::SeqCst);
+    }
+    drop(Guard::new(Arc::clone(&disposed), dispose));
+    assert_eq!(disposed.load(Ordering::SeqCst), 1);
+
+    let mut taken = Guard::new(Arc::clone(&disposed), dispose);
+    assert!(taken.take().is_some());
+    assert!(taken.take().is_none());
+    drop(taken);
+    assert_eq!(disposed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_guard_dropped_on_another_thread_still_disposes() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let disposed = Arc::new(AtomicUsize::new(0));
+    fn dispose(count: Arc<AtomicUsize>) {
+        count.fetch_add(1, Ordering::SeqCst);
+    }
+    let guard = Guard::new(Arc::clone(&disposed), dispose);
+    std::thread::spawn(move || drop(guard)).join().unwrap();
+    assert_eq!(disposed.load(Ordering::SeqCst), 1);
 }

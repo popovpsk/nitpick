@@ -76,6 +76,8 @@ enum Activity {
 struct Turn {
     request: Request,
     retried: bool,
+    carried_brief: bool,
+    sent: HashMap<String, u64>,
     head: String,
     assistant: Option<u64>,
     tools: Vec<(String, SharedString)>,
@@ -86,8 +88,14 @@ struct Live {
     session: Session,
     cwd: PathBuf,
     scratch: PathBuf,
-    brief_sent: bool,
+    brief_delivered: bool,
     _pump: Task<()>,
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        run::retire(self.session.clone(), std::mem::take(&mut self.scratch));
+    }
 }
 
 pub(super) struct AgentPanel {
@@ -125,12 +133,15 @@ pub(super) struct AgentPanel {
     turn: Option<Turn>,
     seen: HashMap<String, u64>,
     session_id: Option<String>,
+    settings_used: bool,
+    settings_notice: Option<u64>,
     _close: Task<()>,
     _lookup: Task<()>,
     _load: Task<()>,
     _dispatch: Task<()>,
     _settings: Subscription,
     _release: Subscription,
+    _quit: Subscription,
     _input: Subscription,
 }
 
@@ -191,12 +202,22 @@ impl AgentPanel {
             turn: None,
             seen: HashMap::new(),
             session_id: None,
+            settings_used: false,
+            settings_notice: None,
             _close: Task::ready(()),
             _lookup: Task::ready(()),
             _load: Task::ready(()),
             _dispatch: Task::ready(()),
             _settings: cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx)),
-            _release: cx.on_release(|this: &mut AgentPanel, _: &mut App| this.release()),
+            _release: cx.on_release(|this: &mut AgentPanel, cx: &mut App| this.release(cx)),
+            _quit: cx.on_app_quit(|this, cx| {
+                let write = this.flush_turn(cx);
+                async move {
+                    if let Some(write) = write {
+                        write.await;
+                    }
+                }
+            }),
             _input: submit,
         }
     }
@@ -304,14 +325,17 @@ impl AgentPanel {
         cx.notify();
     }
 
+    fn launching(&self) -> logic::Launching {
+        logic::Launching::new(&self.profile.id, &self.command, self.model.as_deref())
+    }
+
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
+        let before = self.launching();
         let agent = &settings(cx).agent;
         let profile = agent.active_profile();
         let command = agent.command(&profile);
         let model = agent.model(&profile);
         let enabled = agent.enabled;
-        let switched = profile.id != self.profile.id;
-        let changed = switched || command != self.command || model != self.model;
         self.profile_name = profile.name.clone().into();
         self.profile = profile;
         self.command = command;
@@ -320,16 +344,24 @@ impl AgentPanel {
         if !enabled {
             self.close(cx);
         }
-        if changed {
+        let after = self.launching();
+        if before != after {
+            let used = self.settings_used || self.live.is_some() || self.phase.is_busy();
+            let last_is_notice = self.settings_notice.is_some()
+                && self.messages.last().map(|message| message.id) == self.settings_notice;
+            let notice = logic::settings_notice(used, !self.messages.is_empty(), last_is_notice);
+            self.settings_used = false;
             self.end_process(cx);
             self.session_id = None;
-            if !self.messages.is_empty() {
-                let notice = if switched {
+            self.auto_attempted = None;
+            if notice {
+                let text = if before.profile != after.profile {
                     tr().assistant_notice_agent(&self.profile.name)
                 } else {
                     tr().assistant_notice_settings.to_string()
                 };
-                self.add_notice(notice, cx);
+                self.add_notice(text, cx);
+                self.settings_notice = self.messages.last().map(|message| message.id);
             }
             self.start_lookup(cx);
         }

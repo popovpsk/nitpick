@@ -104,8 +104,11 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - Persistence: the user's message and notices are written when they are made, the assistant's
   once when its turn ends (completed, interrupted, failed or the process died); text that is
   only whitespace is not stored and its row is removed. A stopped turn keeps its partial text and
-  gets a notice. Writes are queued on the database thread in call order, so a clear followed by a
-  read never sees old rows.
+  gets a notice. A turn still running when the panel is released (window closed) or the app quits
+  is stored the same way (`flush_turn`: the partial text and the stopped notice); the quit hook
+  returns the write as its future, so the app waits for it within gpui's quit timeout instead
+  of relying on queue order against the database barrier. Writes are queued on the database
+  thread in call order, so a clear followed by a read never sees old rows.
 
 ### Session
 
@@ -116,17 +119,22 @@ Not here: running the harness (`agent` crate), the profile table and settings
   the stored session id of `(repo, key, profile)` from the database, calls `Session::start` on
   `net_runtime::unblock` (the first call waits for the login-shell snapshot), and comes back to
   `dispatched`, which discards a result whose `operation` is no longer current (a stop, a review
-  change or a settings change in between). A chat message on a live session whose brief was sent
-  skips all of that and goes out at once.
+  change or a settings change in between). A chat message on a live session whose brief was
+  delivered skips all of that and goes out at once.
 - Work directory: local changes use the repository root. Branches and merge requests use the
   source branch's own checkout (`checkout_of`), else the root. `disk_matches_head` is whether
   that directory's `HEAD` equals the reviewed head, recomputed for every prompt that carries a
   brief against the live session's directory; it only reads (`git worktree list`, `rev-parse`).
   Local changes always count as matching.
-- The brief goes with a prompt when the session is new (no stored id, or a lost one) and always
-  with an overview or update. A resumed session already has one; its chat messages instead get
-  the "new and changed comments" prefix for threads whose fingerprint differs from the ones sent
-  with the last prompt (`seen`). `seen` is not persisted, so the first message after the app was
+- The brief goes with a prompt until it counts as delivered, and always with an overview or
+  update. It is delivered when a turn that carried it ends `Completed` or `Interrupted`
+  (`logic::brief_delivered`); a failed turn leaves it pending, so the next request carries it
+  again even on the same live session. A resumed session counts as having it only when the
+  conversation holds an assistant message (`logic::resumed_delivered`): a stored session id
+  alone proves nothing, since harnesses report the id before any prompt. Once delivered, chat
+  messages get the "new and changed comments" prefix for threads whose fingerprint differs from
+  the ones in the last answered turn (`seen`, updated with the delivery, so a failed turn does
+  not mark its threads as seen). `seen` is not persisted, so the first message after the app was
   restarted resends all threads once.
 - Overview decision (`logic::load_action`): no stored overview and auto on → overview; stored for
   the current head → show only; stored for another head → show it under a banner with an "Update
@@ -152,11 +160,23 @@ Not here: running the harness (`agent` crate), the profile table and settings
   it cancels the start) and Enter sends nothing: the input stays editable for a draft and a line
   under it says why. Enter sends, Shift+Enter inserts a newline (`submit_on_enter` on the
   textarea; the `PressEnter` of a Shift+Enter is ignored).
-- A changed profile, command or model ends the process and adds a notice; the conversation
-  stays, and session ids stay per profile. Closing the window (`on_release`), a review change and
-  "New conversation" end it too. Ending is `retire`: `Session::shutdown`, then the session's scratch
-  folder is removed; the scratch folders of a killed app are swept at the next start when older
-  than a day.
+- A changed profile, command or model (compared trimmed, `logic::Launching`) ends the process
+  and the next session uses the new settings; the conversation stays, and session ids stay per
+  profile. A notice is added only when something ran under the previous settings (a live or
+  starting session, or a dispatch since the last change) and the conversation is not empty, and
+  never right after another settings notice (`logic::settings_notice`), so saving a half-typed
+  command several times leaves at most one. A change also makes the review's automatic overview
+  eligible again at the next evaluation, without starting anything by itself.
+- Closing the window (`on_release`), a review change and "New conversation" end the session too.
+  Ending is `retire`: `Session::shutdown`, then the session's scratch folder is removed; `Live`
+  retires on drop, and a started session is held in a `logic::Guard` from the moment it exists
+  on the blocking thread, so a start whose dispatch was cancelled while `Session::start` ran is
+  retired when the result is dropped, wherever that happens. The scratch folders of a killed
+  app are swept at the next start when older than a day. A failed or refused start removes its
+  own folder in the `agent` crate.
+- With `auto_overview` on and a missing CLI, a review makes one start attempt per head and
+  window (`auto_attempted`); a "not found" sets the lookup to missing, which blocks further
+  automatic attempts until the settings change or the panel is opened (which re-checks).
 - "New conversation" (title row) deletes the review's messages and every profile's session id
   and does not start an overview by itself; it is also the way out of `ContextTooLong`.
 - `agent::process::prewarm()`, the history pruning (`prune_agent`, once at startup like the

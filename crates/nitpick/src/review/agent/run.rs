@@ -21,11 +21,17 @@ const SCRATCH_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-struct Started {
+struct Parts {
     session: Session,
     receiver: flume::Receiver<Event>,
     resume: Option<String>,
     scratch: PathBuf,
+}
+
+type Started = logic::Guard<Parts>;
+
+fn dispose_parts(parts: Parts) {
+    retire(parts.session, parts.scratch);
 }
 
 pub(in crate::review) fn init(cx: &mut App) {
@@ -69,7 +75,7 @@ fn sweep_scratch(root: &Path) {
     }
 }
 
-fn retire(session: Session, scratch: PathBuf) {
+pub(super) fn retire(session: Session, scratch: PathBuf) {
     let done = session.shutdown();
     net_runtime::handle().spawn(async move {
         done.await;
@@ -130,6 +136,8 @@ impl AgentPanel {
             .is_some_and(|old| old.head != context.head);
         if !same {
             self.end_process(cx);
+            self.settings_used = false;
+            self.settings_notice = None;
         }
         self.context = Some(context);
         if !same {
@@ -142,17 +150,35 @@ impl AgentPanel {
         }
     }
 
-    pub(super) fn release(&mut self) {
-        if let Some(live) = self.live.take() {
-            retire(live.session, live.scratch);
+    pub(super) fn release(&mut self, cx: &mut App) {
+        if let Some(write) = self.flush_turn(cx) {
+            cx.background_spawn(write).detach();
         }
+        self.live = None;
+    }
+
+    pub(super) fn flush_turn(&mut self, cx: &App) -> Option<logic::Write> {
+        let turn = self.turn.take()?;
+        let ix = turn.assistant.and_then(|id| self.index_of(id))?;
+        let stored = self.stored_assistant(ix)?;
+        let notice = NewAgentMessage {
+            role: AgentRole::Notice,
+            kind: AgentKind::Chat,
+            text: tr().assistant_notice_stopped.to_string(),
+            head: stored.head.clone(),
+            created_at: now(),
+        };
+        let writes = [self.write(stored, cx), self.write(notice, cx)];
+        Some(Box::pin(async move {
+            for write in writes.into_iter().flatten() {
+                write.await;
+            }
+        }))
     }
 
     fn retire_live(&mut self) {
         self.generation += 1;
-        if let Some(live) = self.live.take() {
-            retire(live.session, live.scratch);
-        }
+        self.live = None;
     }
 
     pub(super) fn end_process(&mut self, cx: &mut Context<Self>) {
@@ -177,6 +203,7 @@ impl AgentPanel {
         self.stale = false;
         self.seen.clear();
         self.session_id = None;
+        self.settings_notice = None;
         self.pending = None;
         self.refresh_stops();
         self.load_generation += 1;
@@ -362,6 +389,7 @@ impl AgentPanel {
         self.overview = OverviewState::None;
         self.seen.clear();
         self.session_id = None;
+        self.settings_notice = None;
         self.stale = false;
         self.pending = None;
         self.refresh_stops();
@@ -373,9 +401,10 @@ impl AgentPanel {
             return;
         };
         self.operation += 1;
+        self.settings_used = true;
         let operation = self.operation;
         let chat = matches!(request, Request::Chat { .. });
-        if chat && self.live.as_ref().is_some_and(|live| live.brief_sent) {
+        if chat && self.live.as_ref().is_some_and(|live| live.brief_delivered) {
             self.send_now(request, retried, None, cx);
             return;
         }
@@ -416,13 +445,21 @@ impl AgentPanel {
                     instructions: prompt::instructions(language, workdir.disk_matches_head),
                     scratch: scratch.clone(),
                 };
-                let started = net_runtime::unblock(move || Session::start(launch)).await;
-                Some(started.map(|(session, receiver)| Started {
-                    session,
-                    receiver,
-                    resume,
-                    scratch,
-                }))
+                let started = net_runtime::unblock(move || {
+                    Session::start(launch).map(|(session, receiver)| {
+                        Started::new(
+                            Parts {
+                                session,
+                                receiver,
+                                resume,
+                                scratch,
+                            },
+                            dispose_parts,
+                        )
+                    })
+                })
+                .await;
+                Some(started)
             } else {
                 None
             };
@@ -442,14 +479,15 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if operation != self.operation {
-            if let Some(Ok(started)) = started {
-                retire(started.session, started.scratch);
-            }
             return;
         }
         if let Some(started) = started {
             match started {
-                Ok(started) => self.install_live(started, workdir.cwd.clone(), cx),
+                Ok(mut started) => {
+                    if let Some(parts) = started.take() {
+                        self.install_live(parts, workdir.cwd.clone(), cx);
+                    }
+                }
                 Err(err) => {
                     self.start_failed(err, cx);
                     return;
@@ -477,23 +515,27 @@ impl AgentPanel {
         }
     }
 
-    fn install_live(&mut self, started: Started, cwd: PathBuf, cx: &mut Context<Self>) {
+    fn install_live(&mut self, parts: Parts, cwd: PathBuf, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        let Started {
+        let Parts {
             session,
             receiver,
             resume,
             scratch,
-        } = started;
-        let brief_sent = resume.is_some();
+        } = parts;
+        let answered = self
+            .messages
+            .iter()
+            .any(|message| message.role == AgentRole::Assistant);
+        let brief_delivered = logic::resumed_delivered(resume.is_some(), answered);
         self.session_id = resume;
         let pump = cx.spawn(async move |this, cx| pump(this, cx, receiver, generation).await);
         self.live = Some(Live {
             session,
             cwd,
             scratch,
-            brief_sent,
+            brief_delivered,
             _pump: pump,
         });
     }
@@ -509,7 +551,7 @@ impl AgentPanel {
             self.set_phase(Phase::Idle, cx);
             return;
         };
-        let included = !live.brief_sent;
+        let included = !live.brief_delivered;
         let needs_brief = included || !matches!(request, Request::Chat { .. });
         let text = match disk_matches {
             Some(disk) if needs_brief => {
@@ -533,14 +575,14 @@ impl AgentPanel {
                 &self.seen,
             ),
         };
-        self.seen = brief::fingerprints(&context.brief.threads);
-        if let Some(live) = self.live.as_mut() {
-            live.brief_sent = true;
+        if let Some(live) = self.live.as_ref() {
             live.session.prompt(text);
         }
         self.turn = Some(Turn {
             request,
             retried,
+            carried_brief: needs_brief,
+            sent: brief::fingerprints(&context.brief.threads),
             head: context.head.clone(),
             assistant: None,
             tools: Vec::new(),
@@ -667,6 +709,13 @@ impl AgentPanel {
         let turn = self.turn.take();
         if let Some(turn) = &turn {
             self.finish_assistant(turn.assistant, cx);
+            if logic::answered(&outcome) {
+                self.seen = turn.sent.clone();
+            }
+            if let Some(live) = self.live.as_mut() {
+                live.brief_delivered =
+                    logic::brief_delivered(live.brief_delivered, turn.carried_brief, &outcome);
+            }
         }
         match outcome {
             Outcome::Completed => {
@@ -742,20 +791,24 @@ impl AgentPanel {
         let Some(ix) = id.and_then(|id| self.index_of(id)) else {
             return;
         };
-        if self.messages[ix].text.trim().is_empty() {
-            self.remove_message(ix, cx);
-            return;
+        match self.stored_assistant(ix) {
+            Some(stored) => {
+                self.persist(stored, cx);
+                self.refresh_stops();
+            }
+            None => self.remove_message(ix, cx),
         }
+    }
+
+    fn stored_assistant(&self, ix: usize) -> Option<NewAgentMessage> {
         let message = &self.messages[ix];
-        let stored = NewAgentMessage {
+        (!message.text.trim().is_empty()).then(|| NewAgentMessage {
             role: AgentRole::Assistant,
             kind: message.kind,
             text: message.text.clone(),
             head: message.head.clone(),
             created_at: now(),
-        };
-        self.persist(stored, cx);
-        self.refresh_stops();
+        })
     }
 
     pub(super) fn add_notice(&mut self, text: String, cx: &mut Context<Self>) {
@@ -781,17 +834,20 @@ impl AgentPanel {
         );
     }
 
-    fn persist(&self, message: NewAgentMessage, cx: &mut Context<Self>) {
-        let (Some(context), Some(db)) = (self.context.as_ref(), crate::db::db(cx)) else {
-            return;
-        };
+    fn write(&self, message: NewAgentMessage, cx: &App) -> Option<logic::Write> {
+        let (context, db) = (self.context.as_ref()?, crate::db::db(cx)?);
         let write = db.add_agent_message(&context.repo, &context.key, message);
-        cx.background_spawn(async move {
+        Some(Box::pin(async move {
             if let Err(err) = write.await {
                 log::warn!("saving an assistant message: {err}");
             }
-        })
-        .detach();
+        }))
+    }
+
+    fn persist(&self, message: NewAgentMessage, cx: &mut Context<Self>) {
+        if let Some(write) = self.write(message, cx) {
+            cx.background_spawn(write).detach();
+        }
     }
 
     fn push_message(

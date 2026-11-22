@@ -145,11 +145,18 @@ sessions without the login shell.
   review (merge or pull request, branch comparison, uncommitted changes). Uncommitted changes have
   no head commit id, so the text sends the agent to `git status` / `git diff HEAD`, and
   `disk_matches_head` is ignored for them (the working tree is the subject).
-- Repository and forge text (description, commit list, comments) sits between
-  `<<< untrusted: <label> >>>` and `<<< end untrusted >>>` lines. `<<<` and `>>>` inside any
-  rendered content become `‹‹‹` and `›››`, so content cannot produce a boundary; the markers are
-  fixed, not random, because the output must be reproducible for snapshot tests.
-  Overflow notices ("and N more ...", threads not shown) are written after the closing marker.
+- Every value that comes from the repository or the forge sits between
+  `<<< untrusted: <label> >>>` and `<<< end untrusted >>>` lines: the change header (reference,
+  title, URL, author, state, branch names), description, commit list, file lists (changed,
+  hidden, viewed) and comments with their positions. Every other line of a brief is written by
+  Nitpick (headings, counts, the kind, the "files on disk" statement, the git commands, overflow
+  notices); the preamble says so, and a test checks it. `<<<` and `>>>` inside any rendered
+  content become `‹‹‹` and `›››`, so content cannot produce a boundary; the markers are fixed,
+  not random, because the output must be reproducible for snapshot tests. Overflow notices
+  ("and N more ...", threads not shown) are written after the closing marker.
+- Commit ids reach the text outside a fence only through `commit_id`: ASCII hex, at most 64
+  characters, else the id counts as unknown, the git command is not written, and the text points
+  at the branch names in the change block. `update_task` follows the same rule.
 - Single-line fields (title, author, branches, paths, subjects) lose control characters and
   line breaks and are cut at 1000 characters; multi-line fields keep `\n` and tab. All limits
   count `char`s and cut on a char boundary, and a cut says how many characters were left out.
@@ -164,8 +171,10 @@ sessions without the login shell.
   head and base ids come from the brief, so after a head change the app sends a fresh brief
   along with `update_task`.
 - A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` and
-  the text in a code fence one backtick longer than any run inside it (at least three); the link
-  comes from `review_core::diff_link::format`.
+  the text in a code fence one backtick longer than any run inside it (at least three). The path
+  is repository text, so in what the agent receives it appears only percent-encoded (label and
+  link target alike, from `review_core::diff_link::format`); `selection_link`, the marker shown
+  to the user in the input, keeps the readable escaped path as the label.
 
 ## Decisions
 

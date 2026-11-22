@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use ::agent::brief::{self, Brief, Thread};
-use ::agent::{Event, Failure, FailureKind, prompt};
+use ::agent::{Event, Failure, FailureKind, Outcome, prompt};
 use app_db::AgentKind;
 use ui_resources::i18n::Strings;
 
@@ -180,4 +182,68 @@ pub(super) fn coalesce(events: Vec<Event>) -> Vec<Event> {
 
 pub(super) fn is_frame_paced(event: &Event) -> bool {
     matches!(event, Event::Text(_) | Event::Thinking(_))
+}
+
+pub(super) type Write = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+pub(super) fn answered(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::Completed | Outcome::Interrupted)
+}
+
+pub(super) fn brief_delivered(was: bool, carried: bool, outcome: &Outcome) -> bool {
+    was || (carried && answered(outcome))
+}
+
+pub(super) fn resumed_delivered(resumed: bool, answered_before: bool) -> bool {
+    resumed && answered_before
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Launching {
+    pub profile: String,
+    pub command: String,
+    pub model: Option<String>,
+}
+
+impl Launching {
+    pub(super) fn new(profile: &str, command: &str, model: Option<&str>) -> Self {
+        Self {
+            profile: profile.trim().to_owned(),
+            command: command.trim().to_owned(),
+            model: model
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(str::to_owned),
+        }
+    }
+}
+
+pub(super) fn settings_notice(used: bool, has_messages: bool, last_is_notice: bool) -> bool {
+    used && has_messages && !last_is_notice
+}
+
+pub(super) struct Guard<T> {
+    value: Option<T>,
+    dispose: fn(T),
+}
+
+impl<T> Guard<T> {
+    pub(super) fn new(value: T, dispose: fn(T)) -> Self {
+        Self {
+            value: Some(value),
+            dispose,
+        }
+    }
+
+    pub(super) fn take(&mut self) -> Option<T> {
+        self.value.take()
+    }
+}
+
+impl<T> Drop for Guard<T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            (self.dispose)(value);
+        }
+    }
 }
