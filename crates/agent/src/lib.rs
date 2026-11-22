@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+pub mod brief;
 pub mod claude;
 pub mod jsonrpc;
 pub mod lines;
 pub mod process;
+pub mod prompt;
 pub mod registry;
 pub mod session;
 

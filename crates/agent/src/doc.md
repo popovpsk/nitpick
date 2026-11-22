@@ -7,8 +7,11 @@ JSON-RPC framing, the session and registry), the seam a harness driver plugs int
 drivers; only Claude Code has one so far, `Session::start` returns `Error::Unsupported` for the
 other `HarnessKind`s. GPUI-free.
 
-Not here: UI, settings and persistence (`nitpick`, `app_db`), the prompt and brief texts, the
-`diff:` link format (`review_core`).
+It also holds the texts the app sends: the system instructions, the tasks and the review brief
+(`prompt`, `brief`).
+
+Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` from review data
+(`nitpick`), the `diff:` link format (`review_core`, which `prompt` calls).
 
 ## Files
 
@@ -26,6 +29,10 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), the prompt and bri
 - `registry.rs` — `Registry` of live sessions and `shutdown_all`.
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
+- `prompt.rs` — system instructions (`instructions(language, disk_matches_head)`), the overview
+  and update tasks, `with_brief`, `with_new_comments`, `selection_question` and `Selection`.
+- `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
+  fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
 - `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
 - `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
   `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand.
@@ -96,6 +103,33 @@ sessions without the login shell.
 - `probe` runs `<command> --version` with a 10 s limit in the temp folder and returns the first
   non-empty line (stdout, else stderr).
 
+## Brief and prompt texts
+
+- The patch is never in the brief; the agent reads it through git. A brief names the kind of
+  review (merge or pull request, branch comparison, uncommitted changes). Uncommitted changes have
+  no head commit id, so the text sends the agent to `git status` / `git diff HEAD`, and
+  `disk_matches_head` is ignored for them (the working tree is the subject).
+- Repository and forge text (description, commit list, comments) sits between
+  `<<< untrusted: <label> >>>` and `<<< end untrusted >>>` lines. `<<<` and `>>>` inside any
+  rendered content become `‹‹‹` and `›››`, so content cannot produce a boundary; the markers are
+  fixed, not random, because the output must be reproducible for snapshot tests.
+  Overflow notices ("and N more ...", threads not shown) are written after the closing marker.
+- Single-line fields (title, author, branches, paths, subjects) lose control characters and
+  line breaks and are cut at 1000 characters; multi-line fields keep `\n` and tab. All limits
+  count `char`s and cut on a char boundary, and a cut says how many characters were left out.
+- Limits: description 20 000 characters, 200 commits, 500 entries per file list, a comment body
+  2 000, all threads together 40 000. Threads go in the given order, later ones are dropped whole
+  with a count; a first thread that alone exceeds the budget is cut instead of dropped.
+- A thread's digest is its id, resolved flag, position and every note's author and body in full
+  (not the truncated rendering), as compact JSON; the fingerprint is FNV-1a 64 of it, stable
+  across runs and Rust versions so the app may persist it. `changed_since` compares by thread id.
+- `instructions` is the Appendix text with the answer language (a display name, empty means
+  English) and the disk rule; the head and base ids come from the brief, so after a head change
+  the app sends a fresh brief along with `update_task`.
+- A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` and
+  the text in a code fence one backtick longer than any run inside it (at least three); the link
+  comes from `review_core::diff_link::format`.
+
 ## Decisions
 
 - `process-wrap` (tokio) for the process group and the job object instead of `nix` and
@@ -108,3 +142,5 @@ sessions without the login shell.
 - No `futures` crate: the shutdown futures join `JoinHandle`s and a `watch` channel.
 - Drivers sit on `AsyncRead` + `AsyncWrite`, not on `Child`, so recorded sessions replay over
   `duplex` the same on every OS.
+- `agent` depends on `review_core` only for `Side` and the `diff:` encoder, so the link a prompt
+  asks for and the one the app parses cannot drift apart.
