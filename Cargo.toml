@@ -16,6 +16,7 @@ members = [
     "crates/review_core",
     "crates/secret_store",
     "crates/zed_theme",
+    "crates/agent",
 ]
 
 default-members = ["crates/nitpick"]

@@ -1,0 +1,31 @@
+[package]
+name = "agent"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+dirs = "6"
+flume = "0.12.0"
+log = { workspace = true }
+net_runtime = { path = "../net_runtime" }
+process-wrap = { version = "10", default-features = false, features = [
+    "tokio1",
+    "kill-on-drop",
+    "process-group",
+    "job-object",
+    "creation-flags",
+] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_System_Threading"] }
+
+[dev-dependencies]
+rstest = "0.28"
+tempfile = "3"
+
+[lints]
+workspace = true
