@@ -1,3 +1,4 @@
+mod claims;
 mod context;
 mod links;
 mod logic;
@@ -13,9 +14,8 @@ use std::time::Duration;
 
 use ::agent::Session;
 use ::agent::process::{Environment, Invocation};
-use app_db::AgentKind;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, Window,
+    AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, Window,
 };
 use gpui_component::input::{InputEvent, TextareaState};
 use gpui_component::message_scroller::MessageScrollerState;
@@ -32,7 +32,7 @@ pub(super) use panel::frame;
 pub(super) use run::init;
 
 use logic::{OverviewState, Request};
-use messages::Message;
+use messages::{Kind, Message};
 
 pub(super) const SLIDE: Duration = Duration::from_millis(200);
 const WIDTH_SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -78,6 +78,7 @@ struct Turn {
     request: Request,
     retried: bool,
     carried_brief: bool,
+    carried_instructions: bool,
     sent: HashMap<String, u64>,
     head: String,
     assistant: Option<u64>,
@@ -90,7 +91,15 @@ struct Live {
     cwd: PathBuf,
     scratch: PathBuf,
     brief_delivered: bool,
+    instructions: String,
+    instructions_due: Option<String>,
     _pump: Task<()>,
+}
+
+struct Bound {
+    claim: claims::Claim,
+    brief_delivered: bool,
+    instructions: String,
 }
 
 impl Drop for Live {
@@ -110,6 +119,7 @@ pub(super) struct AgentPanel {
     profile_name: SharedString,
     command: String,
     model: Option<String>,
+    instructions: String,
     lookup: Lookup,
     missing_hint: SharedString,
     lookup_generation: u64,
@@ -132,9 +142,11 @@ pub(super) struct AgentPanel {
     generation: u64,
     operation: u64,
     turn: Option<Turn>,
-    starting: Option<(AgentKind, String)>,
+    starting: Option<(Kind, String)>,
     seen: HashMap<String, u64>,
-    session_id: Option<String>,
+    owner: u64,
+    bound: Option<Bound>,
+    resumable: bool,
     settings_used: bool,
     settings_notice: Option<u64>,
     _close: Task<()>,
@@ -142,8 +154,6 @@ pub(super) struct AgentPanel {
     _load: Task<()>,
     _dispatch: Task<()>,
     _settings: Subscription,
-    _release: Subscription,
-    _quit: Subscription,
     _input: Subscription,
 }
 
@@ -155,6 +165,7 @@ impl AgentPanel {
         let profile = agent.active_profile();
         let command = agent.command(&profile);
         let model = agent.model(&profile);
+        let instructions = agent.instructions.trim().to_string();
         let width = clamp_agent_panel_width(agent.panel_width).round();
         let placeholder = tr().assistant_input_placeholder.clone();
         let input = cx.new(|cx| {
@@ -181,6 +192,7 @@ impl AgentPanel {
             missing_hint: tr().assistant_missing_hint(&command).into(),
             command,
             model,
+            instructions,
             lookup: Lookup::Checking,
             lookup_generation: 0,
             context: None,
@@ -204,7 +216,9 @@ impl AgentPanel {
             turn: None,
             starting: None,
             seen: HashMap::new(),
-            session_id: None,
+            owner: claims::next_owner(),
+            bound: None,
+            resumable: false,
             settings_used: false,
             settings_notice: None,
             _close: Task::ready(()),
@@ -212,15 +226,6 @@ impl AgentPanel {
             _load: Task::ready(()),
             _dispatch: Task::ready(()),
             _settings: cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx)),
-            _release: cx.on_release(|this: &mut AgentPanel, cx: &mut App| this.release(cx)),
-            _quit: cx.on_app_quit(|this, cx| {
-                let write = this.flush_turn(cx);
-                async move {
-                    if let Some(write) = write {
-                        write.await;
-                    }
-                }
-            }),
             _input: submit,
         }
     }
@@ -329,7 +334,12 @@ impl AgentPanel {
     }
 
     fn launching(&self) -> logic::Launching {
-        logic::Launching::new(&self.profile.id, &self.command, self.model.as_deref())
+        logic::Launching::new(
+            &self.profile.id,
+            &self.command,
+            self.model.as_deref(),
+            &self.instructions,
+        )
     }
 
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
@@ -338,11 +348,13 @@ impl AgentPanel {
         let profile = agent.active_profile();
         let command = agent.command(&profile);
         let model = agent.model(&profile);
+        let instructions = agent.instructions.trim().to_string();
         let enabled = agent.enabled;
         self.profile_name = profile.name.clone().into();
         self.profile = profile;
         self.command = command;
         self.model = model;
+        self.instructions = instructions;
         self.missing_hint = tr().assistant_missing_hint(&self.command).into();
         if !enabled {
             self.close(cx);
@@ -355,7 +367,11 @@ impl AgentPanel {
             let notice = logic::settings_notice(used, !self.messages.is_empty(), last_is_notice);
             self.settings_used = false;
             self.end_process(cx);
-            self.session_id = None;
+            if before.profile != after.profile {
+                self.bound = None;
+                self.resumable = false;
+                self.load_stored(!self.loaded, cx);
+            }
             self.auto_attempted = None;
             if notice {
                 let text = if before.profile != after.profile {

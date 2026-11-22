@@ -4,6 +4,17 @@ use crate::brief::{self, Brief, Thread};
 
 const DEFAULT_LANGUAGE: &str = "English";
 
+pub const MAX_USER_INSTRUCTIONS: usize = 20_000;
+
+const USER_HEADING: &str =
+    "\nAdditional instructions from the user (the rules above still apply):\n";
+
+const UPDATED_INSTRUCTIONS: &str = "\
+The instructions for this conversation were updated. They replace the instructions you were given
+earlier; follow them from now on.
+
+";
+
 const INSTRUCTIONS_HEAD: &str = "\
 You are assisting a human who is reviewing a code change in Nitpick, a read-only diff reviewer.
 Your job is to help them understand the change and find their way through it. You are not the
@@ -57,7 +68,7 @@ pub struct Selection<'a> {
     pub text: &'a str,
 }
 
-pub fn instructions(language: &str, disk_matches_head: bool) -> String {
+pub fn instructions(language: &str, disk_matches_head: bool, user: &str) -> String {
     let mut out = String::from(INSTRUCTIONS_HEAD);
     out.push_str(if disk_matches_head {
         DISK_MATCHES
@@ -68,7 +79,29 @@ pub fn instructions(language: &str, disk_matches_head: bool) -> String {
     out.push_str("- Answer in ");
     out.push_str(&language_name(language));
     out.push_str(". Be concise; use Markdown.\n");
+    let user = user_text(user);
+    if !user.is_empty() {
+        out.push_str(USER_HEADING);
+        out.push_str(&user);
+        out.push('\n');
+    }
     out
+}
+
+fn user_text(text: &str) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(MAX_USER_INSTRUCTIONS) {
+        None => text.to_owned(),
+        Some((cut, _)) => text[..cut].trim_end().to_owned(),
+    }
+}
+
+pub fn updated_instructions(instructions: &str, message: &str) -> String {
+    format!("{UPDATED_INSTRUCTIONS}{instructions}\n---\n{message}")
+}
+
+pub fn instructions_fingerprint(instructions: &str) -> String {
+    format!("{:016x}", brief::fnv1a(instructions.as_bytes()))
 }
 
 pub fn overview_task() -> String {

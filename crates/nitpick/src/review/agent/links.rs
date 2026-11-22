@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use ::agent::brief;
 use ::agent::prompt::{self, Selection};
-use app_db::{AgentKind, AgentRole};
 use gpui::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
     SharedString, Styled as _, Window, div,
@@ -15,6 +14,7 @@ use gpui_component::{
 use review_core::diff_link::{self, DiffLink};
 use review_core::{LineKind, Side};
 
+use super::messages::{Kind, Role};
 use super::{AgentEvent, AgentPanel};
 use crate::localization::tr;
 use crate::review::comments::opens_in_browser;
@@ -306,9 +306,9 @@ pub(in crate::review) enum StopStep {
 
 impl AgentPanel {
     fn latest_overview(&self) -> Option<usize> {
-        self.messages.iter().rposition(|message| {
-            message.role == AgentRole::Assistant && message.kind == AgentKind::Overview
-        })
+        self.messages
+            .iter()
+            .rposition(|message| message.role == Role::Assistant && message.kind == Kind::Overview)
     }
 
     pub(super) fn refresh_stops(&mut self) {

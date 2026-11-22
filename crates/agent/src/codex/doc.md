@@ -34,7 +34,9 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
   Codex), never `thread/shellCommand` (runs outside the sandbox). `summary: "auto"` is in every
   `turn/start`: without it no reasoning summary streams.
 - `thread/resume` carries `threadId`, `excludeTurns: true` and the same settings as
-  `thread/start`; the model and the developer instructions are sent again on resume.
+  `thread/start`; the model and the developer instructions are sent again on resume (whether Codex
+  applies them to an existing thread is unverified; the app also sends changed instructions as a
+  message block on a resumed session).
 - The app's instructions go in `developerInstructions` (omitted when empty); `baseInstructions`
   is never set because it replaces Codex's own system prompt. No `config` overrides are sent:
   the repository's `AGENTS.md` and a user's configuration keep their effect (see Open points).

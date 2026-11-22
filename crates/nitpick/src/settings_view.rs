@@ -52,6 +52,8 @@ const EDITOR_SAVE_DELAY: Duration = Duration::from_millis(400);
 const AGENT_SAVE_DELAY: Duration = Duration::from_millis(400);
 const AGENT_CUSTOM_MIN_ROWS: usize = 3;
 const AGENT_CUSTOM_MAX_ROWS: usize = 10;
+const AGENT_INSTRUCTIONS_MIN_ROWS: usize = 3;
+const AGENT_INSTRUCTIONS_MAX_ROWS: usize = 12;
 const AGENT_CUSTOM_EXAMPLE: &str = "my-agent = my-agent acp";
 
 fn invalid_patterns(patterns: &[String]) -> Option<SharedString> {
@@ -250,11 +252,14 @@ struct AgentForm {
     custom_baseline: Vec<CustomAgent>,
     custom_invalid: Option<SharedString>,
     custom_empty: bool,
+    instructions: Entity<TextareaState>,
+    instructions_baseline: String,
     generation: Rc<Cell<u64>>,
     custom_generation: Rc<Cell<u64>>,
+    instructions_generation: Rc<Cell<u64>>,
     status: ForgeStatus,
     _check: Task<()>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 fn stored<'a>(map: &'a BTreeMap<String, String>, id: &str) -> &'a str {
@@ -284,6 +289,13 @@ impl AgentForm {
                 .auto_grow(AGENT_CUSTOM_MIN_ROWS, AGENT_CUSTOM_MAX_ROWS)
                 .default_value(custom_text)
         });
+        let instructions_text = current.instructions.trim().to_string();
+        let instructions = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(AGENT_INSTRUCTIONS_MIN_ROWS, AGENT_INSTRUCTIONS_MAX_ROWS)
+                .placeholder(tr().assistant_instructions_placeholder.clone())
+                .default_value(instructions_text.clone())
+        });
         let on_fields = |this: &mut SettingsView,
                          _: Entity<InputState>,
                          event: &InputEvent,
@@ -300,6 +312,11 @@ impl AgentForm {
                     this.schedule_custom_save(cx);
                 }
             }),
+            cx.subscribe(&instructions, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_instructions_save(cx);
+                }
+            }),
         ];
         Self {
             profile_name: profile.name.clone().into(),
@@ -312,8 +329,11 @@ impl AgentForm {
             custom_baseline: current.custom,
             custom_invalid: None,
             custom_empty,
+            instructions,
+            instructions_baseline: instructions_text,
             generation: Rc::default(),
             custom_generation: Rc::default(),
+            instructions_generation: Rc::default(),
             status: ForgeStatus::Idle,
             _check: Task::ready(()),
             _subscriptions: subscriptions,
@@ -696,6 +716,26 @@ impl SettingsView {
         cx.notify();
     }
 
+    fn schedule_instructions_save(&mut self, cx: &mut Context<Self>) {
+        let generation = self.agent.instructions_generation.get() + 1;
+        self.agent.instructions_generation.set(generation);
+        let counter = self.agent.instructions_generation.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(AGENT_SAVE_DELAY).await;
+            if counter.get() != generation {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                let text = this.agent.instructions.read(cx).value().trim().to_string();
+                this.agent.instructions_baseline = text.clone();
+                if settings(cx).agent.instructions.trim() != text {
+                    update_settings(cx, move |s| s.agent.instructions = text);
+                }
+            });
+        })
+        .detach();
+    }
+
     fn select_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.agent.generation.set(self.agent.generation.get() + 1);
         self.save_agent_fields(cx);
@@ -753,6 +793,24 @@ impl SettingsView {
                 .custom
                 .update(cx, |state, cx| state.set_value(text, window, cx));
         }
+        self.reload_instructions(window, cx);
+    }
+
+    fn reload_instructions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let saved = settings(cx).agent.instructions.trim().to_string();
+        let focused = self
+            .agent
+            .instructions
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        if focused || self.agent.instructions_baseline == saved {
+            return;
+        }
+        self.agent.instructions_baseline = saved.clone();
+        self.agent
+            .instructions
+            .update(cx, |state, cx| state.set_value(saved, window, cx));
     }
 
     fn check_agent(&mut self, cx: &mut Context<Self>) {
@@ -1116,6 +1174,7 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
     let model_view = view.clone();
     let check_view = view.clone();
     let custom_view = view.clone();
+    let instructions_view = view.clone();
     let mut group = SettingGroup::new()
         .title(s.assistant.clone())
         .description(s.assistant_desc.clone())
@@ -1203,6 +1262,21 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
                 ),
             )
             .description(s.assistant_auto_overview_desc.clone()),
+        )
+        .item(
+            SettingItem::new(
+                s.assistant_instructions.clone(),
+                SettingField::render(move |_, _, cx| {
+                    div()
+                        .w_full()
+                        .max_w(px(FIELD_MAX_WIDTH))
+                        .child(Textarea::new(
+                            &instructions_view.read(cx).agent.instructions,
+                        ))
+                }),
+            )
+            .layout(Axis::Vertical)
+            .description(s.assistant_instructions_desc.clone()),
         )
         .item(
             SettingItem::new(

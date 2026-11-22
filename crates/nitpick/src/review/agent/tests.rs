@@ -6,7 +6,6 @@ use std::process::Command;
 use ::agent::brief::{self, Brief};
 use ::agent::process::Environment;
 use ::agent::{Event, Failure, FailureKind, Outcome};
-use app_db::AgentKind;
 use forge::ForgeKind;
 use git_repo::Repo;
 use gpui::SharedString;
@@ -14,6 +13,7 @@ use review_core::{DiffLink, FileStatus, Side};
 use rstest::rstest;
 use ui_resources::i18n::Lang;
 
+use super::claims::{self, Claim};
 use super::context::{
     BriefInputs, DiscussionInput, FileInput, WorkdirPlan, assemble, disk_matches, language_name,
     local_head, resolve_workdir, review_key, thread_position,
@@ -23,6 +23,7 @@ use super::logic::{
     self, Guard, Launching, LoadAction, OverviewState, Problem, Request, classify, coalesce,
     compose_chat, exit_text, limit_text, load_action, overview_state, problem_text,
 };
+use super::messages::Kind;
 use super::{LinkPlan, Lookup, PendingSelection, Phase, locate_in, unread_after};
 use crate::agent_profiles::LoginHint;
 use crate::review::ReviewSource;
@@ -387,25 +388,38 @@ fn overview(stored: Option<&str>, head: &str) -> OverviewState {
 }
 
 #[rstest]
-#[case::none_auto(None, "h1", true, false, LoadAction::Overview)]
-#[case::none_auto_local(None, "h1", true, true, LoadAction::Overview)]
-#[case::none_manual(None, "h1", false, false, LoadAction::Nothing)]
-#[case::none_manual_local(None, "h1", false, true, LoadAction::Nothing)]
-#[case::current_auto(Some("h1"), "h1", true, false, LoadAction::Nothing)]
-#[case::current_manual(Some("h1"), "h1", false, false, LoadAction::Nothing)]
-#[case::current_auto_local(Some("h1"), "h1", true, true, LoadAction::Nothing)]
-#[case::outdated_auto(Some("h0"), "h1", true, false, LoadAction::Update)]
-#[case::outdated_manual(Some("h0"), "h1", false, false, LoadAction::Nothing)]
-#[case::outdated_auto_local(Some("h0"), "h1", true, true, LoadAction::Nothing)]
-#[case::outdated_manual_local(Some("h0"), "h1", false, true, LoadAction::Nothing)]
+#[case::none_auto(None, "h1", true, false, false, LoadAction::Overview)]
+#[case::none_auto_local(None, "h1", true, true, false, LoadAction::Overview)]
+#[case::none_manual(None, "h1", false, false, false, LoadAction::Nothing)]
+#[case::none_manual_local(None, "h1", false, true, false, LoadAction::Nothing)]
+#[case::none_auto_with_an_earlier_conversation(None, "h1", true, false, true, LoadAction::Nothing)]
+#[case::none_auto_local_with_an_earlier_conversation(
+    None,
+    "h1",
+    true,
+    true,
+    true,
+    LoadAction::Nothing
+)]
+#[case::current_auto(Some("h1"), "h1", true, false, false, LoadAction::Nothing)]
+#[case::current_manual(Some("h1"), "h1", false, false, false, LoadAction::Nothing)]
+#[case::current_auto_local(Some("h1"), "h1", true, true, false, LoadAction::Nothing)]
+#[case::outdated_auto(Some("h0"), "h1", true, false, false, LoadAction::Update)]
+#[case::outdated_manual(Some("h0"), "h1", false, false, false, LoadAction::Nothing)]
+#[case::outdated_auto_local(Some("h0"), "h1", true, true, false, LoadAction::Nothing)]
+#[case::outdated_manual_local(Some("h0"), "h1", false, true, false, LoadAction::Nothing)]
 fn overview_decision_table(
     #[case] stored: Option<&str>,
     #[case] head: &str,
     #[case] auto: bool,
     #[case] local: bool,
+    #[case] resumable: bool,
     #[case] expected: LoadAction,
 ) {
-    assert_eq!(load_action(&overview(stored, head), auto, local), expected);
+    assert_eq!(
+        load_action(&overview(stored, head), auto, local, resumable),
+        expected
+    );
 }
 
 #[test]
@@ -428,20 +442,20 @@ fn the_overview_button_updates_only_an_outdated_overview() {
 
 #[test]
 fn requests_are_stored_as_the_matching_message_kind() {
-    assert_eq!(Request::Overview.kind(), AgentKind::Overview);
+    assert_eq!(Request::Overview.kind(), Kind::Overview);
     assert_eq!(
         Request::Update {
             old_head: String::new()
         }
         .kind(),
-        AgentKind::Overview
+        Kind::Overview
     );
     assert_eq!(
         Request::Chat {
             prompt: String::new()
         }
         .kind(),
-        AgentKind::Chat
+        Kind::Chat
     );
 }
 
@@ -1037,17 +1051,120 @@ fn only_a_completed_or_stopped_turn_counts_as_answered(
     assert_eq!(logic::answered(&outcome), expected);
 }
 
+fn stored_session(id: &str, delivered: bool, instructions: &str) -> app_db::AgentSession {
+    app_db::AgentSession {
+        id: id.to_string(),
+        brief_delivered: delivered,
+        instructions: instructions.to_string(),
+    }
+}
+
+#[test]
+fn a_stored_session_is_adopted_with_its_flags_when_the_claim_succeeds() {
+    let (resume, claim) = logic::adopt(Some(stored_session("adopt-a", true, "fp")), |id| {
+        Claim::acquire(id, 1)
+    })
+    .unwrap();
+    assert_eq!(
+        resume,
+        logic::Resume {
+            id: "adopt-a".to_string(),
+            brief_delivered: true,
+            instructions: "fp".to_string(),
+        }
+    );
+    assert_eq!(claim.id(), "adopt-a");
+}
+
+#[test]
+fn a_session_another_window_holds_is_not_adopted() {
+    let held = Claim::acquire("adopt-b", 1).unwrap();
+    let taken = logic::adopt(Some(stored_session("adopt-b", true, "fp")), |id| {
+        Claim::acquire(id, 2)
+    });
+    assert!(taken.is_none());
+    drop(held);
+    assert!(
+        logic::adopt(Some(stored_session("adopt-b", true, "fp")), |id| {
+            Claim::acquire(id, 2)
+        })
+        .is_some()
+    );
+}
+
+#[test]
+fn nothing_stored_adopts_nothing() {
+    assert!(logic::adopt(None, |id| Claim::acquire(id, 1)).is_none());
+}
+
+#[test]
+fn a_claim_is_held_until_dropped_and_only_by_one_owner() {
+    let id = "claim-c";
+    assert!(!claims::is_held(id));
+    let first = Claim::acquire(id, 1).unwrap();
+    assert!(claims::is_held(id));
+    assert!(Claim::acquire(id, 1).is_none());
+    assert!(Claim::acquire(id, 2).is_none());
+    drop(first);
+    assert!(!claims::is_held(id));
+    assert!(Claim::acquire(id, 2).is_some());
+}
+
+#[test]
+fn owners_are_distinct() {
+    assert_ne!(claims::next_owner(), claims::next_owner());
+}
+
 #[rstest]
-#[case::new_session(false, false, false)]
-#[case::new_session_with_old_answers(false, true, false)]
-#[case::resumed_without_any_answer(true, false, false)]
-#[case::resumed_after_an_answer(true, true, true)]
-fn a_resumed_session_has_the_brief_only_when_the_conversation_holds_an_answer(
-    #[case] resumed: bool,
-    #[case] answered_before: bool,
+#[case::chat_after_an_answered_overview(true, Some(true), true)]
+#[case::chat_before_the_brief_went_out(true, Some(false), false)]
+#[case::chat_without_a_process(true, None, false)]
+#[case::overview_always_carries_the_brief(false, Some(true), false)]
+#[case::overview_without_a_process(false, None, false)]
+fn a_chat_goes_out_at_once_only_on_a_live_session_that_has_the_brief(
+    #[case] chat: bool,
+    #[case] live_delivered: Option<bool>,
     #[case] expected: bool,
 ) {
-    assert_eq!(logic::resumed_delivered(resumed, answered_before), expected);
+    assert_eq!(logic::goes_out_at_once(chat, live_delivered), expected);
+}
+
+#[test]
+fn a_chat_after_an_overview_continues_the_same_process() {
+    let overview = logic::brief_delivered(false, true, &Outcome::Completed);
+    assert!(overview);
+    assert!(logic::goes_out_at_once(true, Some(overview)));
+    let stopped = logic::brief_delivered(false, true, &Outcome::Interrupted);
+    assert!(logic::goes_out_at_once(true, Some(stopped)));
+    let failed_overview = logic::brief_delivered(false, true, &failed());
+    assert!(!logic::goes_out_at_once(true, Some(failed_overview)));
+}
+
+fn resume_with(instructions: &str) -> logic::Resume {
+    logic::Resume {
+        id: "s".to_string(),
+        brief_delivered: true,
+        instructions: instructions.to_string(),
+    }
+}
+
+#[test]
+fn a_resumed_session_gets_the_instructions_again_only_when_they_differ() {
+    assert!(!logic::instructions_due(Some(&resume_with("a")), "a"));
+    assert!(logic::instructions_due(Some(&resume_with("a")), "b"));
+    assert!(logic::instructions_due(Some(&resume_with("")), "b"));
+    assert!(!logic::instructions_due(None, "b"));
+}
+
+#[test]
+fn updated_instructions_lead_the_first_message_of_a_resumed_session() {
+    let sent = logic::with_updated_instructions(Some("RULES"), "question".to_string());
+    assert!(sent.starts_with("The instructions for this conversation were updated."));
+    assert!(sent.ends_with("RULES\n---\nquestion"));
+    assert_eq!(
+        logic::with_updated_instructions(None, "question".to_string()),
+        "question"
+    );
 }
 
 #[rstest]
@@ -1092,8 +1209,27 @@ fn launch_settings_compare_after_trimming(
     #[case] same: bool,
 ) {
     assert_eq!(
-        Launching::new(old_profile, old_command, old_model)
-            == Launching::new(new_profile, new_command, new_model),
+        Launching::new(old_profile, old_command, old_model, "")
+            == Launching::new(new_profile, new_command, new_model, ""),
+        same
+    );
+}
+
+#[rstest]
+#[case::same("Be terse.", "Be terse.", true)]
+#[case::padding("Be terse.", "  Be terse.\n", true)]
+#[case::blank_is_empty("", "  \n ", true)]
+#[case::changed("Be terse.", "Be verbose.", false)]
+#[case::added("", "Be terse.", false)]
+#[case::removed("Be terse.", "", false)]
+fn a_change_of_the_users_instructions_counts_as_a_launch_change(
+    #[case] old: &str,
+    #[case] new: &str,
+    #[case] same: bool,
+) {
+    assert_eq!(
+        Launching::new("claude", "claude", None, old)
+            == Launching::new("claude", "claude", None, new),
         same
     );
 }

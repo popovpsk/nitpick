@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use app_db::{AgentKind, AgentMessage, AgentRole};
 use gpui::{
     AnyElement, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, Styled as _, Subscription, div,
@@ -19,10 +18,23 @@ use super::{Activity, AgentPanel};
 use crate::localization::tr;
 use crate::review::OpenDiffLink;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Role {
+    User,
+    Assistant,
+    Notice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kind {
+    Overview,
+    Chat,
+}
+
 pub(super) struct Message {
     pub id: u64,
-    pub role: AgentRole,
-    pub kind: AgentKind,
+    pub role: Role,
+    pub kind: Kind,
     pub head: String,
     pub text: String,
     pub links: Rc<[DiffLink]>,
@@ -32,14 +44,8 @@ pub(super) struct Message {
 }
 
 impl Message {
-    pub(super) fn new(
-        id: u64,
-        role: AgentRole,
-        kind: AgentKind,
-        head: String,
-        text: String,
-    ) -> Self {
-        let notice = (role == AgentRole::Notice).then(|| SharedString::from(text.clone()));
+    pub(super) fn new(id: u64, role: Role, kind: Kind, head: String, text: String) -> Self {
+        let notice = (role == Role::Notice).then(|| SharedString::from(text.clone()));
         Self {
             id,
             role,
@@ -51,10 +57,6 @@ impl Message {
             view: None,
             _observe: None,
         }
-    }
-
-    pub(super) fn stored(id: u64, message: AgentMessage) -> Self {
-        Self::new(id, message.role, message.kind, message.head, message.text)
     }
 
     pub(super) fn append(&mut self, delta: &str, cx: &mut gpui::App) {
@@ -105,7 +107,7 @@ impl AgentPanel {
         let message = &self.messages[ix];
         let id = ElementId::NamedInteger("agent-message".into(), message.id);
         match message.role {
-            AgentRole::Notice => div()
+            Role::Notice => div()
                 .id(id)
                 .w_full()
                 .px_2()
@@ -114,7 +116,7 @@ impl AgentPanel {
                 .text_color(theme.muted_foreground)
                 .children(message.notice.clone())
                 .into_any_element(),
-            AgentRole::User => {
+            Role::User => {
                 let text = message
                     .view
                     .as_ref()
@@ -143,7 +145,7 @@ impl AgentPanel {
                     )
                     .into_any_element()
             }
-            AgentRole::Assistant => {
+            Role::Assistant => {
                 let text = message
                     .view
                     .as_ref()

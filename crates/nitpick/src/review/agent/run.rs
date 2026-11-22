@@ -4,14 +4,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use ::agent::{Error, Event, Launch, Outcome, Session, brief, prompt};
-use app_db::{AgentKind, AgentMessage, AgentRole, NewAgentMessage};
+use app_db::AgentSession;
 use gpui::{App, AppContext as _, AsyncApp, Context, SharedString, Task, WeakEntity, Window};
 
+use super::claims::{self, Claim};
 use super::context::{self, ReviewContext, Workdir};
 use super::links;
-use super::logic::{self, OverviewState, Request};
-use super::messages::Message;
-use super::{Activity, AgentPanel, Live, Lookup, Phase, Turn};
+use super::logic::{self, OverviewState, Request, Resume};
+use super::messages::{Kind, Message, Role};
+use super::{Activity, AgentPanel, Bound, Live, Lookup, Phase, Turn};
 use crate::localization::{self, tr};
 use crate::recent::now;
 use crate::settings_store::{app_dir, settings};
@@ -24,7 +25,9 @@ static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 struct Parts {
     session: Session,
     receiver: flume::Receiver<Event>,
-    resume: Option<String>,
+    resume: Option<Resume>,
+    claim: Option<Claim>,
+    instructions: String,
     scratch: PathBuf,
 }
 
@@ -141,39 +144,13 @@ impl AgentPanel {
         }
         self.context = Some(context);
         if !same {
-            self.reload_conversation(cx);
+            self.reset_conversation(cx);
             cx.notify();
         } else if head_changed {
             self.refresh_stops();
             self.evaluate(cx);
             cx.notify();
         }
-    }
-
-    pub(super) fn release(&mut self, cx: &mut App) {
-        if let Some(write) = self.flush_turn(cx) {
-            cx.background_spawn(write).detach();
-        }
-        self.live = None;
-    }
-
-    pub(super) fn flush_turn(&mut self, cx: &App) -> Option<logic::Write> {
-        let turn = self.turn.take()?;
-        let ix = turn.assistant.and_then(|id| self.index_of(id))?;
-        let stored = self.stored_assistant(ix)?;
-        let notice = NewAgentMessage {
-            role: AgentRole::Notice,
-            kind: AgentKind::Chat,
-            text: tr().assistant_notice_stopped.to_string(),
-            head: stored.head.clone(),
-            created_at: now(),
-        };
-        let writes = [self.write(stored, cx), self.write(notice, cx)];
-        Some(Box::pin(async move {
-            for write in writes.into_iter().flatten() {
-                write.await;
-            }
-        }))
     }
 
     fn retire_live(&mut self) {
@@ -194,7 +171,7 @@ impl AgentPanel {
         }
     }
 
-    fn reload_conversation(&mut self, cx: &mut Context<Self>) {
+    fn reset_conversation(&mut self, cx: &mut Context<Self>) {
         self.messages.clear();
         self.rows = 0;
         self.scroll.update(cx, |scroll, cx| scroll.reset(0, cx));
@@ -203,53 +180,54 @@ impl AgentPanel {
         self.auto_attempted = None;
         self.stale = false;
         self.seen.clear();
-        self.session_id = None;
+        self.bound = None;
+        self.resumable = false;
         self.settings_notice = None;
         self.pending = None;
         self.refresh_stops();
+        self.load_stored(true, cx);
+    }
+
+    pub(super) fn load_stored(&mut self, evaluate: bool, cx: &mut Context<Self>) {
         self.load_generation += 1;
         let generation = self.load_generation;
         let Some(context) = self.context.clone() else {
             return;
         };
         let Some(db) = crate::db::db(cx) else {
-            self.loaded = true;
-            self.evaluate(cx);
+            self.install_stored(generation, None, evaluate, cx);
             return;
         };
-        let load = db.agent_messages(&context.repo, &context.key);
+        let load = db.agent_session(&context.repo, &context.key, &self.profile.id);
         self._load = cx.spawn(async move |this, cx| {
             let stored = load.await.unwrap_or_else(|err| {
-                log::warn!("loading the assistant's conversation: {err}");
-                Vec::new()
+                log::warn!("loading the assistant's session: {err}");
+                None
             });
-            let _ = this.update(cx, |this, cx| this.install_messages(generation, stored, cx));
+            let _ = this.update(cx, |this, cx| {
+                this.install_stored(generation, stored, evaluate, cx)
+            });
         });
     }
 
-    fn install_messages(
+    fn install_stored(
         &mut self,
         generation: u64,
-        stored: Vec<AgentMessage>,
+        stored: Option<AgentSession>,
+        evaluate: bool,
         cx: &mut Context<Self>,
     ) {
         if generation != self.load_generation {
             return;
         }
-        self.messages = stored
-            .into_iter()
-            .map(|message| {
-                let id = self.next_message;
-                self.next_message += 1;
-                Message::stored(id, message)
-            })
-            .collect();
-        self.rows = self.messages.len() + usize::from(self.phase.is_busy());
-        let rows = self.rows;
-        self.scroll.update(cx, |scroll, cx| scroll.reset(rows, cx));
+        self.resumable = self.bound.is_none()
+            && stored
+                .as_ref()
+                .is_some_and(|stored| !claims::is_held(&stored.id));
         self.loaded = true;
-        self.refresh_stops();
-        self.evaluate(cx);
+        if evaluate {
+            self.evaluate(cx);
+        }
         cx.notify();
     }
 
@@ -262,9 +240,7 @@ impl AgentPanel {
             .messages
             .iter()
             .rev()
-            .find(|message| {
-                message.role == AgentRole::Assistant && message.kind == AgentKind::Overview
-            })
+            .find(|message| message.role == Role::Assistant && message.kind == Kind::Overview)
             .map(|message| message.head.as_str());
         self.overview = logic::overview_state(latest, &context.head);
     }
@@ -286,7 +262,8 @@ impl AgentPanel {
         }
         let agent = &settings(cx).agent;
         let auto = agent.enabled && agent.auto_overview;
-        let request = match logic::load_action(&self.overview, auto, context.local) {
+        let resumable = self.resumable && self.messages.is_empty();
+        let request = match logic::load_action(&self.overview, auto, context.local, resumable) {
             logic::LoadAction::Nothing => return,
             logic::LoadAction::Overview => Request::Overview,
             logic::LoadAction::Update => Request::for_overview_button(&self.overview),
@@ -323,23 +300,7 @@ impl AgentPanel {
         let Some(head) = self.context.as_ref().map(|context| context.head.clone()) else {
             return;
         };
-        self.push_message(
-            AgentRole::User,
-            AgentKind::Chat,
-            head.clone(),
-            shown.clone(),
-            cx,
-        );
-        self.persist(
-            NewAgentMessage {
-                role: AgentRole::User,
-                kind: AgentKind::Chat,
-                text: shown,
-                head,
-                created_at: now(),
-            },
-            cx,
-        );
+        self.push_message(Role::User, Kind::Chat, head, shown, cx);
         self.dispatch(Request::Chat { prompt }, false, cx);
     }
 
@@ -370,20 +331,19 @@ impl AgentPanel {
 
     pub(super) fn clear_conversation(&mut self, cx: &mut Context<Self>) {
         self.end_process(cx);
+        self.load_generation += 1;
         if let Some(context) = self.context.clone()
             && let Some(db) = crate::db::db(cx)
         {
-            let messages = db.clear_agent_messages(&context.repo, &context.key);
             let sessions: Vec<_> = settings(cx)
                 .agent
                 .profiles()
                 .iter()
-                .map(|profile| db.clear_agent_session(&context.repo, &context.key, &profile.id))
+                .map(|profile| {
+                    db.clear_agent_session(&context.repo, &context.key, &profile.id, None)
+                })
                 .collect();
             cx.background_spawn(async move {
-                if let Err(err) = messages.await {
-                    log::warn!("clearing the assistant's conversation: {err}");
-                }
                 for write in sessions {
                     if let Err(err) = write.await {
                         log::warn!("clearing the assistant's sessions: {err}");
@@ -398,7 +358,8 @@ impl AgentPanel {
         self.scroll.update(cx, |scroll, cx| scroll.reset(0, cx));
         self.overview = OverviewState::None;
         self.seen.clear();
-        self.session_id = None;
+        self.bound = None;
+        self.resumable = false;
         self.settings_notice = None;
         self.stale = false;
         self.pending = None;
@@ -414,7 +375,8 @@ impl AgentPanel {
         self.settings_used = true;
         let operation = self.operation;
         let chat = matches!(request, Request::Chat { .. });
-        if chat && self.live.as_ref().is_some_and(|live| live.brief_delivered) {
+        let live_delivered = self.live.as_ref().map(|live| live.brief_delivered);
+        if logic::goes_out_at_once(chat, live_delivered) {
             self.send_now(request, retried, None, cx);
             return;
         }
@@ -423,6 +385,13 @@ impl AgentPanel {
         let model = self.model.clone();
         let profile_id = self.profile.id.clone();
         let language = context::language_name(localization::resolve(cx));
+        let user_instructions = self.instructions.clone();
+        let owner = self.owner;
+        let own = self.bound.as_ref().map(|bound| Resume {
+            id: bound.claim.id().to_owned(),
+            brief_delivered: bound.brief_delivered,
+            instructions: bound.instructions.clone(),
+        });
         let fixed_cwd = self.live.as_ref().map(|live| live.cwd.clone());
         let need_start = self.live.is_none();
         let scratch = scratch_dir();
@@ -437,23 +406,34 @@ impl AgentPanel {
                 )
                 .await;
             let started = if need_start {
-                let resume = match &db {
-                    Some(db) => db
-                        .agent_session(&context.repo, &context.key, &profile_id)
-                        .await
-                        .unwrap_or_else(|err| {
-                            log::warn!("loading the assistant's session: {err}");
-                            None
-                        }),
-                    None => None,
+                let (resume, claim) = match own {
+                    Some(own) => (Some(own), None),
+                    None => {
+                        let stored = match &db {
+                            Some(db) => db
+                                .agent_session(&context.repo, &context.key, &profile_id)
+                                .await
+                                .unwrap_or_else(|err| {
+                                    log::warn!("loading the assistant's session: {err}");
+                                    None
+                                }),
+                            None => None,
+                        };
+                        match logic::adopt(stored, |id| Claim::acquire(id, owner)) {
+                            Some((resume, claim)) => (Some(resume), Some(claim)),
+                            None => (None, None),
+                        }
+                    }
                 };
+                let instructions =
+                    prompt::instructions(language, workdir.disk_matches_head, &user_instructions);
                 let launch = Launch {
                     kind,
                     command,
                     cwd: workdir.cwd.clone(),
                     model,
-                    resume: resume.clone(),
-                    instructions: prompt::instructions(language, workdir.disk_matches_head),
+                    resume: resume.as_ref().map(|resume| resume.id.clone()),
+                    instructions: instructions.clone(),
                     scratch: scratch.clone(),
                 };
                 let started = net_runtime::unblock(move || {
@@ -463,6 +443,8 @@ impl AgentPanel {
                                 session,
                                 receiver,
                                 resume,
+                                claim,
+                                instructions,
                                 scratch,
                             },
                             dispose_parts,
@@ -538,20 +520,29 @@ impl AgentPanel {
             session,
             receiver,
             resume,
+            claim,
+            instructions,
             scratch,
         } = parts;
-        let answered = self
-            .messages
-            .iter()
-            .any(|message| message.role == AgentRole::Assistant);
-        let brief_delivered = logic::resumed_delivered(resume.is_some(), answered);
-        self.session_id = resume;
+        let fingerprint = prompt::instructions_fingerprint(&instructions);
+        let due = logic::instructions_due(resume.as_ref(), &fingerprint);
+        let brief_delivered = resume.as_ref().is_some_and(|resume| resume.brief_delivered);
+        if let (Some(claim), Some(resume)) = (claim, resume) {
+            self.bound = Some(Bound {
+                claim,
+                brief_delivered: resume.brief_delivered,
+                instructions: resume.instructions,
+            });
+            self.resumable = false;
+        }
         let pump = cx.spawn(async move |this, cx| pump(this, cx, receiver, generation).await);
         self.live = Some(Live {
             session,
             cwd,
             scratch,
             brief_delivered,
+            instructions_due: due.then_some(instructions),
+            instructions: fingerprint,
             _pump: pump,
         });
     }
@@ -569,6 +560,7 @@ impl AgentPanel {
         };
         let included = !live.brief_delivered;
         let needs_brief = included || !matches!(request, Request::Chat { .. });
+        let due = live.instructions_due.clone();
         let text = match disk_matches {
             Some(disk) if needs_brief => {
                 let mut brief = context.brief.clone();
@@ -591,6 +583,7 @@ impl AgentPanel {
                 &self.seen,
             ),
         };
+        let text = logic::with_updated_instructions(due.as_deref(), text);
         if let Some(live) = self.live.as_ref() {
             live.session.prompt(text);
         }
@@ -598,6 +591,7 @@ impl AgentPanel {
             request,
             retried,
             carried_brief: needs_brief,
+            carried_instructions: due.is_some(),
             sent: brief::fingerprints(&context.brief.threads),
             head: context.head.clone(),
             assistant: None,
@@ -669,14 +663,71 @@ impl AgentPanel {
     }
 
     fn remember_session(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.session_id.as_deref() == Some(id.as_str()) {
+        if self
+            .bound
+            .as_ref()
+            .is_some_and(|bound| bound.claim.id() == id)
+        {
             return;
         }
-        self.session_id = Some(id.clone());
+        self.bound = None;
+        let Some(claim) = Claim::acquire(&id, self.owner) else {
+            log::warn!("the assistant's session is already held by another window");
+            return;
+        };
+        let (brief_delivered, instructions) = match &self.live {
+            Some(live) => (live.brief_delivered, live.instructions.clone()),
+            None => (false, String::new()),
+        };
+        self.bound = Some(Bound {
+            claim,
+            brief_delivered,
+            instructions: instructions.clone(),
+        });
+        self.resumable = false;
         let (Some(context), Some(db)) = (self.context.as_ref(), crate::db::db(cx)) else {
             return;
         };
-        let write = db.set_agent_session(&context.repo, &context.key, &self.profile.id, &id, now());
+        let session = AgentSession {
+            id,
+            brief_delivered,
+            instructions,
+        };
+        let write = db.set_agent_session(
+            &context.repo,
+            &context.key,
+            &self.profile.id,
+            session,
+            now(),
+        );
+        cx.background_spawn(async move {
+            if let Err(err) = write.await {
+                log::warn!("saving the assistant's session: {err}");
+            }
+        })
+        .detach();
+    }
+
+    fn save_session_state(&self, cx: &mut Context<Self>) {
+        let (Some(bound), Some(context), Some(db)) = (
+            self.bound.as_ref(),
+            self.context.as_ref(),
+            crate::db::db(cx),
+        ) else {
+            return;
+        };
+        let session = AgentSession {
+            id: bound.claim.id().to_owned(),
+            brief_delivered: bound.brief_delivered,
+            instructions: bound.instructions.clone(),
+        };
+        let write = db.update_agent_session(
+            &context.repo,
+            &context.key,
+            &self.profile.id,
+            session,
+            now(),
+        );
         cx.background_spawn(async move {
             if let Err(err) = write.await {
                 log::warn!("saving the assistant's session: {err}");
@@ -686,11 +737,14 @@ impl AgentPanel {
     }
 
     fn clear_session_id(&mut self, cx: &mut Context<Self>) {
-        self.session_id = None;
-        let (Some(context), Some(db)) = (self.context.as_ref(), crate::db::db(cx)) else {
+        let id = self.bound.take().map(|bound| bound.claim.id().to_owned());
+        self.resumable = false;
+        let (Some(id), Some(context), Some(db)) = (id, self.context.as_ref(), crate::db::db(cx))
+        else {
             return;
         };
-        let write = db.clear_agent_session(&context.repo, &context.key, &self.profile.id);
+        let write =
+            db.clear_agent_session(&context.repo, &context.key, &self.profile.id, Some(&id));
         cx.background_spawn(async move {
             if let Err(err) = write.await {
                 log::warn!("clearing the assistant's session: {err}");
@@ -708,7 +762,7 @@ impl AgentPanel {
             Some(ix) => ix,
             None => {
                 let (kind, head) = (turn.request.kind(), turn.head.clone());
-                let ix = self.push_message(AgentRole::Assistant, kind, head, String::new(), cx);
+                let ix = self.push_message(Role::Assistant, kind, head, String::new(), cx);
                 let id = self.messages[ix].id;
                 if let Some(turn) = self.turn.as_mut() {
                     turn.assistant = Some(id);
@@ -734,10 +788,7 @@ impl AgentPanel {
                 &turn.head,
                 &outcome,
             );
-            if let Some(live) = self.live.as_mut() {
-                live.brief_delivered =
-                    logic::brief_delivered(live.brief_delivered, turn.carried_brief, &outcome);
-            }
+            self.record_delivery(turn.carried_brief, turn.carried_instructions, &outcome, cx);
         }
         match outcome {
             Outcome::Completed => {
@@ -769,6 +820,36 @@ impl AgentPanel {
             }
         }
         true
+    }
+
+    fn record_delivery(
+        &mut self,
+        carried_brief: bool,
+        carried_instructions: bool,
+        outcome: &Outcome,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(live) = self.live.as_mut() else {
+            return;
+        };
+        let delivered = logic::brief_delivered(live.brief_delivered, carried_brief, outcome);
+        let instructions_sent = carried_instructions && logic::answered(outcome);
+        let changed = delivered != live.brief_delivered || instructions_sent;
+        live.brief_delivered = delivered;
+        if instructions_sent {
+            live.instructions_due = None;
+        }
+        if !changed {
+            return;
+        }
+        let fingerprint = live.instructions.clone();
+        if let Some(bound) = self.bound.as_mut() {
+            bound.brief_delivered = delivered;
+            if instructions_sent {
+                bound.instructions = fingerprint;
+            }
+            self.save_session_state(cx);
+        }
     }
 
     fn recover_lost_session(
@@ -819,69 +900,24 @@ impl AgentPanel {
         let Some(ix) = id.and_then(|id| self.index_of(id)) else {
             return;
         };
-        match self.stored_assistant(ix) {
-            Some(stored) => {
-                self.persist(stored, cx);
-                self.refresh_stops();
-            }
-            None => self.remove_message(ix, cx),
+        if self.messages[ix].text.trim().is_empty() {
+            self.remove_message(ix, cx);
+        } else {
+            self.refresh_stops();
         }
-    }
-
-    fn stored_assistant(&self, ix: usize) -> Option<NewAgentMessage> {
-        let message = &self.messages[ix];
-        (!message.text.trim().is_empty()).then(|| NewAgentMessage {
-            role: AgentRole::Assistant,
-            kind: message.kind,
-            text: message.text.clone(),
-            head: message.head.clone(),
-            created_at: now(),
-        })
     }
 
     pub(super) fn add_notice(&mut self, text: String, cx: &mut Context<Self>) {
         let Some(head) = self.context.as_ref().map(|context| context.head.clone()) else {
             return;
         };
-        self.push_message(
-            AgentRole::Notice,
-            AgentKind::Chat,
-            head.clone(),
-            text.clone(),
-            cx,
-        );
-        self.persist(
-            NewAgentMessage {
-                role: AgentRole::Notice,
-                kind: AgentKind::Chat,
-                text,
-                head,
-                created_at: now(),
-            },
-            cx,
-        );
-    }
-
-    fn write(&self, message: NewAgentMessage, cx: &App) -> Option<logic::Write> {
-        let (context, db) = (self.context.as_ref()?, crate::db::db(cx)?);
-        let write = db.add_agent_message(&context.repo, &context.key, message);
-        Some(Box::pin(async move {
-            if let Err(err) = write.await {
-                log::warn!("saving an assistant message: {err}");
-            }
-        }))
-    }
-
-    fn persist(&self, message: NewAgentMessage, cx: &mut Context<Self>) {
-        if let Some(write) = self.write(message, cx) {
-            cx.background_spawn(write).detach();
-        }
+        self.push_message(Role::Notice, Kind::Chat, head, text, cx);
     }
 
     fn push_message(
         &mut self,
-        role: AgentRole,
-        kind: AgentKind,
+        role: Role,
+        kind: Kind,
         head: String,
         text: String,
         cx: &mut Context<Self>,

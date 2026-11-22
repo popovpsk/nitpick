@@ -1,13 +1,13 @@
 # review/agent
 
 The review assistant: `AgentPanel`, a separate entity that `ReviewView` holds. It is the
-slide-out side panel (frame, resize edge, conversation, input), the conversation of one review
-loaded from and saved to `nitpick.db`, and the orchestration of the harness session behind it
-(lazy start, overview, chat, recovery). The header button and the `ToggleAgent` action live in
+slide-out side panel (frame, resize edge, conversation, input), the conversation of one window
+(in memory only, never written to `nitpick.db`), and the orchestration of the harness session
+behind it (lazy start, overview, chat, resume, recovery). The header button and the `ToggleAgent` action live in
 `review/` and only read and drive this entity.
 
 Not here: running the harness (`agent` crate), the profile table and settings
-(`agent_profiles`, `settings_store`), persistence (`app_db`), the settings screen
+(`agent_profiles`, `settings_store`), the stored session pointer (`app_db`), the settings screen
 (`settings_view`), the link grammar (`review_core::diff_link`) and the selection question text
 (`agent::prompt`). Following a link moves the diff, so that part is `ReviewView::open_diff_link`
 (`review/`); this module decides what a link means and keeps the stops and the pending selection.
@@ -15,17 +15,22 @@ Not here: running the harness (`agent` crate), the profile table and settings
 ## Files
 
 - `mod.rs` — `AgentPanel` (open / closing / width state, `Phase`, the unread flag, the CLI
-  lookup, the conversation, the session), `Turn`, `Live`, `Activity`, `AgentEvent`,
-  `apply_settings`, `locate` / `locate_in`, `unread_after`.
-- `run.rs` — the orchestration: `set_review`, loading the conversation, `evaluate` (overview
-  decision), `dispatch` / `dispatched` / `send_now`, the event pump and `apply_event`, failure
-  recovery, persistence of messages, row bookkeeping, `init`, scratch folders, `retire`.
+  lookup, the conversation, the session binding), `Turn`, `Live`, `Bound`, `Activity`,
+  `AgentEvent`, `apply_settings`, `locate` / `locate_in`, `unread_after`.
+- `run.rs` — the orchestration: `set_review`, reading the stored session pointer, `evaluate`
+  (overview decision), `dispatch` / `dispatched` / `send_now`, the event pump and
+  `apply_event`, session binding and its stored state, failure recovery, row bookkeeping,
+  `init`, scratch folders, `retire`.
+- `claims.rs` — the process-wide set of session ids held by a window (`Claim`, `is_held`,
+  `next_owner`).
 - `logic.rs` — the pure decisions: `OverviewState`, `load_action`, `Request`, `compose` /
-  `compose_chat`, `classify` / `problem_text` / `exit_text`, `limit_text`, `coalesce`.
+  `compose_chat`, `goes_out_at_once`, `adopt`, `Resume`, `instructions_due`,
+  `with_updated_instructions`, `Launching`, `classify` / `problem_text` / `exit_text`,
+  `limit_text`, `coalesce`.
 - `context.rs` — `ReviewContext` (key, head, the `Brief`, the work-directory plan), `from_view`
   (reads `ReviewView`), `review_key`, `local_head`, `assemble` (plain inputs to `Brief`),
   `resolve_workdir`, `language_name`.
-- `messages.rs` — `Message` (with the stops of an overview in `links`), `agent_markdown` (the link
+- `messages.rs` — `Role`, `Kind`, `Message` (with the stops of an overview in `links`), `agent_markdown` (the link
   hook and click handler), row rendering (`render_row`, the progress row).
 - `links.rs` — everything about `diff:` links without a GPU: `classify`, `resolve_file`,
   `stops`, the stop cursor (`step_cursor`, `cursor_after_click`, `position_label`), `plan_link`
@@ -38,7 +43,8 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - `tests.rs` — everything without a GPU: the program lookup against a throwaway `PATH`, phases,
   review keys, head fingerprint, brief assembly, work-directory choice on throwaway
   repositories, the overview decision table, failure texts, the changed-comments prefix,
-  event coalescing, stop filtering and the cursor, link resolution against a line map, the
+  session claims and adoption, the chat-after-overview route, instruction delivery on resume,
+  launch comparison, event coalescing, stop filtering and the cursor, link resolution against a line map, the
   selection question.
 
 ## Invariants and spec
@@ -78,12 +84,13 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - `ReviewView::sync_agent` calls `set_review` with a `ReviewContext` after an install, a
   discussions load, a viewed-marks change and a hidden-files change. A review is identified by
   `(repo root, key)`: `mr:<forge>:<project>:<number>`, `branches:<target>..<source>`, `worktree`.
-  A new identity ends the process (a running turn keeps its partial text), clears the list, loads
-  the conversation from the database and only then decides about the overview. The same identity
+  A new identity ends the process (a running turn keeps its partial text), clears the list and
+  the window's session binding, reads the stored session pointer for the active profile and only
+  then decides about the overview. The same identity
   only replaces the context; a changed `head` re-evaluates the overview, an unchanged one does
   nothing, so an install with the same content (the `unchanged` fast path, a refresh) costs
   nothing here. A single-commit view yields no context, so the last whole-review context stays.
-- `head` is the id the stored messages are tagged with: the head sha for a merge request and a
+- `head` is the id the messages are tagged with: the head sha for a merge request and a
   branch comparison; for local changes `local:` plus an FNV-1a 64 hash over every file's path and
   blob-pair fingerprint, in file order, so it changes whenever the patch does.
 - The `Brief` is rebuilt in full on every sync from plain inputs (`BriefInputs`); threads are
@@ -101,22 +108,25 @@ Not here: running the harness (`agent` crate), the profile table and settings
   history costs nothing until the panel is opened, and a closed panel creates none). Streaming
   appends with `push_str` and the view fades the new words in. Assistant, user and notice rows are
   different: notices are plain muted text, user messages sit in a tinted box under a "You" label.
-- Persistence: the user's message and notices are written when they are made, the assistant's
-  once when its turn ends (completed, interrupted, failed or the process died); text that is
-  only whitespace is not stored and its row is removed. A stopped turn keeps its partial text and
-  gets a notice. A turn still running when the panel is released (window closed) or the app quits
-  is stored the same way (`flush_turn`: the partial text and the stopped notice); the quit hook
-  returns the write as its future, so the app waits for it within gpui's quit timeout instead
-  of relying on queue order against the database barrier. Writes are queued on the database
-  thread in call order, so a clear followed by a read never sees old rows.
+- The conversation lives only in the window's memory: messages, overview, stops and notices
+  are never written to `nitpick.db` or read from it, and are gone when the window closes or
+  the review changes. Text that is only whitespace is dropped and its row removed when its turn
+  ends (completed, interrupted, failed or the process died). A stopped turn keeps its partial
+  text and gets a notice. What survives is the harness's own session, which a stored pointer
+  can continue (see Session).
+- A window with no messages but a free stored session id for the active profile (after a
+  restart, or on returning to the review) is resumable: it shows "continue the earlier
+  conversation" instead of the overview invitation, the input stays enabled, and no automatic
+  overview starts (`load_action` with `resumable`), since it would spend a full overview on
+  every app start. "Request an overview" stays on screen and runs as a turn of that session.
 
 ### Session
 
 - Lazy: nothing starts until a prompt must be sent. `evaluate` starts the overview right after
   the conversation loads when `agent.auto_overview` and `agent.enabled` are on, even with the
   panel closed; otherwise the first button press or message does. `dispatch` is the only way in:
-  it resolves the work directory on the background executor (`context::resolve_workdir`), reads
-  the stored session id of `(repo, key, profile)` from the database, calls `Session::start` on
+  it resolves the work directory on the background executor (`context::resolve_workdir`), picks
+  the session to resume (below), calls `Session::start` on
   `net_runtime::unblock` (the first call waits for the login-shell snapshot), and comes back to
   `dispatched`, which discards a result whose `operation` is no longer current (a stop, a review
   change or a settings change in between). `dispatched` starts a session itself
@@ -132,14 +142,40 @@ Not here: running the harness (`agent` crate), the profile table and settings
   update. It is delivered when a turn that carried it ends `Completed` or `Interrupted`
   (`logic::brief_delivered`); a failed turn leaves it pending, so the next request carries it
   again even on the same live session. A resumed session counts as having it only when the
-  conversation holds an assistant message (`logic::resumed_delivered`): a stored session id
-  alone proves nothing, since harnesses report the id before any prompt. Once delivered, chat
+  stored `brief_delivered` flag of that session id says so (set when a turn that carried the
+  brief was answered, reset with a new id, deleted with the row): a stored id alone proves
+  nothing, since harnesses report the id before any prompt, and the window may have no
+  messages to judge by. The flag is per profile because the row is. Once delivered, chat
   messages get the "new and changed comments" prefix for threads whose fingerprint differs from
   the ones in the last answered turn (`seen`, updated with the delivery, so a failed turn does
   not mark its threads as seen). `seen` is not persisted, so the first message after the app was
   restarted resends all threads once.
-- Overview decision (`logic::load_action`): no stored overview and auto on → overview; stored for
-  the current head → show only; stored for another head → show it under a banner with an "Update
+- One conversation, one session: the overview, an update and every later question are turns of
+  the same harness session. A chat on a live process whose brief was delivered goes out at once
+  (`logic::goes_out_at_once`); if the process is gone, the next request resumes the same session
+  id. A window uses the id it is bound to (`Bound`, held in memory) and reads the stored
+  pointer only when it has none.
+- Session claims: a session id is used by at most one window at a time. A window holds a
+  `claims::Claim` for the id it is bound to, taken when it adopts the stored id
+  (`logic::adopt`, inside the dispatch task, before the process starts) or when `Event::Session`
+  reports a new id, and released when the binding ends: another review, "New conversation", a
+  lost session, another profile, or the window closing (`Claim` drops with its owner). A claim
+  survives the process: a session that ended or was restarted for new settings is resumed by
+  the window that owns it, and no other window can pick its id up from the stored row in the
+  meantime. A window that would adopt an id another window holds starts a new session
+  instead. The stored row is last-writer-wins (`set_agent_session`), and a window that loses
+  its session clears the row only if it still names that id.
+- The system prompt is not always applied on resume (Claude Code keeps the one the session was
+  created with and ignores a new `--append-system-prompt-file`; ACP agents without
+  `systemPrompt`, and possibly Pi, never take instructions on resume). So the stored row
+  carries the fingerprint of the instructions the session last received
+  (`prompt::instructions_fingerprint`); when a resumed session's fingerprint differs from the
+  text built for this launch (the user's text, the language or the disk rule changed), the
+  full text goes in front of the first message as an "instructions were updated" block
+  (`prompt::updated_instructions`) and the fingerprint is stored once that turn is answered; a
+  failed or cancelled turn leaves it due for the next message.
+- Overview decision (`logic::load_action`): no overview in the window and auto on → overview
+  (not when the window is resumable); written for the current head → show only; for another head → show it under a banner with an "Update
   the overview" button, and with auto on and a non-local review run the update (its task carries
   the old and the new head). Local changes are reloaded on every window activation, so their
   overview is only ever updated by the button. An action runs at most once per head
@@ -150,14 +186,15 @@ Not here: running the harness (`agent` crate), the profile table and settings
   burst. Every batch is checked against `generation`, which changes whenever a session is
   retired; a batch of a superseded session is dropped and its pump ends. Dropping `Live`
   cancels the pump.
-- Event handling: `Session` stores the id per profile; `Text` creates or extends the turn's
+- Event handling: `Session` binds the window to the id (claim, then the stored pointer per
+  profile); `Text` creates or extends the turn's
   assistant message; `ToolStarted` / `ToolFinished` / `Thinking` / `Notice` only change the
-  progress row (never stored); `TurnFinished` ends the turn; `Exited` is last and retires the
-  session. A turn that ends in `SessionLost` clears the stored id, retires the session, adds a
+  progress row; `TurnFinished` ends the turn; `Exited` is last and retires the
+  session. A turn that ends in `SessionLost` clears the binding and the stored id, retires the session, adds a
   notice and sends the same request again once (`Turn::retried`); the old session's `Exited` is
   never seen because the generation moved; a `SessionLost` with no turn running (a failed
   setup after a cancel) only clears the id and shows the failure, with no notice and no re-send.
-  A turn that ends `Cancelled` (the prompt never reached the harness) stores and shows nothing
+  A turn that ends `Cancelled` (the prompt never reached the harness) shows nothing
   new and the phase returns to `Idle`: the user's question stays in the list, no stopped notice
   is added (nothing was answered, so "partial" would be false), the brief and the comments stay
   pending (`logic::answered` is false), and a cancelled overview or update pins `auto_attempted`
@@ -166,22 +203,24 @@ Not here: running the harness (`agent` crate), the profile table and settings
   through the same `auto_attempted_after` with the request that was starting, and then evaluates
   a head change seen meanwhile, so both stop paths end alike: a stopped overview or update is
   not retried for its head, a stopped question pins nothing, and a newer head is still handled. A cancelled question's pending selection is already cleared at
-  send, so its marker must be asked for again (`AskAgent`); the link stays in the stored message.
+  send, so its marker must be asked for again (`AskAgent`); the link stays in the message.
   Any other failure becomes `Phase::Failed` with a localized text; an `Exited` during a turn becomes a failure too and leaves the panel ready for
-  a new session that resumes the stored id.
+  a new session that resumes the window's session id.
 - While a turn runs the send button is a stop button (`Session::interrupt`; while still starting
   it cancels the start) and Enter sends nothing: the input stays editable for a draft and a line
   under it says why. Enter sends, Shift+Enter inserts a newline (`submit_on_enter` on the
   textarea; the `PressEnter` of a Shift+Enter is ignored).
-- A changed profile, command or model (compared trimmed, `logic::Launching`) ends the process
-  and the next session uses the new settings; the conversation stays, and session ids stay per
-  profile. A notice is added only when something ran under the previous settings (a live or
+- A changed profile, command, model or the user's instructions (compared trimmed,
+  `logic::Launching`) ends the process and the next session uses the new settings; the
+  conversation stays. Session ids stay per profile: another profile ends the window's binding
+  (and its claim), the same profile with another command, model or instructions resumes its
+  session, which gets changed instructions through the update block above. A notice is added only when something ran under the previous settings (a live or
   starting session, or a dispatch since the last change) and the conversation is not empty, and
   never right after another settings notice (`logic::settings_notice`), so saving a half-typed
   command several times leaves at most one. A change also makes the review's automatic overview
   eligible again at the next evaluation, without starting anything by itself.
-- Closing the window (`on_release`), a review change and "New conversation" end the session too.
-  Ending is `retire`: `Session::shutdown`, then the session's scratch folder is removed; `Live`
+- Closing the window, a review change and "New conversation" end the session too (and release
+  the window's claim). Ending is `retire`: `Session::shutdown`, then the session's scratch folder is removed; `Live`
   retires on drop, and a started session is held in a `logic::Guard` from the moment it exists
   on the blocking thread, so a start whose dispatch was cancelled while `Session::start` ran is
   retired when the result is dropped, wherever that happens. The scratch folders of a killed
@@ -190,10 +229,11 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - With `auto_overview` on and a missing CLI, a review makes one start attempt per head and
   window (`auto_attempted`); a "not found" sets the lookup to missing, which blocks further
   automatic attempts until the settings change or the panel is opened (which re-checks).
-- "New conversation" (title row) deletes the review's messages and every profile's session id
-  and does not start an overview by itself; it is also the way out of `ContextTooLong`.
-- `agent::process::prewarm()`, the history pruning (`prune_agent`, once at startup like the
-  avatar cache's) and the scratch sweep run from `init`, called from `main`.
+- "New conversation" (title row) clears the window's messages and binding and deletes every
+  profile's stored session id for the review; it does not start an overview by itself; it is
+  also the way out of `ContextTooLong`.
+- `agent::process::prewarm()`, the pruning of stale stored session ids (`prune_agent`, once at
+  startup like the avatar cache's) and the scratch sweep run from `init`, called from `main`.
 
 ### Links and stops
 
@@ -215,7 +255,7 @@ Not here: running the harness (`agent` crate), the profile table and settings
   (`resolve_file`); a link naming a file outside the review is dropped, a link that repeats the
   previous one is dropped, every other repeat is kept so the order stays the author's. They are
   computed by `refresh_stops` and stored in the message (`Message::links`), never in `render`:
-  when a turn ends, when a conversation is loaded, when a message is added or removed (a new
+  when a turn ends, when the conversation is reset, when a message is added or removed (a new
   streaming overview has no stops yet, so the controls disappear until it ends) and when the
   head changes (the file list may have). Chat answers have no stops.
 - The cursor (`stop_cursor`) belongs to the latest overview message (`stops_owner`) and resets
@@ -255,10 +295,21 @@ Not here: running the harness (`agent` crate), the profile table and settings
   review's; the panel just opens then.
 - A disabled assistant (`agent.enabled` off) makes `AskAgent` do nothing.
 
+### The user's instructions
+
+- `agent.instructions` (settings) is appended by `agent::prompt::instructions` after the
+  built-in text under "Additional instructions from the user (the rules above still apply)",
+  for every profile; trimmed, cut at `MAX_USER_INSTRUCTIONS` (20 000 characters), nothing added
+  when blank. It is the user's own text and is not fenced as untrusted. It cannot turn off the
+  read-only setup: that is enforced by the launch flags and the sandbox of each driver, not by
+  the prompt, which a user text can only repeat or contradict.
+- It is part of `Launching`, so a change ends the running session like a changed model; delivery
+  on a resumed session is described under Session.
+
 ## Seams
 
 - `AgentPanel::send_chat(shown, prompt, cx)` is the programmatic submit: `shown` is what the
-  conversation and the database get, `prompt` what the agent gets (before the brief or comments
+  conversation gets, `prompt` what the agent gets (before the brief or comments
   prefix). The input is the `input: Entity<TextareaState>` field.
 - `Message` keeps `text` (the markdown source) for every message.
 - `ReviewContext::brief.files` lists the review's files, which stops are checked against.
@@ -286,8 +337,17 @@ Not here: running the harness (`agent` crate), the profile table and settings
   scrolled-away behaviour already decided.
 - The context is pushed by `ReviewView` instead of pulled by the panel; see `review/doc.md`.
 - A stopped turn keeps its partial text and a notice says so, rather than marking the text
-  itself, so the stored answer is only what the agent wrote.
+  itself, so the answer is only what the agent wrote.
 - The request for an overview or an update has no user message in the conversation (its text is
   the whole brief); the assistant's answer is the first thing the user sees.
-- Profile notices and failures are stored as notices or shown as a banner; a failure is not
-  stored, since it describes the moment and the next action replaces it.
+- Profile notices are messages of the window and failures are shown as a banner; a failure is
+  not kept, since it describes the moment and the next action replaces it.
+- A conversation belongs to its window and to the harness, not to nitpick's database: each
+  window has an independent thread and threads never intersect. Nitpick stores only the id
+  (and two flags) to continue a harness session from, so a thread survives a restart as the
+  agent's own history, not as messages the app can show; the owner chose this over a shared,
+  stored transcript.
+- An earlier conversation is resumed on the first message, not at startup: an automatic
+  overview would spend a full overview on every app start.
+- Changed instructions on a resumed session travel as a message block, for every harness,
+  rather than relying on each driver's handling of its system-prompt flag on resume.

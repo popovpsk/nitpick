@@ -29,7 +29,8 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   <scratch>/instructions.md [--model <m>]`. The instructions are written to `scratch` and only the
   path is passed: Windows `.cmd` wrappers break long or quoted arguments. The flags repeat on every
   launch, resume included; the system prompt is passed each time because Pi's handling of it on a
-  resumed session is not documented.
+  resumed session is not documented. Whether it applies there is unverified, so the app does not
+  rely on it: it sends changed instructions as a message block on a resumed session.
 - `--no-approve` is always passed: Pi would otherwise load trust-gated project resources
   (`.pi/` extensions, settings, prompts) for a user whose `defaultProjectTrust` is `always` or who
   saved trust for the repository. Never `-a`. Extensions are not disabled (`--no-extensions` would

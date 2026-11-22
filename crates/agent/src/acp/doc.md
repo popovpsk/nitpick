@@ -52,7 +52,8 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   so the `text` field name is not verified). Otherwise the instructions are the first text block
   of the first prompt of a new session, and the block is dropped only after a prompt got an
   answer, so a failed first prompt is retried with it and a prompt cancelled before it was
-  sent leaves it for the next one. A resumed session never gets them again.
+  sent leaves it for the next one. A resumed session never gets them from this driver; when they
+  changed, the app puts them in front of the first message itself.
   Empty instructions are not sent.
 - Options: an option with `category: "model"` and a `Launch.model` that is not already its
   `currentValue` is set through `session/set_config_option {sessionId, configId, value}`; values

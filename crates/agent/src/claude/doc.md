@@ -23,7 +23,7 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   --permission-mode dontAsk --setting-sources user --strict-mcp-config --disable-slash-commands
   --settings <scratch>/settings.json --append-system-prompt-file <scratch>/instructions.md
   [--model <m>]` and then `--session-id <uuid>` or `--resume=<id>`. Every flag repeats on resume:
-  none is restored from the session. Not `--bare` (it breaks subscription login),
+  none is restored from the session, except the system prompt (below). Not `--bare` (it breaks subscription login),
   `--permission-prompt-tool`, plan mode.
 - Environment added: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`,
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, all `1`.
@@ -37,8 +37,11 @@ Not here: starting or killing the process (`session`, `process`), the instructio
 - Windows argv holds only words and paths of files in `scratch`: instructions and settings never
   go into arguments. The platform is a parameter (`Os`) of the builders so that shape is tested on
   every OS.
-- The system prompt is stored with the session at its first request, so context that changes goes
-  in messages, not in the instructions file.
+- The system prompt is stored with the session at its first request and a resume keeps it, even
+  with the file changed between launches (2.1.330: a session created with "the codeword is
+  ALPHA", resumed with "OMEGA", answers ALPHA), so context that changes goes in messages, not in
+  the instructions file. The app does exactly that for the instructions of a resumed session
+  (`review/agent/doc.md`); the file written on resume matters only for the next new session.
 - Facts about CLI 2.1.330 the code relies on:
   - `init` lists `tools: ["Bash","Glob","Grep","Read"]` with these flags.
   - The repository's `CLAUDE.md` is not loaded under `--setting-sources user`.

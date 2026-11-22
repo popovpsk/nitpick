@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 
 use ::agent::brief::{self, Brief, Thread};
 use ::agent::{Event, Failure, FailureKind, Outcome, prompt};
-use app_db::AgentKind;
+use app_db::AgentSession;
 use ui_resources::i18n::Strings;
 
+use super::messages::Kind;
 use crate::agent_profiles::LoginHint;
 
 pub(super) const MAX_MESSAGE_CHARS: usize = 500;
@@ -36,8 +35,14 @@ pub(super) enum LoadAction {
     Update,
 }
 
-pub(super) fn load_action(state: &OverviewState, auto: bool, local: bool) -> LoadAction {
+pub(super) fn load_action(
+    state: &OverviewState,
+    auto: bool,
+    local: bool,
+    resumable: bool,
+) -> LoadAction {
     match state {
+        OverviewState::None if resumable => LoadAction::Nothing,
         OverviewState::None if auto => LoadAction::Overview,
         OverviewState::Outdated { .. } if auto && !local => LoadAction::Update,
         _ => LoadAction::Nothing,
@@ -52,10 +57,10 @@ pub(super) enum Request {
 }
 
 impl Request {
-    pub(super) fn kind(&self) -> AgentKind {
+    pub(super) fn kind(&self) -> Kind {
         match self {
-            Request::Overview | Request::Update { .. } => AgentKind::Overview,
-            Request::Chat { .. } => AgentKind::Chat,
+            Request::Overview | Request::Update { .. } => Kind::Overview,
+            Request::Chat { .. } => Kind::Chat,
         }
     }
 
@@ -184,8 +189,6 @@ pub(super) fn is_frame_paced(event: &Event) -> bool {
     matches!(event, Event::Text(_) | Event::Thinking(_))
 }
 
-pub(super) type Write = Pin<Box<dyn Future<Output = ()> + Send>>;
-
 pub(super) fn answered(outcome: &Outcome) -> bool {
     match outcome {
         Outcome::Completed | Outcome::Interrupted => true,
@@ -195,11 +198,11 @@ pub(super) fn answered(outcome: &Outcome) -> bool {
 
 pub(super) fn auto_attempted_after(
     current: Option<&str>,
-    kind: AgentKind,
+    kind: Kind,
     turn_head: &str,
     outcome: &Outcome,
 ) -> Option<String> {
-    let stopped_overview = matches!(outcome, Outcome::Cancelled) && kind == AgentKind::Overview;
+    let stopped_overview = matches!(outcome, Outcome::Cancelled) && kind == Kind::Overview;
     if stopped_overview {
         Some(turn_head.to_owned())
     } else {
@@ -215,8 +218,42 @@ pub(super) fn brief_delivered(was: bool, carried: bool, outcome: &Outcome) -> bo
     was || (carried && answered(outcome))
 }
 
-pub(super) fn resumed_delivered(resumed: bool, answered_before: bool) -> bool {
-    resumed && answered_before
+pub(super) fn goes_out_at_once(chat: bool, live_brief_delivered: Option<bool>) -> bool {
+    chat && live_brief_delivered == Some(true)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Resume {
+    pub id: String,
+    pub brief_delivered: bool,
+    pub instructions: String,
+}
+
+pub(super) fn adopt<C>(
+    stored: Option<AgentSession>,
+    claim: impl FnOnce(&str) -> Option<C>,
+) -> Option<(Resume, C)> {
+    let stored = stored?;
+    let claim = claim(&stored.id)?;
+    Some((
+        Resume {
+            id: stored.id,
+            brief_delivered: stored.brief_delivered,
+            instructions: stored.instructions,
+        },
+        claim,
+    ))
+}
+
+pub(super) fn instructions_due(resume: Option<&Resume>, current: &str) -> bool {
+    resume.is_some_and(|resume| resume.instructions != current)
+}
+
+pub(super) fn with_updated_instructions(due: Option<&str>, text: String) -> String {
+    match due {
+        Some(instructions) => prompt::updated_instructions(instructions, &text),
+        None => text,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,10 +261,16 @@ pub(super) struct Launching {
     pub profile: String,
     pub command: String,
     pub model: Option<String>,
+    pub instructions: String,
 }
 
 impl Launching {
-    pub(super) fn new(profile: &str, command: &str, model: Option<&str>) -> Self {
+    pub(super) fn new(
+        profile: &str,
+        command: &str,
+        model: Option<&str>,
+        instructions: &str,
+    ) -> Self {
         Self {
             profile: profile.trim().to_owned(),
             command: command.trim().to_owned(),
@@ -235,6 +278,7 @@ impl Launching {
                 .map(str::trim)
                 .filter(|model| !model.is_empty())
                 .map(str::to_owned),
+            instructions: instructions.trim().to_owned(),
         }
     }
 }

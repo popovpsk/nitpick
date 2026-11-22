@@ -27,9 +27,10 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `registry.rs` — `Registry` of live sessions, `shutdown_all` and `quit`.
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
-- `prompt.rs` — system instructions (`instructions(language, disk_matches_head)`), the overview
-  and update tasks, `with_brief`, `with_new_comments`, `selection_link`, `selection_question`
-  and `Selection`.
+- `prompt.rs` — system instructions (`instructions(language, disk_matches_head, user)`),
+  `updated_instructions` and `instructions_fingerprint` (what a resumed session is told when its
+  instructions changed), the overview and update tasks, `with_brief`, `with_new_comments`,
+  `selection_link`, `selection_question` and `Selection`.
 - `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
   fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
 - `acp/` — the generic ACP driver and its flavors (`mod.rs`, `wire.rs`, `normalize.rs`,
@@ -180,9 +181,17 @@ sessions without the login shell.
   (not the truncated rendering), as compact JSON; the fingerprint is FNV-1a 64 of it, stable
   across runs and Rust versions so the app may persist it. `changed_since` compares by thread id.
 - `instructions` is the fixed text (read-only rules, the untrusted-data rule, the `diff:` link
-  format) with the disk rule and the answer language (a display name, empty means English); the
-  head and base ids come from the brief, so after a head change the app sends a fresh brief
-  along with `update_task`.
+  format) with the disk rule and the answer language (a display name, empty means English),
+  then, when the user wrote any, their own text under "Additional instructions from the user
+  (the rules above still apply)": trimmed, cut at `MAX_USER_INSTRUCTIONS` characters, nothing
+  when blank, not fenced as untrusted. It cannot lift the read-only setup, which each driver
+  enforces with launch flags and the harness's sandbox, never with this text. The head and base
+  ids come from the brief, so after a head change the app sends a fresh brief along with
+  `update_task`.
+- `updated_instructions` puts the whole instruction text, marked as replacing the earlier one,
+  in front of a message; the app uses it for a resumed session whose instruction fingerprint
+  (`instructions_fingerprint`, FNV-1a 64 as 16 hex digits) differs, since no harness is known to
+  apply a changed system prompt on resume (Claude Code verifiably keeps the old one).
 - A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` and
   the text in a code fence one backtick longer than any run inside it (at least three). The path
   is repository text, so in what the agent receives it appears only percent-encoded (label and

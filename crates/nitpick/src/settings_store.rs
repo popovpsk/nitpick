@@ -185,6 +185,8 @@ pub struct AgentSettings {
     pub models: BTreeMap<String, String>,
     #[serde(default)]
     pub custom: Vec<CustomAgent>,
+    #[serde(default)]
+    pub instructions: String,
     #[serde(
         default = "default_agent_panel_width",
         deserialize_with = "deserialize_agent_panel_width"
@@ -225,6 +227,7 @@ impl Default for AgentSettings {
             commands: BTreeMap::new(),
             models: BTreeMap::new(),
             custom: Vec::new(),
+            instructions: String::new(),
             panel_width: default_agent_panel_width(),
         }
     }

@@ -184,23 +184,30 @@ impl AgentPanel {
     fn render_empty(&self, cx: &mut Context<Self>) -> AnyElement {
         let s = tr();
         let theme = cx.theme();
+        let (title, hint) = if self.resumable {
+            (
+                s.assistant_resume_title.clone(),
+                s.assistant_resume_hint.clone(),
+            )
+        } else {
+            (
+                s.assistant_overview_title.clone(),
+                s.assistant_overview_hint.clone(),
+            )
+        };
         centered()
             .child(
                 Icon::new(Icons::Sparkles)
                     .large()
                     .text_color(theme.muted_foreground),
             )
-            .child(
-                div()
-                    .font_semibold()
-                    .child(s.assistant_overview_title.clone()),
-            )
+            .child(div().font_semibold().child(title))
             .child(
                 div()
                     .text_sm()
                     .text_center()
                     .text_color(theme.muted_foreground)
-                    .child(s.assistant_overview_hint.clone()),
+                    .child(hint),
             )
             .when_some(self.failure(), |el, message| {
                 el.child(

@@ -112,6 +112,7 @@ fn settings_without_the_agent_field_get_its_defaults() {
     assert!(settings.agent.commands.is_empty());
     assert!(settings.agent.models.is_empty());
     assert!(settings.agent.custom.is_empty());
+    assert!(settings.agent.instructions.is_empty());
     assert_eq!(settings.agent.panel_width, 480.);
 }
 
@@ -138,6 +139,7 @@ fn the_agent_section_round_trips() {
                 name: "mine".to_string(),
                 command: "mine --acp".to_string(),
             }],
+            instructions: "Be terse.\nAnswer in two sentences.".to_string(),
             panel_width: 620.,
         },
         ..Settings::default()

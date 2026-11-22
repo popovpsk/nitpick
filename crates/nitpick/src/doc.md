@@ -20,7 +20,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   the log, `nitpick.db` and imported themes inside are created with the default mode. An
   app-level handler that touches a window defers the work: gpui runs it while the window that
   dispatched the action is still borrowed, so updating that window directly fails. At startup
-  it also calls `review::init_agent` (assistant history pruning, the login-shell snapshot
+  it also calls `review::init_agent` (pruning of stale stored session ids, the login-shell snapshot
   prewarm, the sweep of stale scratch folders), and on quit it calls `agent::quit()`
   (a detached reaper finishes the harnesses' shutdown ladder after the app is gone), so no
   harness process outlives the app.
@@ -39,8 +39,8 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   `WrapLines`); the comments sheet's order (`CommentSort`, newest first by default); the diff's `split_ratio` and
   `fit_split_ratio` (each column at least `SPLIT_MIN_COLUMN`, 50/50 when the area is
   narrower); `AgentSettings` (the assistant: `enabled`, `auto_overview`, `active`, per-profile
-  `commands` and `models`, `custom` agents, `panel_width`, read through `clamp_agent_panel_width`
-  into 320–900) and `CustomAgent`.
+  `commands` and `models`, `custom` agents, `instructions` (the user's own text for every
+  session), `panel_width`, read through `clamp_agent_panel_width` into 320–900) and `CustomAgent`.
 - `settings_store_tests.rs` — `settings.json` without the newer fields (GitHub and `agent`
   included) still loads; the GitHub host default and override; syntax
   palettes per appearance; fitting the split ratio to a width; the `agent` section round-trips
@@ -162,7 +162,9 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   profile first, then reloads both fields and clears the "Check" status. "Check" runs
   `agent::probe` on what is typed (the default when empty), so it works before the save. The
   custom-agents field saves the parsed list and keeps the lines it ignored (reported under
-  the field) until the settings change from elsewhere; the no-sandbox warning is built into
+  the field) until the settings change from elsewhere; the instructions field saves its
+  trimmed text 400 ms after typing and is reloaded from the settings only while it is not
+  focused; the no-sandbox warning is built into
   the group only for a profile without one, from the cached profile, so `render` never
   resolves profiles.
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
