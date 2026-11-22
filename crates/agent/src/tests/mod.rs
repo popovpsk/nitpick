@@ -1,3 +1,4 @@
+mod acp;
 mod brief;
 mod claude;
 mod codex;

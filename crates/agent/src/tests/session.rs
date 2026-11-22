@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rstest::rstest;
 
-use crate::{AcpFlavor, Error, HarnessKind, Launch, Session};
+use crate::{Error, HarnessKind, Launch, Session};
 
 fn launch(kind: HarnessKind) -> Launch {
     Launch {
@@ -18,9 +18,6 @@ fn launch(kind: HarnessKind) -> Launch {
 
 #[rstest]
 #[case::pi(HarnessKind::Pi)]
-#[case::opencode(HarnessKind::Acp(AcpFlavor::OpenCode))]
-#[case::deepseek(HarnessKind::Acp(AcpFlavor::DeepSeek))]
-#[case::generic(HarnessKind::Acp(AcpFlavor::Generic))]
 fn harnesses_without_a_driver_are_unsupported(#[case] kind: HarnessKind) {
     assert!(matches!(
         Session::start(launch(kind)),

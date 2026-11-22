@@ -4,8 +4,8 @@ Runs the review assistant: starts an installed agent CLI (Claude Code, Codex, an
 Pi) as a child process in the repository, feeds it prompts and turns its output into one
 stream of `Event`s. It holds the shared machinery (process handling, line reading,
 JSON-RPC framing, the session and registry), the seam a harness driver plugs into and the
-drivers; Claude Code and Codex have one, `Session::start` returns `Error::Unsupported` for the
-other `HarnessKind`s. GPUI-free.
+drivers; Claude Code, Codex and the ACP agents (OpenCode, DeepSeek, any other) have one,
+`Session::start` returns `Error::Unsupported` for the other `HarnessKind`s. GPUI-free.
 
 It also holds the texts the app sends: the system instructions, the tasks and the review brief
 (`prompt`, `brief`).
@@ -20,7 +20,7 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
   uses only these.
 - `process.rs` — command splitting, login-shell environment snapshot, environment merge and
   scrub, program lookup, `Invocation`, `Process` (spawn in a process group / job object, soft
-  shutdown, stderr tail), `probe_version`, `on_runtime`.
+  shutdown, stderr tail), `drain`, `probe_version`, `on_runtime`.
 - `lines.rs` — `Lines`: newline framing over any `AsyncRead` that survives bad UTF-8 and
   skips lines over 32 MiB.
 - `jsonrpc.rs` — line-framed JSON-RPC 2.0 over an `AsyncRead` + `AsyncWrite`: `connect`,
@@ -34,20 +34,24 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
   and `Selection`.
 - `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
   fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
+- `acp/` — the generic ACP driver and its flavors (`mod.rs`, `wire.rs`, `normalize.rs`,
+  `permission.rs`, `flavor.rs`); see `acp/doc.md`. OpenCode is verified live, DeepSeek is not.
 - `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
 - `codex/` — the Codex driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see
   `codex/doc.md`. Written from documentation, not run against a real CLI.
 - `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
   `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand. The Codex
-  tests use synthetic transcripts written in the test code, not fixtures.
+  tests use synthetic transcripts written in the test code, not fixtures; the ACP tests replay
+  the OpenCode recordings and add scripted peers.
 - `tests/` — unit tests per module (`#[cfg(unix)]` for the ones that spawn `sh`).
 
 ## The driver seam
 
 A driver implements `session::Driver`: `plan(&Launch)` returns the arguments and environment
 it adds after the user's command (and writes its files into `Launch.scratch`, which the
-session creates); `run(Launch, Transport, Channels)` is the whole conversation, a future that
-reads the harness's stdout and writes its stdin through the boxed `Transport` and returns when
+session creates; it runs synchronously inside `Session::start`, so it may block for a bounded
+time, as the OpenCode flavor's version probe does); `run(Launch, Transport, Channels)` is the
+whole conversation, a future that reads the harness's stdout and writes its stdin through the boxed `Transport` and returns when
 the session is over. `Channels` carries the `flume::Receiver<Command>` (prompt, interrupt,
 shutdown, in call order) and the `flume::Sender<Event>`. `driver_for` is the only place that
 maps a `HarnessKind` to a driver. A `Plan` may carry a `refusal` (a `Failure`) instead of
@@ -68,6 +72,10 @@ sessions without the login shell.
   `Event::Exited` exactly once, last (`None` after a requested shutdown, otherwise the stderr
   tail, else the exit status); drivers never emit `Exited`. A panicking driver still unregisters
   the session and wakes whoever waits for it.
+- Waiting for the stderr reader (`process::drain`) leaves the reader in place until it has
+  finished or been given up on: the supervisor races the driver against `Process::wait`, and the
+  loser's future is dropped mid-drain, which must not cost the next drain the reader (the
+  `Exited` text would lose the stderr tail).
 - A driver must return on `Command::Shutdown` and on end of stdout, dropping the transport:
   that closes stdin, which is step one of the soft shutdown.
 - Soft shutdown: stdin closed, wait 3 s, SIGTERM to the process group, wait 2 s, SIGKILL to
@@ -101,6 +109,9 @@ sessions without the login shell.
   U+FFFD, an over-long line is dropped, unknown messages are ignored. One bad line never ends a
   connection; only end of stream or a failed write does, and then pending requests fail with
   `CallError::Closed`.
+- Notifications and answers reach a `jsonrpc::Connection` user through different channels: a
+  notification read before an answer is already queued when the answer resolves, so a user that
+  needs their order drains `Connection::try_next` after the answer.
 - `jsonrpc::Options::tag_version = false` leaves the `"jsonrpc":"2.0"` field out for peers
   (Codex) that omit it. Incoming request ids may be numbers or strings; ours are numbers.
   `Connection::close` flushes what was queued and ends the writer; dropping it aborts both tasks.

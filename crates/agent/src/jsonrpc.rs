@@ -230,6 +230,10 @@ impl Connection {
         self.incoming.recv_async().await.ok()
     }
 
+    pub fn try_next(&self) -> Option<Incoming> {
+        self.incoming.try_recv().ok()
+    }
+
     pub async fn close(mut self) {
         let _ = self.client.out.send(Out::Close);
         if let Some(mut writer) = self.writer.take()

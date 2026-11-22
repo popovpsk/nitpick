@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+pub mod acp;
 pub mod brief;
 pub mod claude;
 pub mod codex;

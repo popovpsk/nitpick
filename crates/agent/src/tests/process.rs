@@ -315,3 +315,41 @@ mod unix {
         assert!(matches!(error, Error::NotFound(_)));
     }
 }
+
+mod drain {
+    use std::time::Duration;
+
+    use tokio::task::JoinHandle;
+
+    use crate::process::drain;
+
+    fn finishing_after(delay: Duration) -> Option<JoinHandle<()>> {
+        Some(tokio::spawn(async move { tokio::time::sleep(delay).await }))
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_drain_leaves_the_reader_for_the_next_one() {
+        let mut task = finishing_after(Duration::from_millis(200));
+        tokio::select! {
+            () = drain(&mut task, Duration::from_secs(5)) => panic!("the reader was still running"),
+            () = tokio::time::sleep(Duration::from_millis(20)) => {}
+        }
+        assert!(task.is_some());
+        drain(&mut task, Duration::from_secs(5)).await;
+        assert!(task.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reader_that_outlasts_the_limit_is_given_up_on() {
+        let mut task = finishing_after(Duration::from_secs(60));
+        drain(&mut task, Duration::from_millis(20)).await;
+        assert!(task.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_reader_is_nothing_to_wait_for() {
+        let mut task = None;
+        drain(&mut task, Duration::from_secs(5)).await;
+        assert!(task.is_none());
+    }
+}

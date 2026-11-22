@@ -237,3 +237,26 @@ async fn close_flushes_what_was_queued_and_ends_the_peer_stream() {
     assert_eq!(peer.read().await["method"], "last");
     assert!(peer.lines.next_line().await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn notifications_before_a_response_are_queued_when_it_resolves() {
+    let (connection, mut peer) = pair(Options::default());
+    let client = connection.client();
+    let call = tokio::spawn(async move { client.request("ping", Value::Null).await });
+    let request = peer.read().await;
+    peer.write_raw(&format!(
+        "{}\n{}\n",
+        json!({"jsonrpc": "2.0", "method": "tick", "params": {"n": 1}}),
+        json!({"jsonrpc": "2.0", "id": request["id"], "result": {}}),
+    ))
+    .await;
+    call.await.unwrap().unwrap();
+    assert_eq!(
+        connection.try_next(),
+        Some(Incoming::Notification {
+            method: "tick".into(),
+            params: json!({"n": 1}),
+        })
+    );
+    assert_eq!(connection.try_next(), None);
+}

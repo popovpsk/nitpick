@@ -635,11 +635,7 @@ impl Process {
 
     async fn finish(&mut self, status: Option<ExitStatus>) -> Exit {
         let _ = self.child.start_kill();
-        if let Some(mut task) = self.stderr_task.take()
-            && tokio::time::timeout(STDERR_DRAIN, &mut task).await.is_err()
-        {
-            task.abort();
-        }
+        drain(&mut self.stderr_task, STDERR_DRAIN).await;
         Exit {
             status,
             stderr: self.stderr.text(),
@@ -653,6 +649,18 @@ impl Drop for Process {
         if let Some(task) = self.stderr_task.take() {
             task.abort();
         }
+    }
+}
+
+pub(crate) async fn drain(task: &mut Option<JoinHandle<()>>, limit: Duration) {
+    let Some(handle) = task.as_mut() else {
+        return;
+    };
+    let drained = tokio::time::timeout(limit, &mut *handle).await.is_ok();
+    if let Some(handle) = task.take()
+        && !drained
+    {
+        handle.abort();
     }
 }
 

@@ -8,6 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::acp::AcpDriver;
 use crate::claude::ClaudeDriver;
 use crate::codex::CodexDriver;
 use crate::process::{Environment, Exit, Grace, Invocation, Pipes, Process};
@@ -70,7 +71,8 @@ pub fn driver_for(kind: HarnessKind) -> Result<Arc<dyn Driver>, Error> {
     match kind {
         HarnessKind::Claude => Ok(Arc::new(ClaudeDriver::new())),
         HarnessKind::Codex => Ok(Arc::new(CodexDriver::new())),
-        HarnessKind::Acp(_) | HarnessKind::Pi => Err(Error::Unsupported),
+        HarnessKind::Acp(flavor) => Ok(Arc::new(AcpDriver::new(flavor))),
+        HarnessKind::Pi => Err(Error::Unsupported),
     }
 }
 
