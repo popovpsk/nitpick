@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"nitpick","title":"Nitpick","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"session/resume","params":{"sessionId":"ses_dfd745da8ffenyHw6F7i7juCEt","cwd":"/work/toy","mcpServers":[]}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"ses_dfd745da8ffenyHw6F7i7juCEt","prompt":[{"type":"text","text":"In one sentence: what was the first thing I asked you?"}]}}

@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"nitpick","title":"Nitpick","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"session/resume","params":{"sessionId":"ses_00000000000000000000000000","cwd":"/work/toy","mcpServers":[]}}
