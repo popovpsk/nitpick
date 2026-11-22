@@ -969,14 +969,14 @@ impl ReviewView {
             .children(find_bar);
         if can_ask {
             area.context_menu(move |menu, _, cx| {
-                let hovered = ask_view.read(cx).hovered_line();
+                let capture = ask_view.read(cx).capture_selection(cx);
                 let view = ask_view.clone();
                 menu.item(
                     PopupMenuItem::new(tr().ask_assistant.clone())
                         .action(Box::new(AskAgent))
                         .on_click(move |_, window, cx| {
-                            let hovered = hovered.clone();
-                            view.update(cx, |this, cx| this.ask_agent_at(hovered, window, cx))
+                            let capture = capture.clone();
+                            view.update(cx, |this, cx| this.ask_with(capture, window, cx))
                         }),
                 )
             })

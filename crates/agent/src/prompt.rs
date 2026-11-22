@@ -62,9 +62,7 @@ const COMMENTS_HEADING: &str = "New and changed comments since the last message:
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection<'a> {
     pub path: &'a str,
-    pub side: Side,
-    pub start: u32,
-    pub end: u32,
+    pub range: Option<(Side, u32, u32)>,
     pub text: &'a str,
 }
 
@@ -121,6 +119,19 @@ pub fn update_task(old_head: &str, new_head: &str) -> String {
     }
 }
 
+pub fn head_moved(old_head: &str, new_head: &str, message: &str) -> String {
+    let note = match (brief::commit_id(old_head), brief::commit_id(new_head)) {
+        (Some(old), Some(new)) => format!(
+            "The review moved from {old} to {new} since you last saw it. The review context above is \
+             current; if the change matters for the answer, look at what changed (git diff {old} {new})."
+        ),
+        _ => "The review changed since you last saw it. The review context above is current; \
+              if the change matters for the answer, look at what changed."
+            .to_owned(),
+    };
+    format!("{note}\n\n{message}")
+}
+
 pub fn local_update_task() -> String {
     LOCAL_UPDATE.to_owned()
 }
@@ -140,41 +151,35 @@ pub fn with_new_comments(threads: &[Thread], message: &str) -> String {
 }
 
 pub fn selection_link(selection: &Selection<'_>) -> String {
-    let label = escape_label(&format!(
-        "{} {}",
-        brief::single_line(selection.path),
-        range_label(selection)
-    ));
+    let path = brief::single_line(selection.path);
+    let label = match range_label(selection) {
+        Some(range) => escape_label(&format!("{path} {range}")),
+        None => escape_label(&path),
+    };
     format!("[{label}]({})", selection_target(selection))
 }
 
 fn selection_target(selection: &Selection<'_>) -> String {
-    let (start, end) = ordered(selection);
     diff_link::format(&DiffLink {
         path: selection.path.to_owned(),
-        range: Some((selection.side, start, end)),
+        range: selection
+            .range
+            .map(|(side, start, end)| (side, start.min(end), start.max(end))),
     })
 }
 
-fn ordered(selection: &Selection<'_>) -> (u32, u32) {
-    if selection.start <= selection.end {
-        (selection.start, selection.end)
-    } else {
-        (selection.end, selection.start)
-    }
-}
-
-fn range_label(selection: &Selection<'_>) -> String {
-    let (start, end) = ordered(selection);
-    let letter = match selection.side {
+fn range_label(selection: &Selection<'_>) -> Option<String> {
+    let (side, first, second) = selection.range?;
+    let (start, end) = (first.min(second), first.max(second));
+    let letter = match side {
         Side::Old => 'L',
         Side::New => 'R',
     };
-    if start == end {
+    Some(if start == end {
         format!("{letter}{start}")
     } else {
         format!("{letter}{start}-{end}")
-    }
+    })
 }
 
 fn agent_selection_link(selection: &Selection<'_>) -> String {
@@ -183,11 +188,11 @@ fn agent_selection_link(selection: &Selection<'_>) -> String {
         range: None,
     });
     let path = encoded.strip_prefix("diff:").unwrap_or(&encoded);
-    format!(
-        "[{path} {}]({})",
-        range_label(selection),
-        selection_target(selection)
-    )
+    let label = match range_label(selection) {
+        Some(range) => format!("{path} {range}"),
+        None => path.to_owned(),
+    };
+    format!("[{label}]({})", selection_target(selection))
 }
 
 pub fn selection_question(question: &str, selection: &Selection<'_>) -> String {

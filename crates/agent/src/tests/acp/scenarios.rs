@@ -619,6 +619,26 @@ async fn a_config_option_is_preferred_over_the_unstable_model_list() {
 }
 
 #[tokio::test]
+async fn a_missing_set_model_method_keeps_the_session_and_says_so() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("b"), relaxed());
+    rig.prompt("hi");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.respond(id, json!({"sessionId": SESSION, "models": model_list("a")}))
+        .await;
+    let (id, _) = rig.request("session/set_model").await;
+    rig.respond_error(id, -32601, "Method not found", Value::Null)
+        .await;
+    assert_eq!(
+        rig.next().await,
+        Event::Notice("The agent cannot switch models; it keeps its own.".to_owned())
+    );
+    assert_eq!(rig.next().await, session(SESSION));
+    rig.read_prompt().await;
+    rig.stop().await;
+}
+
+#[tokio::test]
 async fn a_refused_set_model_fails_the_session_as_model_not_found() {
     let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("zzz"), relaxed());
     rig.prompt("hi");

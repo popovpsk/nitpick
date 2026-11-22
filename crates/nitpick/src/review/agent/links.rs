@@ -148,21 +148,23 @@ pub(in crate::review) fn patch_sides(section: &str) -> (SideText, SideText) {
     (old, new)
 }
 
-const MAX_CANDIDATES: usize = 4096;
+const MAX_CANDIDATES: usize = 1_000_000;
 
 fn candidates(side: Side, shown: &SideText, text: &str) -> Vec<(Side, u32, u32)> {
     let breaks = text.matches('\n').count();
-    shown
-        .text
-        .match_indices(text)
-        .take(MAX_CANDIDATES)
-        .filter_map(|(offset, _)| {
-            let first = shown.text[..offset].matches('\n').count();
-            let first_no = *shown.numbers.get(first)?;
-            let last_no = *shown.numbers.get(first + breaks)?;
-            Some((side, first_no, last_no))
-        })
-        .collect()
+    let mut found = Vec::new();
+    let (mut counted_to, mut first) = (0, 0);
+    for (offset, _) in shown.text.match_indices(text).take(MAX_CANDIDATES) {
+        first += shown.text[counted_to..offset].matches('\n').count();
+        counted_to = offset;
+        let (Some(&first_no), Some(&last_no)) =
+            (shown.numbers.get(first), shown.numbers.get(first + breaks))
+        else {
+            continue;
+        };
+        found.push((side, first_no, last_no));
+    }
+    found
 }
 
 pub(in crate::review) fn locate_selection(
@@ -191,6 +193,52 @@ pub(in crate::review) fn locate_selection(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::review) struct AskInputs {
+    pub gutter: Option<(usize, Side, u32, Side, u32)>,
+    pub has_text: bool,
+    pub text_file: Option<usize>,
+    pub commit_view: bool,
+    pub interdiff: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::review) enum AskPlan {
+    OpenOnly,
+    Refuse,
+    Attach {
+        file: usize,
+        range: Option<(Side, u32, u32)>,
+    },
+    Locate {
+        file: usize,
+    },
+}
+
+pub(in crate::review) fn plan_ask(inputs: &AskInputs) -> AskPlan {
+    if let Some((file, side, start, end_side, end)) = inputs.gutter {
+        if inputs.commit_view {
+            return AskPlan::Refuse;
+        }
+        let range = selection_span(side, start, end_side, end);
+        let linkable = can_link_selection(inputs.commit_view, inputs.interdiff, range.0);
+        return AskPlan::Attach {
+            file,
+            range: linkable.then_some(range),
+        };
+    }
+    let Some(file) = inputs.text_file.filter(|_| inputs.has_text) else {
+        return AskPlan::OpenOnly;
+    };
+    if inputs.commit_view {
+        AskPlan::Refuse
+    } else if inputs.interdiff {
+        AskPlan::Attach { file, range: None }
+    } else {
+        AskPlan::Locate { file }
+    }
+}
+
 pub(in crate::review) fn selection_span(
     side: Side,
     start: u32,
@@ -215,9 +263,7 @@ pub(in crate::review) fn can_link_selection(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::review) struct PendingSelection {
     pub path: String,
-    pub side: Side,
-    pub start: u32,
-    pub end: u32,
+    pub range: Option<(Side, u32, u32)>,
     pub text: String,
     pub marker: String,
 }
@@ -225,9 +271,7 @@ pub(in crate::review) struct PendingSelection {
 impl PendingSelection {
     pub(in crate::review) fn new(
         path: String,
-        side: Side,
-        start: u32,
-        end: u32,
+        range: Option<(Side, u32, u32)>,
         text: &str,
     ) -> Self {
         let text = match text.char_indices().nth(MAX_SELECTION_CHARS) {
@@ -236,16 +280,12 @@ impl PendingSelection {
         };
         let marker = prompt::selection_link(&Selection {
             path: &path,
-            side,
-            start,
-            end,
+            range,
             text: &text,
         });
         Self {
             path,
-            side,
-            start,
-            end,
+            range,
             text,
             marker,
         }
@@ -271,9 +311,7 @@ pub(super) fn compose_question(input: &str, pending: Option<&PendingSelection>) 
         &question,
         &Selection {
             path: &pending.path,
-            side: pending.side,
-            start: pending.start,
-            end: pending.end,
+            range: pending.range,
             text: &pending.text,
         },
     );
@@ -358,6 +396,9 @@ impl AgentPanel {
             });
         }
         self.input.update(cx, |input, cx| input.focus(window, cx));
+        cx.defer_in(window, |this, window, cx| {
+            this.input.update(cx, |input, cx| input.focus(window, cx));
+        });
         cx.notify();
     }
 }

@@ -127,9 +127,7 @@ fn update_tasks() {
 fn selection<'a>(path: &'a str, side: Side, start: u32, end: u32, text: &'a str) -> Selection<'a> {
     Selection {
         path,
-        side,
-        start,
-        end,
+        range: Some((side, start, end)),
         text,
     }
 }
@@ -299,4 +297,32 @@ fn with_brief_puts_the_task_after_the_context() {
     let text = with_brief(&brief, &overview_task());
     assert!(text.starts_with("# Review context\n"));
     assert!(text.contains("No review comments.\n\nWrite an overview of this change"));
+}
+
+#[test]
+fn a_selection_without_lines_links_the_file_alone() {
+    let selected = Selection {
+        path: "src/my file.rs",
+        range: None,
+        text: "body",
+    };
+    assert_eq!(
+        selection_link(&selected),
+        "[src/my file.rs](diff:src/my%20file.rs)"
+    );
+    let text = selection_question("why?", &selected);
+    assert_eq!(
+        text,
+        "why?\n\nSelected: [src/my%20file.rs](diff:src/my%20file.rs)\n```\nbody\n```\n"
+    );
+}
+
+#[test]
+fn a_moved_head_note_names_the_commits_only_when_they_are_ids() {
+    let text = head_moved("aaa111", "bbb222", "q");
+    assert!(text.starts_with("The review moved from aaa111 to bbb222 since you last saw it."));
+    assert!(text.ends_with("\n\nq"));
+    let hostile = head_moved("aaa111", "main; rm -rf /", "q");
+    assert!(hostile.starts_with("The review changed since you last saw it."));
+    assert!(!hostile.contains("rm -rf"));
 }

@@ -43,11 +43,12 @@ written (`nitpick` `review/viewed.rs`), the assistant's conversation logic
   repository's marks older than `VIEWED_RETENTION_SECS` (180 days). `avatars` (url → png,
   fetched_at): `prune_avatars` drops entries older than `AVATAR_RETENTION_SECS` (90 days).
 - `agent_sessions` (repo, review, agent → session_id, updated_at, brief_delivered,
-  instructions): the pointer to one resumable harness session per review and agent profile,
+  brief_head, instructions): the pointer to one resumable harness session per review and agent profile,
   and nothing of its text; the harness keeps the conversation. `review` is the caller's key
   for the review. `brief_delivered` says the harness already holds the review brief (set when
-  a turn that carried it was answered), `instructions` is the fingerprint of the instructions
-  the session last received; both belong to the session id, so `set_agent_session` (a new id,
+  a turn that carried it was answered) and `brief_head` the review head that brief was for (empty
+  for a row written before the column existed, which counts as not matching), `instructions` is
+  the fingerprint of the instructions the session last received; both belong to the session id, so `set_agent_session` (a new id,
   last writer wins) resets them and `update_agent_session` changes them only while the stored
   id is the one named. `clear_agent_session` deletes exactly one key's row, and only when the
   stored id equals `only` if one is given, so a window that lost its session never deletes the

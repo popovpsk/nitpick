@@ -26,7 +26,6 @@ struct Parts {
     session: Session,
     receiver: flume::Receiver<Event>,
     resume: Option<Resume>,
-    claim: Option<Claim>,
     instructions: String,
     scratch: PathBuf,
 }
@@ -34,7 +33,7 @@ struct Parts {
 type Started = logic::Guard<Parts>;
 
 fn dispose_parts(parts: Parts) {
-    retire(parts.session, parts.scratch);
+    retire(parts.session, parts.scratch, None);
 }
 
 pub(in crate::review) fn init(cx: &mut App) {
@@ -78,11 +77,12 @@ fn sweep_scratch(root: &Path) {
     }
 }
 
-pub(super) fn retire(session: Session, scratch: PathBuf) {
+pub(super) fn retire(session: Session, scratch: PathBuf, claim: Option<Claim>) {
     let done = session.shutdown();
     net_runtime::handle().spawn(async move {
         done.await;
         drop(session);
+        drop(claim);
         let removed = net_runtime::unblock(move || std::fs::remove_dir_all(&scratch)).await;
         if let Err(err) = removed
             && err.kind() != std::io::ErrorKind::NotFound
@@ -330,20 +330,32 @@ impl AgentPanel {
     pub(super) fn clear_conversation(&mut self, cx: &mut Context<Self>) {
         self.end_process(cx);
         self.load_generation += 1;
+        self.bound = None;
+        self.resumable = false;
         if let Some(context) = self.context.clone()
             && let Some(db) = crate::db::db(cx)
         {
-            let sessions: Vec<_> = settings(cx)
+            let profiles: Vec<String> = settings(cx)
                 .agent
                 .profiles()
                 .iter()
-                .map(|profile| {
-                    db.clear_agent_session(&context.repo, &context.key, &profile.id, None)
-                })
+                .map(|profile| profile.id.clone())
                 .collect();
+            let (repo, key) = (context.repo.clone(), context.key.clone());
             cx.background_spawn(async move {
-                for write in sessions {
-                    if let Err(err) = write.await {
+                for profile in profiles {
+                    let stored = db
+                        .agent_session(&repo, &key, &profile)
+                        .await
+                        .unwrap_or_else(|err| {
+                            log::warn!("loading the assistant's session: {err}");
+                            None
+                        });
+                    let Some(id) = logic::clearable(stored.as_ref()) else {
+                        continue;
+                    };
+                    let cleared = db.clear_agent_session(&repo, &key, &profile, Some(&id));
+                    if let Err(err) = cleared.await {
                         log::warn!("clearing the assistant's sessions: {err}");
                     }
                 }
@@ -356,8 +368,6 @@ impl AgentPanel {
         self.scroll.update(cx, |scroll, cx| scroll.reset(0, cx));
         self.overview = OverviewState::None;
         self.seen.clear();
-        self.bound = None;
-        self.resumable = false;
         self.settings_notice = None;
         self.stale = false;
         self.pending = None;
@@ -387,6 +397,7 @@ impl AgentPanel {
         let own = self.bound.as_ref().map(|bound| Resume {
             id: bound.claim.id().to_owned(),
             brief_delivered: bound.brief_delivered,
+            brief_head: bound.brief_head.clone(),
             instructions: bound.instructions.clone(),
         });
         let fixed_cwd = self.live.as_ref().map(|live| live.cwd.clone());
@@ -403,8 +414,8 @@ impl AgentPanel {
                 )
                 .await;
             let started = if need_start {
-                let (resume, claim) = match own {
-                    Some(own) => (Some(own), None),
+                let resume = match own {
+                    Some(own) => Some(own),
                     None => {
                         let stored = match &db {
                             Some(db) => db
@@ -417,8 +428,30 @@ impl AgentPanel {
                             None => None,
                         };
                         match logic::adopt(stored, |id| Claim::acquire(id, owner)) {
-                            Some((resume, claim)) => (Some(resume), Some(claim)),
-                            None => (None, None),
+                            Some((resume, claim)) => {
+                                let adopted = resume.clone();
+                                let kept = this.update(cx, |this, _| {
+                                    let bound = Bound {
+                                        claim,
+                                        brief_delivered: adopted.brief_delivered,
+                                        brief_head: adopted.brief_head,
+                                        instructions: adopted.instructions,
+                                    };
+                                    logic::hand_over(
+                                        &mut this.bound,
+                                        this.operation,
+                                        operation,
+                                        bound,
+                                    )
+                                });
+                                if matches!(kept, Ok(true)) {
+                                    let _ = this.update(cx, |this, _| this.resumable = false);
+                                    Some(resume)
+                                } else {
+                                    None
+                                }
+                            }
+                            None => None,
                         }
                     }
                 };
@@ -440,7 +473,6 @@ impl AgentPanel {
                                 session,
                                 receiver,
                                 resume,
-                                claim,
                                 instructions,
                                 scratch,
                             },
@@ -517,29 +549,29 @@ impl AgentPanel {
             session,
             receiver,
             resume,
-            claim,
             instructions,
             scratch,
         } = parts;
         let fingerprint = prompt::instructions_fingerprint(&instructions);
         let due = logic::instructions_due(resume.as_ref(), &fingerprint);
-        let brief_delivered = resume.as_ref().is_some_and(|resume| resume.brief_delivered);
-        if let (Some(claim), Some(resume)) = (claim, resume) {
-            self.bound = Some(Bound {
-                claim,
-                brief_delivered: resume.brief_delivered,
-                instructions: resume.instructions,
-            });
-            self.resumable = false;
-        }
+        let head = self
+            .context
+            .as_ref()
+            .map(|context| context.head.clone())
+            .unwrap_or_default();
+        let (brief_delivered, moved_from) = logic::resumed_brief(resume.as_ref(), &head);
+        let brief_head = if brief_delivered { head } else { String::new() };
         let pump = cx.spawn(async move |this, cx| pump(this, cx, receiver, generation).await);
         self.live = Some(Live {
             session,
             cwd,
             scratch,
             brief_delivered,
+            brief_head,
+            moved_from,
             instructions_due: due.then_some(instructions),
             instructions: fingerprint,
+            claim: self.bound.as_ref().map(|bound| bound.claim.clone()),
             _pump: pump,
         });
     }
@@ -558,6 +590,7 @@ impl AgentPanel {
         let included = !live.brief_delivered;
         let needs_brief = included || !matches!(request, Request::Chat { .. });
         let due = live.instructions_due.clone();
+        let moved_from = live.moved_from.clone();
         let text = match disk_matches {
             Some(disk) if needs_brief => {
                 let mut brief = context.brief.clone();
@@ -569,6 +602,7 @@ impl AgentPanel {
                     &context.head,
                     included,
                     &self.seen,
+                    moved_from.as_deref(),
                 )
             }
             _ => logic::compose(
@@ -578,6 +612,7 @@ impl AgentPanel {
                 &context.head,
                 included,
                 &self.seen,
+                moved_from.as_deref(),
             ),
         };
         let text = logic::with_updated_instructions(due.as_deref(), text);
@@ -672,13 +707,21 @@ impl AgentPanel {
             log::warn!("the assistant's session is already held by another window");
             return;
         };
-        let (brief_delivered, instructions) = match &self.live {
-            Some(live) => (live.brief_delivered, live.instructions.clone()),
-            None => (false, String::new()),
+        let (brief_delivered, brief_head, instructions) = match &self.live {
+            Some(live) => (
+                live.brief_delivered,
+                live.brief_head.clone(),
+                live.instructions.clone(),
+            ),
+            None => (false, String::new(), String::new()),
         };
+        if let Some(live) = self.live.as_mut() {
+            live.claim = Some(claim.clone());
+        }
         self.bound = Some(Bound {
             claim,
             brief_delivered,
+            brief_head: brief_head.clone(),
             instructions: instructions.clone(),
         });
         self.resumable = false;
@@ -688,6 +731,7 @@ impl AgentPanel {
         let session = AgentSession {
             id,
             brief_delivered,
+            brief_head,
             instructions,
         };
         let write = db.set_agent_session(
@@ -716,6 +760,7 @@ impl AgentPanel {
         let session = AgentSession {
             id: bound.claim.id().to_owned(),
             brief_delivered: bound.brief_delivered,
+            brief_head: bound.brief_head.clone(),
             instructions: bound.instructions.clone(),
         };
         let write = db.update_agent_session(
@@ -785,7 +830,13 @@ impl AgentPanel {
                 &turn.head,
                 &outcome,
             );
-            self.record_delivery(turn.carried_brief, turn.carried_instructions, &outcome, cx);
+            self.record_delivery(
+                turn.carried_brief,
+                turn.carried_instructions,
+                &turn.head,
+                &outcome,
+                cx,
+            );
         }
         match outcome {
             Outcome::Completed => {
@@ -823,25 +874,35 @@ impl AgentPanel {
         &mut self,
         carried_brief: bool,
         carried_instructions: bool,
+        head: &str,
         outcome: &Outcome,
         cx: &mut Context<Self>,
     ) {
         let Some(live) = self.live.as_mut() else {
             return;
         };
-        let delivered = logic::brief_delivered(live.brief_delivered, carried_brief, outcome);
-        let instructions_sent = carried_instructions && logic::answered(outcome);
-        let changed = delivered != live.brief_delivered || instructions_sent;
-        live.brief_delivered = delivered;
+        let answered = logic::answered(outcome);
+        let brief_sent = carried_brief && answered;
+        let instructions_sent = carried_instructions && answered;
+        live.brief_delivered = logic::brief_delivered(live.brief_delivered, carried_brief, outcome);
+        if brief_sent {
+            live.brief_head = head.to_owned();
+            live.moved_from = None;
+        }
         if instructions_sent {
             live.instructions_due = None;
         }
-        if !changed {
+        if !(brief_sent || instructions_sent) {
             return;
         }
-        let fingerprint = live.instructions.clone();
+        let (delivered, brief_head, fingerprint) = (
+            live.brief_delivered,
+            live.brief_head.clone(),
+            live.instructions.clone(),
+        );
         if let Some(bound) = self.bound.as_mut() {
             bound.brief_delivered = delivered;
+            bound.brief_head = brief_head;
             if instructions_sent {
                 bound.instructions = fingerprint;
             }

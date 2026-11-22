@@ -61,7 +61,8 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   `ModelNotFound`. The options come from the answer of `new` / `resume` / `load`. An agent
   that has no model option but answers `models: {availableModels, currentModelId}` (the unstable
   shape) gets `session/set_model {sessionId, modelId}` instead when the model differs; a refusal
-  is `ModelNotFound` too. Both paths are covered by scripted peers only; the OpenCode recordings
+  is `ModelNotFound` too, except method-not-found (-32601), which means the agent lists models
+  but cannot switch: the start goes on with a notice. Both paths are covered by scripted peers only; the OpenCode recordings
   have the config option.
 - Model list (`catalog`): OpenCode is never asked over ACP, since every `session/new` leaves a
   session record in its store: `<command without a trailing acp> models --verbose` (about 0.6 s,

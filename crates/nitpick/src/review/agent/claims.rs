@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -15,8 +16,11 @@ pub(super) fn is_held(id: &str) -> bool {
         .any(|(held, _)| held == id)
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct Claim(Arc<Held>);
+
 #[derive(Debug)]
-pub(super) struct Claim {
+struct Held {
     id: String,
     owner: u64,
 }
@@ -28,18 +32,18 @@ impl Claim {
             return None;
         }
         held.push((id.to_owned(), owner));
-        Some(Claim {
+        Some(Claim(Arc::new(Held {
             id: id.to_owned(),
             owner,
-        })
+        })))
     }
 
     pub(super) fn id(&self) -> &str {
-        &self.id
+        &self.0.id
     }
 }
 
-impl Drop for Claim {
+impl Drop for Held {
     fn drop(&mut self) {
         let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(at) = held

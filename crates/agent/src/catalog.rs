@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -16,8 +15,6 @@ const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CODEX_PAGES: usize = 20;
 const CLAUDE_REQUEST: &str = "init-1";
 const PI_REQUEST: &str = "models-1";
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
@@ -38,15 +35,13 @@ pub async fn models_in(
 ) -> Result<Vec<Model>, Error> {
     let command = command.to_owned();
     crate::process::on_runtime(async move {
-        let failed = |detail: String| Error::Probe {
-            command: command.clone(),
-            detail,
-        };
-        match tokio::time::timeout(MODELS_TIMEOUT, fetch(kind, &command, env)).await {
-            Ok(Ok(models)) => Ok(models),
-            Ok(Err(Failure::Error(error))) => Err(error),
-            Ok(Err(Failure::Text(detail))) => Err(failed(detail)),
-            Err(_) => Err(failed(format!("no answer within {MODELS_TIMEOUT:?}"))),
+        match fetch(kind, &command, env).await {
+            Ok(models) => Ok(models),
+            Err(Failure::Error(error)) => Err(error),
+            Err(Failure::Text(detail)) => Err(Error::Probe {
+                command: command.clone(),
+                detail,
+            }),
         }
     })
     .await
@@ -75,34 +70,42 @@ impl From<String> for Failure {
     }
 }
 
-struct Scratch(PathBuf);
+struct Scratch {
+    root: tempfile::TempDir,
+}
 
 impl Scratch {
     fn create() -> std::io::Result<Scratch> {
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("nitpick-models-{}-{counter}", std::process::id()));
-        std::fs::create_dir_all(root.join("cwd"))?;
-        std::fs::create_dir_all(root.join("files"))?;
-        Ok(Scratch(root))
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("nitpick-models-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let root = builder.tempdir()?;
+        std::fs::create_dir(root.path().join("cwd"))?;
+        std::fs::create_dir(root.path().join("files"))?;
+        Ok(Scratch { root })
     }
 
     fn cwd(&self) -> PathBuf {
-        self.0.join("cwd")
+        self.root.path().join("cwd")
     }
 
     fn files(&self) -> PathBuf {
-        self.0.join("files")
+        self.root.path().join("files")
     }
 }
 
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_dir_all(&self.0) {
-            log::debug!("removing {}: {error}", self.0.display());
-        }
-    }
+fn timed_out() -> Failure {
+    Failure::Text(format!("no answer within {MODELS_TIMEOUT:?}"))
 }
+
+const LEAVE: Grace = Grace {
+    stdin: Duration::from_secs(1),
+    term: Duration::from_secs(1),
+};
 
 async fn fetch(
     kind: HarnessKind,
@@ -130,22 +133,26 @@ async fn fetch(
     let plan = driver.plan(&launch)?;
     let invocation = Invocation::resolve_in(command, plan.args, &plan.env, env, &launch.cwd)?;
     let (mut process, pipes) = Process::spawn(&invocation)?;
-    let asked = match kind {
-        HarnessKind::Claude => claude_models(pipes.stdout, pipes.stdin).await,
-        HarnessKind::Codex => codex_models(pipes.stdout, pipes.stdin).await,
-        HarnessKind::Pi => pi_models(pipes.stdout, pipes.stdin).await,
-        HarnessKind::Acp(_) => acp_models(pipes.stdout, pipes.stdin, &launch).await,
+    let question = async {
+        match kind {
+            HarnessKind::Claude => claude_models(pipes.stdout, pipes.stdin).await,
+            HarnessKind::Codex => codex_models(pipes.stdout, pipes.stdin).await,
+            HarnessKind::Pi => pi_models(pipes.stdout, pipes.stdin).await,
+            HarnessKind::Acp(_) => acp_models(pipes.stdout, pipes.stdin, &launch).await,
+        }
     };
-    let exit = process
-        .shutdown(Grace {
-            stdin: Duration::from_secs(1),
-            term: Duration::from_secs(1),
-        })
-        .await;
+    let asked = tokio::time::timeout(MODELS_TIMEOUT, question).await;
+    let grace = if asked.is_ok() {
+        LEAVE
+    } else {
+        Grace::IMMEDIATE
+    };
+    let exit = process.shutdown(grace).await;
     match asked {
-        Ok(models) => Ok(models),
-        Err(text) if text.is_empty() && !exit.stderr.is_empty() => Err(exit.stderr.into()),
-        Err(text) => Err(text.into()),
+        Err(_) => Err(timed_out()),
+        Ok(Ok(models)) => Ok(models),
+        Ok(Err(text)) if text.is_empty() && !exit.stderr.is_empty() => Err(exit.stderr.into()),
+        Ok(Err(text)) => Err(text.into()),
     }
 }
 
@@ -159,17 +166,20 @@ async fn opencode_cli(command: &str, env: Environment, cwd: &Path) -> Result<Vec
     let (mut process, pipes) = Process::spawn(&invocation)?;
     drop(pipes.stdin);
     let mut bytes = Vec::new();
-    let read = pipes
-        .stdout
-        .take(MAX_OUTPUT_BYTES)
-        .read_to_end(&mut bytes)
-        .await;
-    let exit = process
-        .shutdown(Grace {
-            stdin: Duration::from_secs(1),
-            term: Duration::from_secs(1),
-        })
-        .await;
+    let read = tokio::time::timeout(
+        MODELS_TIMEOUT,
+        pipes.stdout.take(MAX_OUTPUT_BYTES).read_to_end(&mut bytes),
+    )
+    .await;
+    let grace = if read.is_ok() {
+        LEAVE
+    } else {
+        Grace::IMMEDIATE
+    };
+    let exit = process.shutdown(grace).await;
+    let Ok(read) = read else {
+        return Err(timed_out());
+    };
     read?;
     if !exit.status.is_some_and(|status| status.success()) {
         let line = exit.stderr.lines().find(|line| !line.trim().is_empty());

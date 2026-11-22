@@ -106,6 +106,7 @@ fn session(id: &str, brief_delivered: bool, instructions: &str) -> AgentSession 
     AgentSession {
         id: id.to_string(),
         brief_delivered,
+        brief_head: if brief_delivered { "h1" } else { "" }.to_string(),
         instructions: instructions.to_string(),
     }
 }
@@ -144,7 +145,7 @@ fn a_version_one_database_upgrades_without_losing_viewed_marks() {
         })
         .unwrap();
     assert_eq!(version, MIGRATIONS.len() as i64);
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 }
 
 #[test]
@@ -275,4 +276,51 @@ fn pruning_drops_only_old_sessions() {
     assert_eq!(stored("old"), None);
     assert!(stored("edge").is_some());
     assert!(stored("new").is_some());
+}
+
+#[test]
+fn a_version_three_database_gets_an_empty_brief_head() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("nitpick.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for migration in &MIGRATIONS[..3] {
+        conn.execute_batch(migration).unwrap();
+    }
+    conn.pragma_update(None, "user_version", 3).unwrap();
+    conn.execute(
+        "INSERT INTO agent_sessions
+         (repo, review, agent, session_id, updated_at, brief_delivered, instructions)
+         VALUES ('/a', 'worktree', 'claude', 's1', ?1, 1, 'fp')",
+        [NOW],
+    )
+    .unwrap();
+    drop(conn);
+
+    let db = Db::open(&path).unwrap();
+    assert_eq!(
+        block_on(db.agent_session("/a", "worktree", "claude")).unwrap(),
+        Some(AgentSession {
+            id: "s1".to_string(),
+            brief_delivered: true,
+            brief_head: String::new(),
+            instructions: "fp".to_string(),
+        })
+    );
+}
+
+#[test]
+fn the_head_a_brief_was_delivered_for_is_stored_with_the_session() {
+    let db = Db::open_in_memory().unwrap();
+    drop(db.set_agent_session("/a", "worktree", "claude", fresh("one"), NOW));
+    let delivered = AgentSession {
+        id: "one".to_string(),
+        brief_delivered: true,
+        brief_head: "abc123".to_string(),
+        instructions: "fp".to_string(),
+    };
+    drop(db.update_agent_session("/a", "worktree", "claude", delivered.clone(), NOW + 1));
+    assert_eq!(
+        block_on(db.agent_session("/a", "worktree", "claude")).unwrap(),
+        Some(delivered)
+    );
 }

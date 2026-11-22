@@ -265,6 +265,7 @@ struct AgentForm {
     model_select: Entity<SelectState<SearchableVec<ModelChoice>>>,
     fetched: Vec<Model>,
     catalog: Catalog,
+    models_requested: Rc<Cell<bool>>,
     catalog_key: Option<(agent::HarnessKind, String)>,
     catalog_generation: u64,
     _models: Task<()>,
@@ -274,6 +275,7 @@ struct AgentForm {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Catalog {
+    Idle,
     Loading,
     Ready,
     Failed,
@@ -291,11 +293,28 @@ impl gpui_component::searchable_list::SearchableListItem for ModelChoice {
 
     fn render(&self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        v_flex()
+        h_flex()
+            .w_full()
             .min_w_0()
-            .child(div().child(SharedString::from(self.0.title.clone())))
+            .gap_2()
+            .items_baseline()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_shrink(1.)
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(SharedString::from(self.0.title.clone())),
+            )
             .children(self.0.description.clone().map(|text| {
                 div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(text))
@@ -417,7 +436,8 @@ impl AgentForm {
             status: ForgeStatus::Idle,
             model_select,
             fetched: Vec::new(),
-            catalog: Catalog::Loading,
+            catalog: Catalog::Idle,
+            models_requested: Rc::default(),
             catalog_key: None,
             catalog_generation: 0,
             _models: Task::ready(()),
@@ -625,7 +645,6 @@ impl SettingsView {
                 .map(|updater| cx.observe(&updater, |_, _, cx| cx.notify())),
         };
         this.reload_hidden(true, window, cx);
-        this.refresh_models(false, window, cx);
         this._settings_sync = Some(cx.observe_global_in::<SettingsStore>(
             window,
             |this, window, cx| {
@@ -784,6 +803,10 @@ impl SettingsView {
     }
 
     fn refresh_models(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = self.agent.models_requested.get() && settings(cx).agent.enabled;
+        if !force && !wanted {
+            return;
+        }
         let kind = self.agent.profile.kind;
         let typed = self.agent.command.read(cx).value().to_string();
         let command = agent_models::effective_command(&typed, &self.agent.profile.default_command);
@@ -1340,7 +1363,15 @@ fn agent_custom_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn agent_model_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
+fn agent_model_field(view: &Entity<SettingsView>, window: &mut Window, cx: &mut App) -> AnyElement {
+    let form = &view.read(cx).agent;
+    if settings(cx).agent.enabled && !form.models_requested.get() {
+        form.models_requested.set(true);
+        let first = view.clone();
+        window.defer(cx, move |window, cx| {
+            first.update(cx, |this, cx| this.refresh_models(false, window, cx))
+        });
+    }
     let form = &view.read(cx).agent;
     let theme = cx.theme();
     let s = tr();
@@ -1369,7 +1400,7 @@ fn agent_model_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
                                 .text_color(theme.muted_foreground)
                                 .child(s.assistant_model_loading.clone()),
                         ),
-                        Catalog::Failed => el,
+                        Catalog::Idle | Catalog::Failed => el,
                     }
                 }))
                 .child(
@@ -1445,7 +1476,9 @@ fn agent_page(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> Se
         .item(
             SettingItem::new(
                 s.assistant_model.clone(),
-                SettingField::render(move |_, _, cx| agent_model_field(&model_view, cx)),
+                SettingField::render(move |_, window, cx| {
+                    agent_model_field(&model_view, window, cx)
+                }),
             )
             .layout(Axis::Vertical)
             .description(s.assistant_model_desc.clone()),

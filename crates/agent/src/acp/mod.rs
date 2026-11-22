@@ -22,6 +22,7 @@ use normalize::{Normalizer, outcome_from_stop};
 use wire::Capabilities;
 
 const STOPPED: &str = "The assistant stopped before it finished the reply.";
+const METHOD_NOT_FOUND: i64 = -32601;
 const NOT_READY: &str = "The assistant stopped before the session was ready.";
 const SILENT: &str = "The assistant is not responding.";
 const PERMISSION_METHOD: &str = "session/request_permission";
@@ -284,6 +285,12 @@ impl Conversation {
             let params = wire::set_model_params(&self.session, model);
             match self.call("session/set_model", params, limit).await {
                 Ok(_) => {}
+                Err(Fault::Rpc(error)) if error.code == METHOD_NOT_FOUND => {
+                    log::warn!("the agent cannot switch models: {error}");
+                    let _ = self.events.send(Event::Notice(
+                        "The agent cannot switch models; it keeps its own.".to_owned(),
+                    ));
+                }
                 Err(Fault::Rpc(error)) => {
                     return Err(Stop::Failed(Failure {
                         kind: FailureKind::ModelNotFound,

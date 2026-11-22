@@ -81,6 +81,7 @@ pub(super) fn compose(
     head: &str,
     brief_included: bool,
     seen: &HashMap<String, u64>,
+    moved_from: Option<&str>,
 ) -> String {
     match request {
         Request::Overview => prompt::with_brief(brief, &prompt::overview_task()),
@@ -92,7 +93,13 @@ pub(super) fn compose(
             };
             prompt::with_brief(brief, &task)
         }
-        Request::Chat { prompt: text } => compose_chat(brief, text, brief_included, seen),
+        Request::Chat { prompt: text } => compose_chat(
+            brief,
+            text,
+            brief_included,
+            seen,
+            moved_from.map(|old| (old, head)),
+        ),
     }
 }
 
@@ -101,9 +108,13 @@ pub(super) fn compose_chat(
     text: &str,
     brief_included: bool,
     seen: &HashMap<String, u64>,
+    moved: Option<(&str, &str)>,
 ) -> String {
     if brief_included {
-        return prompt::with_brief(brief, text);
+        return match moved {
+            Some((old, new)) => prompt::with_brief(brief, &prompt::head_moved(old, new, text)),
+            None => prompt::with_brief(brief, text),
+        };
     }
     let changed = unseen_threads(brief, seen);
     prompt::with_new_comments(&changed, text)
@@ -226,7 +237,32 @@ pub(super) fn goes_out_at_once(chat: bool, live_brief_delivered: Option<bool>) -
 pub(super) struct Resume {
     pub id: String,
     pub brief_delivered: bool,
+    pub brief_head: String,
     pub instructions: String,
+}
+
+pub(super) fn resumed_brief(resume: Option<&Resume>, head: &str) -> (bool, Option<String>) {
+    let Some(resume) = resume else {
+        return (false, None);
+    };
+    let current = resume.brief_delivered && resume.brief_head == head;
+    let moved = (resume.brief_delivered && !current && !resume.brief_head.is_empty())
+        .then(|| resume.brief_head.clone());
+    (current, moved)
+}
+
+pub(super) fn hand_over<T>(slot: &mut Option<T>, current: u64, started_for: u64, value: T) -> bool {
+    if current != started_for {
+        return false;
+    }
+    *slot = Some(value);
+    true
+}
+
+pub(super) fn clearable(stored: Option<&AgentSession>) -> Option<String> {
+    stored
+        .filter(|session| !super::claims::is_held(&session.id))
+        .map(|session| session.id.clone())
 }
 
 pub(super) fn adopt<C>(
@@ -239,6 +275,7 @@ pub(super) fn adopt<C>(
         Resume {
             id: stored.id,
             brief_delivered: stored.brief_delivered,
+            brief_head: stored.brief_head,
             instructions: stored.instructions,
         },
         claim,

@@ -290,6 +290,14 @@ impl DiscussionView {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct AskCapture {
+    gutter: Option<DiffLineRange>,
+    text: String,
+    hovered: Option<DiffLinePosition>,
+    current: Option<usize>,
+}
+
 pub enum ReviewEvent {
     Changed,
     Open(ReviewSource),
@@ -384,6 +392,8 @@ pub struct ReviewView {
     pending_jump: Option<bool>,
     pending_link: Option<DiffLink>,
     _interdiff: Task<()>,
+    ask_generation: u64,
+    _ask: Task<()>,
     search_opens: usize,
     busy: Option<Busy>,
     _tree_close: Task<()>,
@@ -544,6 +554,8 @@ impl ReviewView {
             pending_jump: None,
             pending_link: None,
             _interdiff: Task::ready(()),
+            ask_generation: 0,
+            _ask: Task::ready(()),
             search_opens: 0,
             busy: None,
             _tree_close: Task::ready(()),
@@ -1780,71 +1792,152 @@ impl ReviewView {
     }
 
     pub fn ask_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let hovered = self.hovered_line.clone();
-        self.ask_agent_at(hovered, window, cx);
+        let capture = self.capture_selection(cx);
+        self.ask_with(capture, window, cx);
     }
 
-    pub fn ask_agent_at(
+    pub(super) fn capture_selection(&self, cx: &App) -> AskCapture {
+        let diff = self.diff.read(cx);
+        AskCapture {
+            gutter: diff.selected_lines(),
+            text: diff.selected_text(cx),
+            hovered: self.hovered_line.clone(),
+            current: self.current_file,
+        }
+    }
+
+    pub(super) fn ask_with(
         &mut self,
-        hovered: Option<DiffLinePosition>,
+        capture: AskCapture,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !settings(cx).agent.enabled || !matches!(self.load_state, LoadState::Ready) {
             return;
         }
-        let selection = self.selection_for_agent(hovered.as_ref(), cx);
-        self.agent
-            .update(cx, |panel, cx| panel.ask(selection, window, cx));
-    }
-
-    fn selection_for_agent(
-        &self,
-        hovered: Option<&DiffLinePosition>,
-        cx: &App,
-    ) -> Option<agent::PendingSelection> {
-        let review = self.review.as_ref()?;
-        let diff = self.diff.read(cx);
+        self.ask_generation += 1;
+        let generation = self.ask_generation;
+        self._ask = Task::ready(());
         let side_of = |side: DiffSide| match side {
             DiffSide::Modified => Side::New,
             DiffSide::Original => Side::Old,
         };
-        let interdiff = self.interdiff.is_some() || self.interdiff_loading.is_some();
-        let (path, side, start, end) = match diff.selected_lines() {
-            Some(range) => {
-                let (side, start, end) = agent::selection_span(
-                    side_of(range.side()),
-                    u32::try_from(range.start()).ok()?,
-                    side_of(range.end_side()),
-                    u32::try_from(range.end()).ok()?,
-                );
-                let file = review.file_index(range.path().as_str())?;
-                (review.files[file].path.to_string(), side, start, end)
-            }
-            None => {
-                if interdiff {
-                    return None;
-                }
-                let text = diff.selected_text(cx);
-                let shown = review.files.get(self.current_file?)?;
-                let section = review.patch.get(shown.patch.clone())?;
-                let (old, new) = agent::patch_sides(section);
-                let hovered = hovered
-                    .and_then(|at| Some((side_of(at.side()), u32::try_from(at.line()).ok()?)));
-                let (side, start, end) = agent::locate_selection(&old, &new, &text, hovered)?;
-                (shown.path.to_string(), side, start, end)
-            }
+        let Some(review) = self.review.clone() else {
+            log::debug!("ask the assistant: no review is open");
+            self.agent
+                .update(cx, |panel, cx| panel.ask(None, window, cx));
+            return;
         };
-        if !agent::can_link_selection(self.commit.is_some(), interdiff, side) {
-            return None;
+        let gutter = capture.gutter.as_ref().and_then(|range| {
+            let file = review.file_index(range.path().as_str())?;
+            Some((
+                file,
+                side_of(range.side()),
+                u32::try_from(range.start()).ok()?,
+                side_of(range.end_side()),
+                u32::try_from(range.end()).ok()?,
+            ))
+        });
+        let text_file = capture
+            .hovered
+            .as_ref()
+            .and_then(|at| review.file_index(at.path().as_str()))
+            .or(capture.current);
+        let inputs = agent::AskInputs {
+            gutter,
+            has_text: !capture.text.trim().is_empty(),
+            text_file,
+            commit_view: self.commit.is_some(),
+            interdiff: self.interdiff.is_some() || self.interdiff_loading.is_some(),
+        };
+        match agent::plan_ask(&inputs) {
+            agent::AskPlan::OpenOnly => {
+                log::debug!("ask the assistant: nothing is selected, opening the panel only");
+                self.agent
+                    .update(cx, |panel, cx| panel.ask(None, window, cx));
+            }
+            agent::AskPlan::Refuse => {
+                log::debug!("ask the assistant: refused in the single-commit view");
+                self.notify(
+                    Notification::info(tr().assistant_ask_commit_view.clone()),
+                    cx,
+                );
+                self.agent
+                    .update(cx, |panel, cx| panel.ask(None, window, cx));
+            }
+            agent::AskPlan::Attach { file, range } => {
+                log::debug!(
+                    "ask the assistant: attaching file {file} with range {range:?} from the selection"
+                );
+                self.attach_selection(file, range, &capture.text, window, cx);
+            }
+            agent::AskPlan::Locate { file } => {
+                let Some(section) = review
+                    .files
+                    .get(file)
+                    .and_then(|shown| review.patch.get(shown.patch.clone()))
+                    .map(str::to_owned)
+                else {
+                    log::debug!("ask the assistant: the patch of file {file} is not available");
+                    self.attach_selection(file, None, &capture.text, window, cx);
+                    return;
+                };
+                let hovered = capture
+                    .hovered
+                    .as_ref()
+                    .and_then(|at| Some((side_of(at.side()), u32::try_from(at.line()).ok()?)));
+                let text = capture.text.clone();
+                let search = cx.background_spawn(async move {
+                    let (old, new) = agent::patch_sides(&section);
+                    agent::locate_selection(&old, &new, &text, hovered)
+                });
+                self._ask = cx.spawn_in(window, async move |this, cx| {
+                    let found = search.await;
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        if this.ask_generation != generation {
+                            return;
+                        }
+                        match found {
+                            Some(range) => {
+                                log::debug!(
+                                    "ask the assistant: located the selected text at {range:?}"
+                                );
+                                this.attach_selection(file, Some(range), &capture.text, window, cx);
+                            }
+                            None => {
+                                log::debug!(
+                                    "ask the assistant: the selected text is not in the patch, linking the file alone"
+                                );
+                                this.attach_selection(file, None, &capture.text, window, cx);
+                            }
+                        }
+                    });
+                });
+            }
         }
-        Some(agent::PendingSelection::new(
-            path,
-            side,
-            start,
-            end,
-            &diff.selected_text(cx),
-        ))
+    }
+
+    fn attach_selection(
+        &mut self,
+        file: usize,
+        range: Option<(Side, u32, u32)>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self
+            .review
+            .as_ref()
+            .and_then(|review| review.files.get(file))
+            .map(|shown| shown.path.to_string())
+        else {
+            self.agent
+                .update(cx, |panel, cx| panel.ask(None, window, cx));
+            return;
+        };
+        let selection = agent::PendingSelection::new(path, range, text);
+        self.agent
+            .update(cx, |panel, cx| panel.ask(Some(selection), window, cx));
     }
 
     pub fn thread_collapsed(&self, discussion: &DiscussionView) -> bool {
@@ -1970,10 +2063,6 @@ impl ReviewView {
         self.comment_marker = (can_comment && self.line_commentable(position))
             .then(|| DiffGutterMarker::new(COMMENT_MARKER, position.clone()));
         can_comment
-    }
-
-    pub(super) fn hovered_line(&self) -> Option<DiffLinePosition> {
-        self.hovered_line.clone()
     }
 
     pub(super) fn leave_diff(&mut self) -> bool {

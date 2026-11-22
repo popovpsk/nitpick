@@ -26,8 +26,8 @@ use crate::settings_store::{SettingsStore, clamp_agent_panel_width, settings, up
 
 pub(super) use context::{ReviewContext, from_view};
 pub(super) use links::{
-    LinkPlan, PendingSelection, can_link_selection, locate_selection, patch_sides, plan_link,
-    selection_span,
+    AskInputs, AskPlan, LinkPlan, PendingSelection, locate_selection, patch_sides, plan_ask,
+    plan_link,
 };
 pub(super) use panel::frame;
 pub(super) use run::init;
@@ -91,20 +91,28 @@ struct Live {
     cwd: PathBuf,
     scratch: PathBuf,
     brief_delivered: bool,
+    brief_head: String,
+    moved_from: Option<String>,
     instructions: String,
     instructions_due: Option<String>,
+    claim: Option<claims::Claim>,
     _pump: Task<()>,
 }
 
 struct Bound {
     claim: claims::Claim,
     brief_delivered: bool,
+    brief_head: String,
     instructions: String,
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        run::retire(self.session.clone(), std::mem::take(&mut self.scratch));
+        run::retire(
+            self.session.clone(),
+            std::mem::take(&mut self.scratch),
+            self.claim.take(),
+        );
     }
 }
 

@@ -142,10 +142,14 @@ Not here: running the harness (`agent` crate), the profile table and settings
   update. It is delivered when a turn that carried it ends `Completed` or `Interrupted`
   (`logic::brief_delivered`); a failed turn leaves it pending, so the next request carries it
   again even on the same live session. A resumed session counts as having it only when the
-  stored `brief_delivered` flag of that session id says so (set when a turn that carried the
-  brief was answered, reset with a new id, deleted with the row): a stored id alone proves
-  nothing, since harnesses report the id before any prompt, and the window may have no
-  messages to judge by. The flag is per profile because the row is. Once delivered, chat
+  stored `brief_delivered` flag of that session id says so and the head the brief was sent
+  for (`brief_head`) is still the review's (`logic::resumed_brief`): the flag is set when a
+  turn that carried the brief was answered, reset with a new id, deleted with the row; a stored
+  id alone proves nothing, since harnesses report the id before any prompt, and the window may
+  have no messages to judge by. When the head moved, the brief is due again and the first
+  message carries it with a note that the review moved from the old head to the new one
+  (`prompt::head_moved`), so the agent does not answer about the old state. A brief carried
+  later by an update stores its head too. The flag is per profile because the row is. Once delivered, chat
   messages get the "new and changed comments" prefix for threads whose fingerprint differs from
   the ones in the last answered turn (`seen`, updated with the delivery, so a failed turn does
   not mark its threads as seen). `seen` is not persisted, so the first message after the app was
@@ -157,14 +161,19 @@ Not here: running the harness (`agent` crate), the profile table and settings
   pointer only when it has none.
 - Session claims: a session id is used by at most one window at a time. A window holds a
   `claims::Claim` for the id it is bound to, taken when it adopts the stored id
-  (`logic::adopt`, inside the dispatch task, before the process starts) or when `Event::Session`
-  reports a new id, and released when the binding ends: another review, "New conversation", a
-  lost session, another profile, or the window closing (`Claim` drops with its owner). A claim
-  survives the process: a session that ended or was restarted for new settings is resumed by
-  the window that owns it, and no other window can pick its id up from the stored row in the
-  meantime. A window that would adopt an id another window holds starts a new session
-  instead. The stored row is last-writer-wins (`set_agent_session`), and a window that loses
-  its session clears the row only if it still names that id.
+  (`logic::adopt`, inside the dispatch task) or when `Event::Session` reports a new id, and
+  released when the binding ends: another review, "New conversation", a lost session, another
+  profile, or the window closing. An adopted claim is handed to the panel (`Bound`) before the
+  process starts (`logic::hand_over`, only while that dispatch is still current), so a start
+  cancelled by Stop or a settings change leaves the id with the window and the next request
+  resumes it instead of starting a second session over the stored row. A claim survives the
+  process: a session that ended or was restarted for new settings is resumed by the window that
+  owns it, and no other window can pick its id up from the stored row in the meantime. `Claim`
+  is reference counted and the live process holds a clone, moved into the retire task, so the
+  id is released only after the process has finished shutting down. A window that would adopt
+  an id another window holds starts a new session instead. The stored row is last-writer-wins
+  (`set_agent_session`), and a window that loses its session clears the row only if it still
+  names that id.
 - The system prompt is not always applied on resume (Claude Code keeps the one the session was
   created with and ignores a new `--append-system-prompt-file`; ACP agents without
   `systemPrompt`, and possibly Pi, never take instructions on resume). So the stored row
@@ -230,7 +239,8 @@ Not here: running the harness (`agent` crate), the profile table and settings
   window (`auto_attempted`); a "not found" sets the lookup to missing, which blocks further
   automatic attempts until the settings change or the panel is opened (which re-checks).
 - "New conversation" (title row) clears the window's messages and binding and deletes every
-  profile's stored session id for the review; it does not start an overview by itself; it is
+  profile's stored session id for the review, except an id another window holds
+  (`logic::clearable`), so that window's thread stays continuable after a restart; it does not start an overview by itself; it is
   also the way out of `ContextTooLong`.
 - `agent::process::prewarm()`, the pruning of stale stored session ids (`prune_agent`, once at
   startup like the avatar cache's) and the scratch sweep run from `init`, called from `main`.
@@ -263,21 +273,35 @@ Not here: running the harness (`agent` crate), the profile table and settings
   and by "Ask the assistant" in the context menu of the diff area (shown only while
   `agent.enabled`; the diff had no context menu before, and the file name's menu is another
   one). With no selection it only opens the panel and focuses the input.
+- The selection is captured when the menu opens, not when the item is clicked
+  (`ReviewView::capture_selection`: the gutter range, the selected text, the hovered line, the
+  shown file). Clicking a menu item is a left press in the window, and the window's text
+  selection layer clears the selection on every left press that is not on a region marked to
+  keep it, so by the time the click handler ran, the selected text was already empty. That
+  emptiness was the cause of "Ask the assistant" inserting nothing after a mouse selection;
+  the key has no click and was never affected.
 - Where the selection comes from: a gutter (line number) gesture gives a line range directly
   (`DiffState::selected_lines`). An ordinary mouse text selection clears that range and the
   diff exposes only its text (`selected_text`), so file, side and lines are found by locating
-  that text in the shown file's patch section (`patch_sides` splits it into an old and a new
-  side with line numbers, `locate_selection` finds the text as a substring across line breaks).
-  The file is the one shown. Several matches (a repeated `}`) are resolved by the hovered line
-  (`ReviewView::hovered_line`, captured when the context menu opens): same side first, then
-  the nearest line; with no hover the first match wins, new side before old. Limits: the
-  text is matched, not the pointer, so a repeated text can link another occurrence (the agent
-  still gets the selected text in full); a selection that crosses from one side to the other
-  in the unified view has no text from the diff and so only opens the panel; the search reads
-  the patch, so it sees what the patch shows (whole file with full context, else the hunks);
-  nothing is derived while an interdiff is shown. A second ask while the old marker is still in the input
-  replaces it, so the input never holds two markers for one pending selection.
-- The pending selection (`pending`: path, side, range, the selected text clipped to 20 000
+  that text in the file's patch section (`patch_sides` splits it into an old and a new side with
+  line numbers, `locate_selection` finds the text as a substring across line breaks, counting
+  lines once as it scans). The search runs on the background executor over a copy of the
+  section and its result is applied only if no newer ask was made (`ask_generation`). The file
+  is the hovered line's, else the shown one. `plan_ask` is the whole decision: no selected text
+  only opens the panel; a single-commit view refuses with a notification (its line numbers are
+  another version's); an interdiff, a gutter range that cannot be linked, or a text that is not
+  found in the patch still asks, with a link to the file alone (`diff:path`, which a click
+  follows by opening the file) and the selected text in the question exactly as for a located
+  one. Every branch logs its reason at debug level ("ask the assistant: ..."). Several matches
+  (a repeated `}`) are resolved by the hovered line captured with the selection: same side
+  first, then the nearest line; with no hover the first match wins, new side before old.
+  Limits: the text is matched, not the pointer, so a repeated text can link another
+  occurrence (the agent still gets the selected text in full); a selection that crosses from
+  one side to the other in the unified view has no text from the diff, so only the panel
+  opens. A second ask while the old marker is still in the input replaces it, so the input
+  never holds two markers for one pending selection. The input is focused after the menu has
+  closed (the menu restores the previous focus when it dismisses).
+- The pending selection (`pending`: path, the optional side and range, the selected text clipped to 20 000
   characters, and the marker string) lives in the panel until the next send, a new ask, "New
   conversation" or another review. At send time `compose_question` checks whether the marker is
   still in the typed text: if so, `shown` is the text as typed (the marker renders as a link in

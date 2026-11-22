@@ -511,7 +511,8 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   differ; the scroll is skipped while content is still pending, which after that switch it never is.
   `AskAgent` puts a link to the selection into the assistant's input; the selection is not
   linked in the single-commit view or on the old side of an interdiff (`agent/doc.md`). The
-  diff area has a context menu with that one item while the assistant is enabled; the hover
+  diff area has a context menu with that one item while the assistant is enabled (the selection
+  is captured when it opens, because a click on the item clears the text selection); the hover
   callback that tracks the hovered line therefore runs without comments too, and only asks for
   a re-render when it moves the comment marker.
 - Approve button (left of the refresh button): "Approve" (with the count when others

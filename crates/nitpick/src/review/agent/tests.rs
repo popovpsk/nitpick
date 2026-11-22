@@ -18,7 +18,9 @@ use super::context::{
     BriefInputs, DiscussionInput, FileInput, WorkdirPlan, assemble, disk_matches, language_name,
     local_head, resolve_workdir, review_key, thread_position,
 };
-use super::links::{self, LinkKind, Target, locate_selection, patch_sides};
+use super::links::{
+    self, AskInputs, AskPlan, LinkKind, Target, locate_selection, patch_sides, plan_ask,
+};
 use super::logic::{
     self, Guard, Launching, LoadAction, OverviewState, Problem, Request, classify, coalesce,
     compose_chat, exit_text, limit_text, load_action, overview_state, problem_text,
@@ -573,7 +575,7 @@ fn brief_with(threads: Vec<(&str, bool, &str)>) -> Brief {
 #[test]
 fn the_first_message_of_a_session_carries_the_whole_brief() {
     let brief = brief_with(vec![("t1", false, "please rename")]);
-    let text = compose_chat(&brief, "what is this?", true, &HashMap::new());
+    let text = compose_chat(&brief, "what is this?", true, &HashMap::new(), None);
     assert!(text.starts_with("# Review context"));
     assert!(text.contains("please rename"));
     assert!(text.ends_with("what is this?"));
@@ -583,7 +585,10 @@ fn the_first_message_of_a_session_carries_the_whole_brief() {
 fn an_unchanged_thread_set_adds_no_prefix() {
     let brief = brief_with(vec![("t1", false, "please rename")]);
     let seen = brief::fingerprints(&brief.threads);
-    assert_eq!(compose_chat(&brief, "and then?", false, &seen), "and then?");
+    assert_eq!(
+        compose_chat(&brief, "and then?", false, &seen, None),
+        "and then?"
+    );
 }
 
 #[test]
@@ -595,7 +600,7 @@ fn only_new_and_changed_threads_get_the_prefix() {
         ("t2", true, "ok"),
         ("t3", false, "brand new"),
     ]);
-    let text = compose_chat(&after, "next", false, &seen);
+    let text = compose_chat(&after, "next", false, &seen, None);
     assert!(text.starts_with("New and changed comments since the last message:"));
     assert!(text.contains("brand new"));
     assert!(!text.contains("please rename"));
@@ -608,7 +613,7 @@ fn only_new_and_changed_threads_get_the_prefix() {
 #[test]
 fn a_session_resumed_in_a_new_run_resends_every_thread_once() {
     let brief = brief_with(vec![("t1", false, "please rename")]);
-    let text = compose_chat(&brief, "hello", false, &HashMap::new());
+    let text = compose_chat(&brief, "hello", false, &HashMap::new(), None);
     assert!(text.contains("please rename"));
 }
 
@@ -775,9 +780,7 @@ fn a_selection_is_linked_only_where_its_numbers_are_the_reviews(
 fn pending() -> PendingSelection {
     PendingSelection::new(
         "src/a.rs".to_owned(),
-        Side::New,
-        10,
-        12,
+        Some((Side::New, 10, 12)),
         "let x = 1;\nlet y = 2;",
     )
 }
@@ -874,7 +877,7 @@ fn a_question_without_a_pending_selection_is_trimmed_text() {
 #[test]
 fn a_long_selection_is_cut_at_a_character_boundary() {
     let text = "é".repeat(30_000);
-    let pending = PendingSelection::new("a.rs".to_owned(), Side::New, 1, 1, &text);
+    let pending = PendingSelection::new("a.rs".to_owned(), Some((Side::New, 1, 1)), &text);
     assert_eq!(pending.text.chars().count(), 20_000);
 }
 
@@ -945,6 +948,7 @@ fn stored_session(id: &str, delivered: bool, instructions: &str) -> app_db::Agen
     app_db::AgentSession {
         id: id.to_string(),
         brief_delivered: delivered,
+        brief_head: "h1".to_string(),
         instructions: instructions.to_string(),
     }
 }
@@ -960,6 +964,7 @@ fn a_stored_session_is_adopted_with_its_flags_when_the_claim_succeeds() {
         logic::Resume {
             id: "adopt-a".to_string(),
             brief_delivered: true,
+            brief_head: "h1".to_string(),
             instructions: "fp".to_string(),
         }
     );
@@ -1034,6 +1039,7 @@ fn resume_with(instructions: &str) -> logic::Resume {
     logic::Resume {
         id: "s".to_string(),
         brief_delivered: true,
+        brief_head: "h1".to_string(),
         instructions: instructions.to_string(),
     }
 }
@@ -1242,4 +1248,176 @@ fn a_text_selection_is_located_in_the_patch(
 ) {
     let (old, new) = patch_sides(SECTION);
     assert_eq!(locate_selection(&old, &new, text, hovered), expected);
+}
+
+fn ask(
+    gutter: Option<(usize, Side, u32, Side, u32)>,
+    has_text: bool,
+    text_file: Option<usize>,
+    commit_view: bool,
+    interdiff: bool,
+) -> AskPlan {
+    plan_ask(&AskInputs {
+        gutter,
+        has_text,
+        text_file,
+        commit_view,
+        interdiff,
+    })
+}
+
+#[rstest]
+#[case::gutter_range(
+    ask(Some((2, Side::New, 5, Side::New, 9)), true, Some(0), false, false),
+    AskPlan::Attach { file: 2, range: Some((Side::New, 5, 9)) }
+)]
+#[case::gutter_range_ends_on_the_other_side(
+    ask(Some((2, Side::Old, 5, Side::New, 9)), true, Some(0), false, false),
+    AskPlan::Attach { file: 2, range: Some((Side::New, 9, 9)) }
+)]
+#[case::gutter_in_a_commit_view_is_refused(
+    ask(Some((2, Side::New, 5, Side::New, 9)), true, Some(0), true, false),
+    AskPlan::Refuse
+)]
+#[case::gutter_on_the_old_side_of_an_interdiff_links_the_file(
+    ask(Some((2, Side::Old, 5, Side::Old, 9)), true, Some(0), false, true),
+    AskPlan::Attach { file: 2, range: None }
+)]
+#[case::text_is_located(ask(None, true, Some(3), false, false), AskPlan::Locate { file: 3 })]
+#[case::text_in_a_commit_view_is_refused(ask(None, true, Some(3), true, false), AskPlan::Refuse)]
+#[case::text_in_an_interdiff_links_the_file(
+    ask(None, true, Some(3), false, true),
+    AskPlan::Attach { file: 3, range: None }
+)]
+#[case::no_text_only_opens(ask(None, false, Some(3), false, false), AskPlan::OpenOnly)]
+#[case::no_text_in_a_commit_view_only_opens(
+    ask(None, false, Some(3), true, false),
+    AskPlan::OpenOnly
+)]
+#[case::no_file_only_opens(ask(None, true, None, false, false), AskPlan::OpenOnly)]
+fn the_ask_plan_follows_what_is_selected(#[case] plan: AskPlan, #[case] expected: AskPlan) {
+    assert_eq!(plan, expected);
+}
+
+#[test]
+fn a_selection_without_lines_puts_the_file_link_and_the_text_in_the_question() {
+    let pending = PendingSelection::new("docs/a b.md".to_owned(), None, "some prose");
+    assert_eq!(pending.marker, "[docs/a b.md](diff:docs/a%20b.md)");
+    let input = format!("why? {}", pending.marker);
+    let question = links::compose_question(&input, Some(&pending));
+    assert_eq!(question.shown, input);
+    assert!(question.prompt.starts_with("why?"));
+    assert!(
+        question
+            .prompt
+            .contains("Selected: [docs/a%20b.md](diff:docs/a%20b.md)\n")
+    );
+    assert!(question.prompt.contains("some prose"));
+    assert_eq!(
+        review_core::diff_link::parse("diff:docs/a%20b.md").map(|link| link.range),
+        Some(None)
+    );
+}
+
+#[test]
+fn locating_a_long_file_counts_lines_once() {
+    let body: String = (0..200_000).map(|n| format!("+line {n} same\n")).collect();
+    let section = format!("@@ -0,0 +1,200000 @@\n{body}");
+    let (old, new) = patch_sides(&section);
+    let started = std::time::Instant::now();
+    let found = locate_selection(&old, &new, "same", Some((Side::New, 150_000)));
+    assert_eq!(found, Some((Side::New, 150_000, 150_000)));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+fn resume_for(delivered: bool, head: &str) -> logic::Resume {
+    logic::Resume {
+        id: "s".to_string(),
+        brief_delivered: delivered,
+        brief_head: head.to_string(),
+        instructions: String::new(),
+    }
+}
+
+#[rstest]
+#[case::same_head(Some(resume_for(true, "h1")), "h1", (true, None))]
+#[case::head_moved(Some(resume_for(true, "h1")), "h2", (false, Some("h1".to_string())))]
+#[case::never_delivered(Some(resume_for(false, "")), "h2", (false, None))]
+#[case::legacy_row_without_a_head(Some(resume_for(true, "")), "h2", (false, None))]
+#[case::new_session(None, "h2", (false, None))]
+fn a_resumed_session_has_the_brief_only_for_the_head_it_was_sent_for(
+    #[case] resume: Option<logic::Resume>,
+    #[case] head: &str,
+    #[case] expected: (bool, Option<String>),
+) {
+    assert_eq!(logic::resumed_brief(resume.as_ref(), head), expected);
+}
+
+#[test]
+fn a_chat_after_the_head_moved_carries_the_brief_and_a_note() {
+    let brief = brief_with(vec![]);
+    let text = compose_chat(
+        &brief,
+        "still fine?",
+        true,
+        &HashMap::new(),
+        Some(("aaa111", "bbb222")),
+    );
+    assert!(text.contains("The review moved from aaa111 to bbb222 since you last saw it."));
+    assert!(text.contains("git diff aaa111 bbb222"));
+    assert!(text.ends_with("still fine?"));
+    let local = compose_chat(
+        &brief,
+        "still fine?",
+        true,
+        &HashMap::new(),
+        Some(("local:1", "local:2")),
+    );
+    assert!(local.contains("The review changed since you last saw it."));
+    assert!(!local.contains("git diff local"));
+}
+
+#[test]
+fn a_started_session_is_handed_to_the_panel_only_while_its_dispatch_is_current() {
+    let id = "hand-over-x";
+    let mut slot: Option<Claim> = None;
+    let cancelled = Claim::acquire(id, 1).unwrap();
+    assert!(!logic::hand_over(&mut slot, 5, 4, cancelled));
+    assert!(slot.is_none());
+    assert!(!claims::is_held(id));
+
+    let kept = Claim::acquire(id, 1).unwrap();
+    assert!(logic::hand_over(&mut slot, 5, 5, kept));
+    assert!(claims::is_held(id));
+    assert!(Claim::acquire(id, 2).is_none());
+    let next = slot.as_ref().map(|claim| claim.id().to_owned());
+    assert_eq!(next.as_deref(), Some(id));
+    drop(slot);
+    assert!(!claims::is_held(id));
+}
+
+#[test]
+fn a_clone_of_a_claim_keeps_the_session_held_until_the_last_one_is_dropped() {
+    let id = "clone-held-x";
+    let claim = Claim::acquire(id, 1).unwrap();
+    let hold = claim.clone();
+    drop(claim);
+    assert!(claims::is_held(id));
+    drop(hold);
+    assert!(!claims::is_held(id));
+}
+
+#[test]
+fn a_new_conversation_leaves_a_session_another_window_holds() {
+    let mine = stored_session("clear-mine", true, "fp");
+    let theirs = stored_session("clear-theirs", true, "fp");
+    let held = Claim::acquire("clear-theirs", 2).unwrap();
+    assert_eq!(logic::clearable(Some(&mine)).as_deref(), Some("clear-mine"));
+    assert_eq!(logic::clearable(Some(&theirs)), None);
+    assert_eq!(logic::clearable(None), None);
+    drop(held);
+    assert_eq!(
+        logic::clearable(Some(&theirs)).as_deref(),
+        Some("clear-theirs")
+    );
 }

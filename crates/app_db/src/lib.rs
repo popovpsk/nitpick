@@ -57,6 +57,9 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE agent_sessions ADD COLUMN brief_delivered INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE agent_sessions ADD COLUMN instructions TEXT NOT NULL DEFAULT '';
 ",
+    "
+    ALTER TABLE agent_sessions ADD COLUMN brief_head TEXT NOT NULL DEFAULT '';
+",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +87,7 @@ pub struct ViewedMark {
 pub struct AgentSession {
     pub id: String,
     pub brief_delivered: bool,
+    pub brief_head: String,
     pub instructions: String,
 }
 
@@ -219,7 +223,7 @@ impl Db {
         self.call(move |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT session_id, brief_delivered, instructions FROM agent_sessions
+                    "SELECT session_id, brief_delivered, instructions, brief_head FROM agent_sessions
                      WHERE repo = ?1 AND review = ?2 AND agent = ?3",
                     params![repo, review, agent],
                     |row| {
@@ -227,6 +231,7 @@ impl Db {
                             id: row.get(0)?,
                             brief_delivered: row.get::<_, i64>(1)? != 0,
                             instructions: row.get(2)?,
+                            brief_head: row.get(3)?,
                         })
                     },
                 )
@@ -246,8 +251,9 @@ impl Db {
         self.call(move |conn| {
             conn.execute(
                 "INSERT OR REPLACE INTO agent_sessions
-                 (repo, review, agent, session_id, updated_at, brief_delivered, instructions)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (repo, review, agent, session_id, updated_at, brief_delivered, instructions,
+                  brief_head)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     repo,
                     review,
@@ -255,7 +261,8 @@ impl Db {
                     session.id,
                     at,
                     i64::from(session.brief_delivered),
-                    session.instructions
+                    session.instructions,
+                    session.brief_head
                 ],
             )?;
             Ok(())
@@ -274,7 +281,7 @@ impl Db {
         self.call(move |conn| {
             conn.execute(
                 "UPDATE agent_sessions
-                 SET brief_delivered = ?5, instructions = ?6, updated_at = ?7
+                 SET brief_delivered = ?5, instructions = ?6, updated_at = ?7, brief_head = ?8
                  WHERE repo = ?1 AND review = ?2 AND agent = ?3 AND session_id = ?4",
                 params![
                     repo,
@@ -283,7 +290,8 @@ impl Db {
                     session.id,
                     i64::from(session.brief_delivered),
                     session.instructions,
-                    at
+                    at,
+                    session.brief_head
                 ],
             )?;
             Ok(())

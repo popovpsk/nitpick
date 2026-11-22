@@ -421,6 +421,7 @@ pub struct Strings {
     pub assistant_unsupported: SharedString,
     pub cmd_ask_assistant: SharedString,
     pub ask_assistant: SharedString,
+    pub assistant_ask_commit_view: SharedString,
     pub assistant_link_missing_t: SharedString,
 }
 

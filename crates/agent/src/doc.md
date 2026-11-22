@@ -159,17 +159,20 @@ sessions without the login shell.
 ## Model lists
 
 - `models(kind, command)` asks the harness for the models it offers, with a short-lived process
-  per call and a hard limit of 10 s (`MODELS_TIMEOUT`, which includes the first login-shell
-  snapshot): Claude Code answers an `initialize` control request, OpenCode runs
+  per call and a hard limit of 10 s (`MODELS_TIMEOUT`, which covers the question only: the
+  login-shell snapshot before it and the shutdown after it are outside the limit, so a slow
+  but answered probe is not discarded): Claude Code answers an `initialize` control request, OpenCode runs
   `models --verbose` (never ACP, whose `session/new` leaves a session record), Codex is paged
   through `model/list`, Pi answers `get_available_models`, any other ACP agent is asked for
   `session/new` and the model option or list in its answer (see the driver docs for what is
   verified: Claude Code and OpenCode live, the rest from documentation and scripted peers). It
   reuses `driver_for(kind).plan` (so the read-only launch flags are the session's), the
   environment merge and scrub, `Process` and the drivers' framing. No prompt is ever sent.
-- The process runs in an empty scratch folder under the system temp folder (`cwd` and the
-  driver's files in a sibling), never in the user's repository, and the folder is removed when
-  the call ends. On timeout or when the future is dropped the child's process group is killed
+- The process runs in an empty scratch folder (`cwd` and the driver's files in a sibling),
+  never in the user's repository. The folder is a fresh `tempfile` directory with an
+  unpredictable name, created with mode 0700 and failing if it exists, so nothing another user
+  planted in a shared temp folder can be reused (the driver plan writes the Claude settings and
+  instructions there); it is removed when the call ends. On timeout or when the future is dropped the child's process group is killed
   (`Process` kills on drop); on a normal end stdin is closed and the process gets one second
   to leave, then SIGTERM. The probe is not registered with the `Registry`: it is bounded by the
   10 s limit and ends on stdin EOF when the app quits, so the quit reaper has nothing to add.
@@ -216,7 +219,8 @@ sessions without the login shell.
   in front of a message; the app uses it for a resumed session whose instruction fingerprint
   (`instructions_fingerprint`, FNV-1a 64 as 16 hex digits) differs, since no harness is known to
   apply a changed system prompt on resume (Claude Code verifiably keeps the old one).
-- A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` and
+- A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` (just
+  `[<path>](diff:<path>)` when its lines are not known) and
   the text in a code fence one backtick longer than any run inside it (at least three). The path
   is repository text, so in what the agent receives it appears only percent-encoded (label and
   link target alike, from `review_core::diff_link::format`); `selection_link`, the marker shown

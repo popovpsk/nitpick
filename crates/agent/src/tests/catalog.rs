@@ -402,12 +402,14 @@ mod process {
         let fixture = dir.path().join("models.jsonl");
         std::fs::write(&fixture, CLAUDE_MODELS).unwrap();
         let seen = dir.path().join("cwd.txt");
+        let modes = dir.path().join("modes.txt");
         let command = script(
             dir.path(),
             "claude",
             &format!(
-                "pwd > {}\nread request\ncase \"$request\" in *initialize*) ;; *) exit 3;; esac\n[ -z \"$(ls -A .)\" ] || exit 4\n/bin/cat {}\nsleep 5",
+                "pwd > {}\nls -ld .. > {}\nread request\ncase \"$request\" in *initialize*) ;; *) exit 3;; esac\n[ -z \"$(ls -A .)\" ] || exit 4\n/bin/cat {}\nsleep 5",
                 seen.display(),
+                modes.display(),
                 fixture.display()
             ),
         );
@@ -418,6 +420,15 @@ mod process {
         let cwd = std::fs::read_to_string(&seen).unwrap();
         assert!(cwd.contains("nitpick-models-"));
         assert!(!std::path::Path::new(cwd.trim()).exists());
+        let modes = std::fs::read_to_string(&modes).unwrap();
+        assert!(modes.starts_with("drwx------"), "{modes}");
+        let name = std::path::Path::new(cwd.trim())
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(name.starts_with("nitpick-models-") && name.len() > "nitpick-models-".len() + 4);
     }
 
     #[tokio::test]

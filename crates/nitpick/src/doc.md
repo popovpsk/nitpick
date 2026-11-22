@@ -177,12 +177,16 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   focused. The model control is a searchable `Select` over `agent_models::choices` with the
   free-text field kept under it (the field stays the one stored value: picking an entry sets
   it, typing an id outside the list leaves a custom entry selected), and a refresh button. The
-  list comes from `agent::models` when the screen opens, when the profile or its command
-  changes (after the 400 ms save delay), and on refresh; results are cached per (kind, command)
+  list comes from `agent::models` when the model field is first drawn while the assistant is
+  enabled (the Assistant page is shown; the settings window alone never starts an agent CLI,
+  which for Claude Code would run the user's session hooks), when the profile or its command
+  changes (after the 400 ms save delay, once requested), and on refresh (which always fetches); results are cached per (kind, command)
   in `ModelCache`, only the latest request counts (`catalog_generation`), and while it loads or
   after a failure or an empty answer the select is absent and only the free-text field shows;
-  a failure is logged at debug level, never a notification. The items are rebuilt when the
-  list or the stored value changes, never in `render`. The no-sandbox warning is built into
+  a failure is logged at debug level, never a notification. Each entry is one line (name and id, the description muted and
+  truncated after it), since the select's rows have a fixed height. The items are rebuilt when
+  the list or the stored value changes, never in `render`; the first draw only schedules the
+  fetch. The no-sandbox warning is built into
   the group only for a profile without one, from the cached profile, so `render` never
   resolves profiles.
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other

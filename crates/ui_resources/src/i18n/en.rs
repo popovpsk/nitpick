@@ -414,5 +414,6 @@ pub static EN: Strings = lang! {
     assistant_unsupported: "This agent is not supported yet.",
     cmd_ask_assistant: "Ask the assistant about the selection",
     ask_assistant: "Ask the assistant",
+    assistant_ask_commit_view: "A selection in a single-commit view cannot be linked: its line numbers belong to that commit. Show all changes first.",
     assistant_link_missing_t: "The assistant linked a file that is not in this review: {}",
 };
