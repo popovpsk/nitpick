@@ -371,6 +371,14 @@ pub struct Strings {
     pub assistant_custom_desc: SharedString,
     pub assistant_custom_invalid_t: SharedString,
     pub assistant_no_sandbox: SharedString,
+    pub toggle_assistant: SharedString,
+    pub assistant_close: SharedString,
+    pub assistant_overview_title: SharedString,
+    pub assistant_overview_hint: SharedString,
+    pub assistant_request_overview: SharedString,
+    pub assistant_missing_title: SharedString,
+    pub assistant_missing_hint_t: SharedString,
+    pub assistant_open_settings: SharedString,
 }
 
 fn fill(template: &str, args: &[&str]) -> String {
@@ -488,6 +496,10 @@ impl Strings {
 
     pub fn assistant_custom_invalid(&self, lines: &str) -> String {
         fill(&self.assistant_custom_invalid_t, &[lines])
+    }
+
+    pub fn assistant_missing_hint(&self, command: &str) -> String {
+        fill(&self.assistant_missing_hint_t, &[command])
     }
 
     pub fn hidden_files_invalid(&self, patterns: &str) -> String {
@@ -726,6 +738,7 @@ mod tests {
                 &s.code_text_size_desc_t,
                 &s.approved_by_t,
                 &s.assistant_custom_invalid_t,
+                &s.assistant_missing_hint_t,
             ] {
                 assert_eq!(template.matches("{}").count(), 1, "{lang:?}: {template}");
             }

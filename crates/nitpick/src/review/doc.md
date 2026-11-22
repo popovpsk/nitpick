@@ -45,7 +45,10 @@ wraps `gitlab` and `github`; nothing here names those crates).
   tree; the commits button), the viewed progress widget the tree header shows
   (`render_viewed_progress`), the file toolbar (change and file navigation, the shown file's
   label as a cached `FileLabel`, open-file, viewed and layout controls) and the `Diff` element with its
-  movable split divider; the sliding, resizable tree panel; `Render for ReviewView`.
+  movable split divider; the sliding, resizable tree panel; the assistant panel's place in
+  the body; `Render for ReviewView`.
+- `agent/` — the review assistant's panel (`AgentPanel`, an entity `ReviewView` holds); see
+  `agent/doc.md`.
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
@@ -481,7 +484,12 @@ wraps `gitlab` and `github`; nothing here names those crates).
   collapsed folder: the sum of the files under it) unless `tree_comments` is off, a switch in
   the tree's view options (the eye). A viewed file is tinted green with a check; striking its
   name through is another switch there (`strike_viewed`, off by default).
-- Approve button (left of the comments button): "Approve" (with the count when others
+- Header buttons on the right, in order: refresh, comments (merge requests only), assistant
+  (`Icons::Sparkles`, every review kind, while `agent.enabled`; `ToggleAgent`, ⌘/Ctrl-Shift-A).
+  The assistant button spins while a turn runs and is highlighted while a finished overview
+  waits unread behind the closed panel. The panel sits at the right edge of the body, after the
+  diff and before a right-hand tree, and never covers the diff.
+- Approve button (left of the refresh button): "Approve" (with the count when others
   approved), "Approved" in the success style once the user approved (a click withdraws on
   GitLab), or just the count when the user can't approve (their own request); hidden when
   none applies.
@@ -635,4 +643,7 @@ wraps `gitlab` and `github`; nothing here names those crates).
   tooltip; not Zed's per-line author and date column.
 - Copy path, open in editor and open in browser live in context menus and key bindings, not
   in toolbar buttons.
+- The assistant panel is non-modal like the tree panel, not a `Sheet` like the comments: the
+  diff stays clickable beside it. Whether it is open is per-window state, closed at start and
+  never saved, like the tree's visibility; only its width is a setting.
 - Binary images show as before/after panes (GitLab's "2-up"), not swipe or onion skin.

@@ -52,6 +52,7 @@ gpui_kit_assets::icon_assets!(
         ThumbsUp,
         Square,
         SquareArrowOutUpRight,
+        Sparkles,
     ]
 );
 

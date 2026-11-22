@@ -31,8 +31,8 @@ use ui_resources::Icons;
 use super::{
     AddComment, Busy, COMMENT_LANE, COMMENT_MARKER, CrossHint, FindFile, FindInFile, FocusDiff,
     FocusTree, LoadState, LoadedReview, NextChange, NextFile, PreviousChange, PreviousFile,
-    PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleBlame, ToggleTree, ToggleViewed,
-    comment_list, comments, file_actions,
+    PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE, ToggleAgent, ToggleBlame, ToggleTree,
+    ToggleViewed, agent, comment_list, comments, file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -216,6 +216,17 @@ impl ReviewView {
                     comment_list::open_comments_sheet(this, window, cx)
                 }))
         });
+        let agent_button = settings(cx).agent.enabled.then(|| {
+            let panel = self.agent.read(cx);
+            Button::new("assistant")
+                .ghost()
+                .small()
+                .icon(Icon::new(Icons::Sparkles))
+                .loading(panel.is_busy())
+                .selected(panel.has_unread())
+                .tooltip_with_action(s.toggle_assistant.clone(), &ToggleAgent, Some("Review"))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_agent(cx)))
+        });
         h_flex()
             .flex_none()
             .h(px(40.))
@@ -238,7 +249,6 @@ impl ReviewView {
             )
             .children(review_button)
             .children(approve_button)
-            .children(comments_button)
             .child(
                 Button::new("refresh-review")
                     .ghost()
@@ -248,6 +258,8 @@ impl ReviewView {
                     .tooltip_with_action(s.refresh.clone(), &Refresh, Some("Review"))
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
+            .children(comments_button)
+            .children(agent_button)
             .into_any_element()
     }
 
@@ -1282,6 +1294,13 @@ impl Render for ReviewView {
                     this.toggle_tree(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &ToggleAgent, window, cx| {
+                if window.has_focused_input(cx) {
+                    cx.propagate();
+                } else {
+                    this.toggle_agent(cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &FindFile, window, cx| {
                 this.open_file_search(window, cx);
             }))
@@ -1381,9 +1400,10 @@ impl Render for ReviewView {
                 }),
             );
         let diff = div().flex_1().min_w_0().h_full().child(diff);
+        let agent_panel = agent::frame(&self.agent, cx);
         let body = match side {
-            TreeSide::Left => body.children(tree_panel).child(diff),
-            TreeSide::Right => body.child(diff).children(tree_panel),
+            TreeSide::Left => body.children(tree_panel).child(diff).children(agent_panel),
+            TreeSide::Right => body.child(diff).children(agent_panel).children(tree_panel),
         };
         let banner = self.render_push_banner(cx);
         root.child(header)

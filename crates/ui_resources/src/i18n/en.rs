@@ -364,4 +364,12 @@ pub static EN: Strings = lang! {
     assistant_custom_desc: "One per line as name = command. The program must speak the Agent Client Protocol over stdin and stdout",
     assistant_custom_invalid_t: "Ignored, expected \"name = command\" with a unique name: {}",
     assistant_no_sandbox: "This agent has no sandbox: it runs with your permissions, its shell commands are not confirmed and can modify files",
+    toggle_assistant: "Show or hide the assistant",
+    assistant_close: "Close the assistant",
+    assistant_overview_title: "Review overview",
+    assistant_overview_hint: "The assistant reads the change and writes what it does, in what order to read it and where to look closer. The judgement stays yours.",
+    assistant_request_overview: "Request an overview",
+    assistant_missing_title: "Agent not found",
+    assistant_missing_hint_t: "The command \"{}\" was not found. Install the agent CLI or set its launch command in the settings.",
+    assistant_open_settings: "Open settings",
 };

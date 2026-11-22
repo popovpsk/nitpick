@@ -11,7 +11,7 @@ use ui_resources::i18n::Strings;
 use crate::review::{
     AddComment, CollapseSelected, CopyPath, ExpandSelected, FindFile, FindInFile, FocusDiff,
     FocusTree, NextChange, NextFile, OpenInEditor, OpenSelected, PreviousChange, PreviousFile,
-    Refresh, SelectNext, SelectPrevious, ToggleBlame, ToggleTree, ToggleViewed,
+    Refresh, SelectNext, SelectPrevious, ToggleAgent, ToggleBlame, ToggleTree, ToggleViewed,
 };
 use crate::settings_store::{SettingsStore, settings, update_settings};
 use crate::workspace::{
@@ -87,6 +87,14 @@ pub static COMMANDS: &[Command] = &[
         defaults: &["secondary-b"],
         action: || Box::new(ToggleTree),
         title: |s| s.toggle_tree.clone(),
+    },
+    Command {
+        id: "review.toggle_agent",
+        group: Group::Review,
+        context: REVIEW,
+        defaults: &["secondary-shift-a"],
+        action: || Box::new(ToggleAgent),
+        title: |s| s.toggle_assistant.clone(),
     },
     Command {
         id: "review.focus_tree",

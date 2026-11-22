@@ -364,4 +364,12 @@ pub static RU: Strings = lang! {
     assistant_custom_desc: "По одному в строке: имя = команда. Программа должна говорить по Agent Client Protocol через stdin и stdout",
     assistant_custom_invalid_t: "Пропущено, нужно «имя = команда» с уникальным именем: {}",
     assistant_no_sandbox: "У этого агента нет песочницы: он работает с вашими правами, его команды оболочки не подтверждаются и могут изменять файлы",
+    toggle_assistant: "Показать или скрыть ассистента",
+    assistant_close: "Закрыть ассистента",
+    assistant_overview_title: "Обзор ревью",
+    assistant_overview_hint: "Ассистент прочитает изменение и напишет, что оно делает, в каком порядке его смотреть и на что обратить внимание. Решения остаются за вами.",
+    assistant_request_overview: "Запросить обзор",
+    assistant_missing_title: "Агент не найден",
+    assistant_missing_hint_t: "Команда «{}» не найдена. Установите CLI агента или укажите команду запуска в настройках.",
+    assistant_open_settings: "Открыть настройки",
 };

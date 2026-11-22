@@ -1,3 +1,4 @@
+mod agent;
 pub(crate) mod avatars;
 mod blame;
 mod branch_picker;
@@ -77,6 +78,7 @@ actions!(
         FindFile,
         FindInFile,
         AddComment,
+        ToggleAgent,
     ]
 );
 
@@ -376,6 +378,7 @@ pub struct ReviewView {
     commit_picker: commit_picker::CommitPicker,
     blame: blame::BlameState,
     image_preview: image_preview::ImagePreview,
+    agent: Entity<agent::AgentPanel>,
     web: file_actions::WebLink,
     _load: Task<()>,
     _discussions: Task<()>,
@@ -427,6 +430,12 @@ impl ReviewView {
                 this.reload(cx);
             }
         });
+        let agent = cx.new(agent::AgentPanel::new);
+        let agent_events =
+            cx.subscribe(&agent, |_, _, event: &agent::AgentEvent, cx| match event {
+                agent::AgentEvent::OpenSettings => cx.emit(ReviewEvent::OpenSettings),
+            });
+        let agent_sync = cx.observe(&agent, |_, _, cx| cx.notify());
         let branch_pickers = branch_picker::BranchPickers::new(window, cx);
         let commit_picker = commit_picker::CommitPicker::new(window, cx);
         let mut this = Self {
@@ -525,6 +534,7 @@ impl ReviewView {
             commit_picker,
             blame: blame::BlameState::new(cx),
             image_preview: image_preview::ImagePreview::new(cx),
+            agent,
             web: file_actions::WebLink::default(),
             _load: Task::ready(()),
             _discussions: Task::ready(()),
@@ -534,6 +544,8 @@ impl ReviewView {
                 settings_sync,
                 theme_sync,
                 activation,
+                agent_events,
+                agent_sync,
             ],
         };
         this.load(cx);
@@ -2112,6 +2124,12 @@ impl ReviewView {
             Task::ready(())
         };
         cx.notify();
+    }
+
+    pub fn toggle_agent(&mut self, cx: &mut Context<Self>) {
+        if settings(cx).agent.enabled && matches!(self.load_state, LoadState::Ready) {
+            self.agent.update(cx, |panel, cx| panel.toggle(cx));
+        }
     }
 
     pub fn resize_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
