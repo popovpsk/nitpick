@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
+use agent::Model;
 use forge::ForgeKind;
 use gpui::{
     Anchor, AnyElement, App, AppContext as _, Axis, Context, ElementId, Entity, FocusHandle,
@@ -19,6 +20,8 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{DropdownMenu as _, PopupMenuItem},
     notification::Notification,
+    searchable_list::SearchableVec,
+    select::{Select, SelectEvent, SelectState},
     setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex,
 };
@@ -27,6 +30,7 @@ use ui_resources::i18n::{Lang, Strings};
 use ui_resources::themes::ZedThemeFile;
 use updater::UpdateState;
 
+use crate::agent_models::{self, Choice, ModelCache};
 use crate::agent_profiles::{Profile, format_custom_agents, parse_custom_agents, set_override};
 use crate::keymap::{self, COMMANDS, Command, Group};
 use crate::localization::{sync_active_lang, tr};
@@ -258,8 +262,61 @@ struct AgentForm {
     custom_generation: Rc<Cell<u64>>,
     instructions_generation: Rc<Cell<u64>>,
     status: ForgeStatus,
+    model_select: Entity<SelectState<SearchableVec<ModelChoice>>>,
+    fetched: Vec<Model>,
+    catalog: Catalog,
+    catalog_key: Option<(agent::HarnessKind, String)>,
+    catalog_generation: u64,
+    _models: Task<()>,
     _check: Task<()>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Catalog {
+    Loading,
+    Ready,
+    Failed,
+}
+
+#[derive(Clone)]
+struct ModelChoice(Choice);
+
+impl gpui_component::searchable_list::SearchableListItem for ModelChoice {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.0.title.clone().into()
+    }
+
+    fn render(&self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .min_w_0()
+            .child(div().child(SharedString::from(self.0.title.clone())))
+            .children(self.0.description.clone().map(|text| {
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(SharedString::from(text))
+            }))
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.0.value
+    }
+}
+
+fn model_choices(models: &[Model], stored: &str, s: &Strings) -> Vec<ModelChoice> {
+    agent_models::choices(
+        models,
+        stored,
+        &s.assistant_model_default,
+        &s.assistant_model_custom,
+    )
+    .into_iter()
+    .map(ModelChoice)
+    .collect()
 }
 
 fn stored<'a>(map: &'a BTreeMap<String, String>, id: &str) -> &'a str {
@@ -297,16 +354,39 @@ impl AgentForm {
                 .default_value(instructions_text.clone())
         });
         let on_fields = |this: &mut SettingsView,
-                         _: Entity<InputState>,
+                         _: &Entity<InputState>,
                          event: &InputEvent,
+                         window: &mut Window,
                          cx: &mut Context<SettingsView>| {
             if matches!(event, InputEvent::Change) {
-                this.schedule_agent_save(cx);
+                this.schedule_agent_save(window, cx);
             }
         };
+        let model_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(model_choices(&[], &model_text, tr())),
+                None,
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
         let subscriptions = [
-            cx.subscribe(&command, on_fields),
-            cx.subscribe(&model, on_fields),
+            cx.subscribe_in(&command, window, on_fields),
+            cx.subscribe_in(&model, window, on_fields),
+            cx.subscribe_in(
+                &model_select,
+                window,
+                |this, _, event: &SelectEvent<SearchableVec<ModelChoice>>, window, cx| {
+                    let SelectEvent::Confirm(Some(value)) = event else {
+                        return;
+                    };
+                    let value = value.clone();
+                    this.agent
+                        .model
+                        .update(cx, |input, cx| input.set_value(value, window, cx));
+                },
+            ),
             cx.subscribe(&custom, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.schedule_custom_save(cx);
@@ -335,6 +415,12 @@ impl AgentForm {
             custom_generation: Rc::default(),
             instructions_generation: Rc::default(),
             status: ForgeStatus::Idle,
+            model_select,
+            fetched: Vec::new(),
+            catalog: Catalog::Loading,
+            catalog_key: None,
+            catalog_generation: 0,
+            _models: Task::ready(()),
             _check: Task::ready(()),
             _subscriptions: subscriptions,
         }
@@ -433,9 +519,11 @@ fn hidden_roots(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     HiddenFiles,
+    Assistant,
 }
 
 const HIDDEN_FILES_PAGE: usize = 1;
+const ASSISTANT_PAGE: usize = 3;
 
 impl Focusable for SettingsView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -537,6 +625,7 @@ impl SettingsView {
                 .map(|updater| cx.observe(&updater, |_, _, cx| cx.notify())),
         };
         this.reload_hidden(true, window, cx);
+        this.refresh_models(false, window, cx);
         this._settings_sync = Some(cx.observe_global_in::<SettingsStore>(
             window,
             |this, window, cx| {
@@ -569,6 +658,7 @@ impl SettingsView {
     pub fn reveal(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         let page_ix = match section {
             SettingsSection::HiddenFiles => HIDDEN_FILES_PAGE,
+            SettingsSection::Assistant => ASSISTANT_PAGE,
         };
         self.generation += 1;
         self.revealed = Some(SelectIndex {
@@ -658,33 +748,108 @@ impl SettingsView {
         .detach();
     }
 
-    fn schedule_agent_save(&mut self, cx: &mut Context<Self>) {
+    fn schedule_agent_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let generation = self.agent.generation.get() + 1;
         self.agent.generation.set(generation);
         let counter = self.agent.generation.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(AGENT_SAVE_DELAY).await;
             if counter.get() != generation {
                 return;
             }
-            let _ = this.update(cx, |this, cx| this.save_agent_fields(cx));
+            let _ = this.update_in(cx, |this, window, cx| this.save_agent_fields(window, cx));
         })
         .detach();
     }
 
-    fn save_agent_fields(&mut self, cx: &mut Context<Self>) {
+    fn save_agent_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = self.agent.profile.id.clone();
         let command = self.agent.command.read(cx).value().trim().to_string();
         let model = self.agent.model.read(cx).value().trim().to_string();
+        let command_changed = self.agent.command_baseline != command;
         self.agent.command_baseline = command.clone();
         self.agent.model_baseline = model.clone();
         let current = &settings(cx).agent;
-        if stored(&current.commands, &id) == command && stored(&current.models, &id) == model {
+        if stored(&current.commands, &id) != command || stored(&current.models, &id) != model {
+            update_settings(cx, move |s| {
+                set_override(&mut s.agent.commands, &id, &command);
+                set_override(&mut s.agent.models, &id, &model);
+            });
+        }
+        if command_changed {
+            self.refresh_models(false, window, cx);
+        } else {
+            self.sync_model_select(window, cx);
+        }
+    }
+
+    fn refresh_models(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = self.agent.profile.kind;
+        let typed = self.agent.command.read(cx).value().to_string();
+        let command = agent_models::effective_command(&typed, &self.agent.profile.default_command);
+        let key = (kind, command.clone());
+        if !force && self.agent.catalog_key.as_ref() == Some(&key) {
             return;
         }
-        update_settings(cx, move |s| {
-            set_override(&mut s.agent.commands, &id, &command);
-            set_override(&mut s.agent.models, &id, &model);
+        self.agent.catalog_key = Some(key);
+        self.agent.catalog_generation += 1;
+        let generation = self.agent.catalog_generation;
+        if !force
+            && let Some(models) = cx
+                .default_global::<ModelCache>()
+                .get(kind, &command)
+                .cloned()
+        {
+            self.agent._models = Task::ready(());
+            self.install_models(models, window, cx);
+            return;
+        }
+        self.agent.catalog = Catalog::Loading;
+        self.agent.fetched.clear();
+        self.agent._models = cx.spawn_in(window, async move |this, cx| {
+            let result = agent::models(kind, &command).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.agent.catalog_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(models) => {
+                        cx.default_global::<ModelCache>()
+                            .put(kind, &command, models.clone());
+                        this.install_models(models, window, cx);
+                    }
+                    Err(err) => {
+                        log::debug!("the model list of `{command}`: {err}");
+                        this.agent.catalog = Catalog::Failed;
+                        cx.notify();
+                    }
+                }
+            });
+        });
+        cx.notify();
+    }
+
+    fn install_models(&mut self, models: Vec<Model>, window: &mut Window, cx: &mut Context<Self>) {
+        self.agent.catalog = if models.is_empty() {
+            Catalog::Failed
+        } else {
+            Catalog::Ready
+        };
+        self.agent.fetched = models;
+        self.sync_model_select(window, cx);
+        cx.notify();
+    }
+
+    fn sync_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let stored = self.agent.model.read(cx).value().trim().to_string();
+        let items = model_choices(&self.agent.fetched, &stored, tr());
+        let position = agent_models::position(
+            &items.iter().map(|item| item.0.clone()).collect::<Vec<_>>(),
+            &stored,
+        );
+        self.agent.model_select.update(cx, |select, cx| {
+            select.set_items(SearchableVec::new(items), window, cx);
+            select.set_selected_index(Some(gpui_component::IndexPath::new(position)), window, cx);
         });
     }
 
@@ -738,7 +903,7 @@ impl SettingsView {
 
     fn select_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.agent.generation.set(self.agent.generation.get() + 1);
-        self.save_agent_fields(cx);
+        self.save_agent_fields(window, cx);
         update_settings(cx, move |s| s.agent.active = id);
         self.reload_agent(window, cx);
     }
@@ -752,7 +917,9 @@ impl SettingsView {
             self.agent.status = ForgeStatus::Idle;
             self.agent._check = Task::ready(());
         }
+        let mut reloaded = false;
         if profile != self.agent.profile {
+            reloaded = true;
             let placeholder = profile.default_command.clone();
             self.agent.command.update(cx, |state, cx| {
                 state.set_placeholder(placeholder, window, cx)
@@ -776,7 +943,12 @@ impl SettingsView {
                 continue;
             }
             *baseline = saved.clone();
+            reloaded = true;
             input.update(cx, |state, cx| state.set_value(saved, window, cx));
+        }
+        if reloaded {
+            self.refresh_models(false, window, cx);
+            self.sync_model_select(window, cx);
         }
         let focused = self
             .agent
@@ -1168,15 +1340,65 @@ fn agent_custom_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> SettingGroup {
+fn agent_model_field(view: &Entity<SettingsView>, cx: &App) -> AnyElement {
+    let form = &view.read(cx).agent;
+    let theme = cx.theme();
+    let s = tr();
+    let refresh_view = view.clone();
+    let loading = form.catalog == Catalog::Loading;
+    v_flex()
+        .w_full()
+        .max_w(px(FIELD_MAX_WIDTH))
+        .gap_1()
+        .child(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .child(div().flex_1().min_w_0().map(|el| {
+                    match form.catalog {
+                        Catalog::Ready => el.child(
+                            Select::new(&form.model_select)
+                                .small()
+                                .w_full()
+                                .search_placeholder(s.assistant_model_search.clone()),
+                        ),
+                        Catalog::Loading => el.child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(s.assistant_model_loading.clone()),
+                        ),
+                        Catalog::Failed => el,
+                    }
+                }))
+                .child(
+                    Button::new("agent-models-refresh")
+                        .ghost()
+                        .small()
+                        .icon(IconName::RefreshCw)
+                        .tooltip(s.assistant_model_refresh.clone())
+                        .loading(loading)
+                        .disabled(loading)
+                        .on_click(move |_, window, cx| {
+                            refresh_view
+                                .update(cx, |this, cx| this.refresh_models(true, window, cx))
+                        }),
+                ),
+        )
+        .child(Input::new(&form.model).small())
+        .into_any_element()
+}
+
+fn agent_page(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> SettingPage {
     let dropdown_view = view.clone();
     let command_view = view.clone();
     let model_view = view.clone();
     let check_view = view.clone();
     let custom_view = view.clone();
     let instructions_view = view.clone();
-    let mut group = SettingGroup::new()
-        .title(s.assistant.clone())
+    let general = SettingGroup::new()
+        .title(s.general.clone())
         .description(s.assistant_desc.clone())
         .item(
             SettingItem::new(
@@ -1188,6 +1410,18 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
             )
             .description(s.assistant_show_desc.clone()),
         )
+        .item(
+            SettingItem::new(
+                s.assistant_auto_overview.clone(),
+                SettingField::switch(
+                    |cx| settings(cx).agent.auto_overview,
+                    |value, cx| update_settings(cx, |s| s.agent.auto_overview = value),
+                ),
+            )
+            .description(s.assistant_auto_overview_desc.clone()),
+        );
+    let mut agents = SettingGroup::new()
+        .title(s.assistant_agents.clone())
         .item(
             SettingItem::new(
                 s.assistant_agent.clone(),
@@ -1211,12 +1445,7 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
         .item(
             SettingItem::new(
                 s.assistant_model.clone(),
-                SettingField::render(move |_, _, cx| {
-                    div()
-                        .w_full()
-                        .max_w(px(FIELD_MAX_WIDTH))
-                        .child(Input::new(&model_view.read(cx).agent.model).small())
-                }),
+                SettingField::render(move |_, _, cx| agent_model_field(&model_view, cx)),
             )
             .layout(Axis::Vertical)
             .description(s.assistant_model_desc.clone()),
@@ -1245,24 +1474,23 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
         }));
     if !profile.has_sandbox() {
         let message = s.assistant_no_sandbox.clone();
-        group = group.item(SettingItem::render(move |_, _, cx| {
+        agents = agents.item(SettingItem::render(move |_, _, cx| {
             div()
                 .text_sm()
                 .text_color(cx.theme().warning)
                 .child(message.clone())
         }));
     }
-    group
-        .item(
-            SettingItem::new(
-                s.assistant_auto_overview.clone(),
-                SettingField::switch(
-                    |cx| settings(cx).agent.auto_overview,
-                    |value, cx| update_settings(cx, |s| s.agent.auto_overview = value),
-                ),
-            )
-            .description(s.assistant_auto_overview_desc.clone()),
+    let agents = agents.item(
+        SettingItem::new(
+            s.assistant_custom.clone(),
+            SettingField::render(move |_, _, cx| agent_custom_field(&custom_view, cx)),
         )
+        .layout(Axis::Vertical)
+        .description(s.assistant_custom_desc.clone()),
+    );
+    let instructions = SettingGroup::new()
+        .title(s.assistant_instructions_group.clone())
         .item(
             SettingItem::new(
                 s.assistant_instructions.clone(),
@@ -1277,15 +1505,11 @@ fn agent_group(view: &Entity<SettingsView>, profile: &Profile, s: &Strings) -> S
             )
             .layout(Axis::Vertical)
             .description(s.assistant_instructions_desc.clone()),
-        )
-        .item(
-            SettingItem::new(
-                s.assistant_custom.clone(),
-                SettingField::render(move |_, _, cx| agent_custom_field(&custom_view, cx)),
-            )
-            .layout(Axis::Vertical)
-            .description(s.assistant_custom_desc.clone()),
-        )
+        );
+    SettingPage::new(s.assistant.clone())
+        .group(general)
+        .group(agents)
+        .group(instructions)
 }
 
 fn theme_label(choice: &ThemeChoice) -> SharedString {
@@ -1819,7 +2043,7 @@ impl Render for SettingsView {
                     .layout(Axis::Vertical)
                     .description(s.editor_command_desc.clone()),
                 );
-        let assistant = agent_group(&view, &self.agent.profile, s);
+        let assistant = agent_page(&view, &self.agent.profile, s);
         let gitlab = forge_group(&view, ForgeKind::GitLab, s);
         let github = forge_group(&view, ForgeKind::GitHub, s);
         let global_view = view.clone();
@@ -1877,7 +2101,6 @@ impl Render for SettingsView {
                             .group(general)
                             .group(appearance)
                             .group(review)
-                            .group(assistant)
                             .group(gitlab)
                             .group(github),
                         SettingPage::new(s.hidden_files_setting.clone()).group(hidden),
@@ -1885,6 +2108,7 @@ impl Render for SettingsView {
                             .group(shortcut_group(s.shortcuts_review.clone(), Group::Review, s))
                             .group(shortcut_group(s.shortcuts_tree.clone(), Group::Tree, s))
                             .group(shortcut_group(s.shortcuts_window.clone(), Group::Window, s)),
+                        assistant,
                     ]),
                 ),
             )

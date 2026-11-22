@@ -10,7 +10,7 @@ Not here: running the harness (`agent` crate), the profile table and settings
 (`agent_profiles`, `settings_store`), the stored session pointer (`app_db`), the settings screen
 (`settings_view`), the link grammar (`review_core::diff_link`) and the selection question text
 (`agent::prompt`). Following a link moves the diff, so that part is `ReviewView::open_diff_link`
-(`review/`); this module decides what a link means and keeps the stops and the pending selection.
+(`review/`); this module decides what a link means and keeps the pending selection.
 
 ## Files
 
@@ -30,22 +30,21 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - `context.rs` — `ReviewContext` (key, head, the `Brief`, the work-directory plan), `from_view`
   (reads `ReviewView`), `review_key`, `local_head`, `assemble` (plain inputs to `Brief`),
   `resolve_workdir`, `language_name`.
-- `messages.rs` — `Role`, `Kind`, `Message` (with the stops of an overview in `links`), `agent_markdown` (the link
+- `messages.rs` — `Role`, `Kind`, `Message`, `agent_markdown` (the link
   hook and click handler), row rendering (`render_row`, the progress row).
 - `links.rs` — everything about `diff:` links without a GPU: `classify`, `resolve_file`,
-  `stops`, the stop cursor (`step_cursor`, `cursor_after_click`, `position_label`), `plan_link`
-  (what a click does), the selection question (`selection_span`, `can_link_selection`,
-  `PendingSelection`, `compose_question`, `input_with_marker`); on `AgentPanel`: `refresh_stops`,
-  `step_stop`, `note_link_clicked`, `ask` and the stop controls of the title row.
+  `plan_link` (what a click does), the selection question (`selection_span`,
+  `can_link_selection`, `patch_sides` / `locate_selection` for a mouse text selection,
+  `PendingSelection`, `compose_question`, `input_with_marker`); on `AgentPanel`: `ask`.
 - `panel.rs` — `frame` (the animated, resizable frame `ReviewView` places in the body) and
-  `Render for AgentPanel` (title with the stop controls, outdated-overview banner, conversation
+  `Render for AgentPanel` (title with "New conversation", outdated-overview banner, conversation
   or empty state, footer with the input).
 - `tests.rs` — everything without a GPU: the program lookup against a throwaway `PATH`, phases,
   review keys, head fingerprint, brief assembly, work-directory choice on throwaway
   repositories, the overview decision table, failure texts, the changed-comments prefix,
   session claims and adoption, the chat-after-overview route, instruction delivery on resume,
-  launch comparison, event coalescing, stop filtering and the cursor, link resolution against a line map, the
-  selection question.
+  launch comparison, event coalescing, link resolution against a line map, the
+  selection question and locating a text selection in a patch.
 
 ## Invariants and spec
 
@@ -63,7 +62,8 @@ Not here: running the harness (`agent` crate), the profile table and settings
   sits on the frame itself, so the new width is the frame's right edge minus the pointer,
   whatever else shares the row.
 - `ReviewView` observes the entity and re-renders on every `cx.notify()` of the panel; the panel
-  forwards `AgentEvent::OpenSettings` and `ReviewView` re-emits it as `ReviewEvent::OpenSettings`.
+  forwards `AgentEvent::OpenSettings` and `ReviewView` re-emits it as `ReviewEvent::OpenAssistantSettings`,
+  which opens the settings window on its Assistant page.
 - The CLI lookup resolves the active profile's command with `agent::process::Invocation`, the
   same lookup a launch uses, on `net_runtime::unblock` (the first call captures the login
   shell's environment and may take seconds). A path with a separator counts as found only when
@@ -108,7 +108,7 @@ Not here: running the harness (`agent` crate), the profile table and settings
   history costs nothing until the panel is opened, and a closed panel creates none). Streaming
   appends with `push_str` and the view fades the new words in. Assistant, user and notice rows are
   different: notices are plain muted text, user messages sit in a tinted box under a "You" label.
-- The conversation lives only in the window's memory: messages, overview, stops and notices
+- The conversation lives only in the window's memory: messages, overview and notices
   are never written to `nitpick.db` or read from it, and are gone when the window closes or
   the review changes. Text that is only whitespace is dropped and its row removed when its turn
   ends (completed, interrupted, failed or the process died). A stopped turn keeps its partial
@@ -235,7 +235,7 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - `agent::process::prewarm()`, the pruning of stale stored session ids (`prune_agent`, once at
   startup like the avatar cache's) and the scratch sweep run from `init`, called from `main`.
 
-### Links and stops
+### Links
 
 - `agent_markdown` is the one place where assistant and user markdown gets its link handling.
   gpui-base hands the link target to `TextView::on_link_click` exactly as written (the parser
@@ -250,23 +250,6 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - A `diff:` URL is model output, so it can only select a file of the open review and scroll:
   `diff_link::parse` rejects anything that is not the grammar, the path is looked up among the
   review's files and never touched on disk, and nothing is handed to the OS opener.
-- Stops are the `diff:` links of the latest overview message (assistant, kind overview) whose
-  file is in the review: matched by current path first, then by `old_path` of a renamed file
-  (`resolve_file`); a link naming a file outside the review is dropped, a link that repeats the
-  previous one is dropped, every other repeat is kept so the order stays the author's. They are
-  computed by `refresh_stops` and stored in the message (`Message::links`), never in `render`:
-  when a turn ends, when the conversation is reset, when a message is added or removed (a new
-  streaming overview has no stops yet, so the controls disappear until it ends) and when the
-  head changes (the file list may have). Chat answers have no stops.
-- The cursor (`stop_cursor`) belongs to the latest overview message (`stops_owner`) and resets
-  when another message becomes the latest. Next from no position goes to the first stop,
-  previous to the last; both wrap at the ends, so the keys never dead-end. Clicking a link of
-  any message that equals a stop moves the cursor to the first equal stop after the cursor, else
-  the first equal stop, so "next" continues from there; a click on a non-stop leaves it alone.
-- With no overview, or an overview without stops, the action only shows a notification
-  (`StopStep`). The panel shows "n / total" (a dash before the first step) with previous and next
-  buttons in the title row while stops exist; the buttons emit `AgentEvent::Stop` and
-  `ReviewView` does the walking, so the buttons work whichever element has focus.
 - `plan_link` is the whole decision of a click: file found (current path, then `old_path`, the
   current name winning over another file's old name) or not in the review; the scroll target is
   the first line of the range that the file's shown line map has, on the side the link names
@@ -276,8 +259,23 @@ Not here: running the harness (`agent` crate), the profile table and settings
 ### Question about a selection
 
 - `AskAgent` opens the panel, puts the marker (`[path R10-12](diff:…)`, the very link
-  `prompt::selection_link` writes) into the input and focuses it. With no line selection it only
-  opens the panel and focuses the input. A second ask while the old marker is still in the input
+  `prompt::selection_link` writes) into the input and focuses it. It is reached by the key
+  and by "Ask the assistant" in the context menu of the diff area (shown only while
+  `agent.enabled`; the diff had no context menu before, and the file name's menu is another
+  one). With no selection it only opens the panel and focuses the input.
+- Where the selection comes from: a gutter (line number) gesture gives a line range directly
+  (`DiffState::selected_lines`). An ordinary mouse text selection clears that range and the
+  diff exposes only its text (`selected_text`), so file, side and lines are found by locating
+  that text in the shown file's patch section (`patch_sides` splits it into an old and a new
+  side with line numbers, `locate_selection` finds the text as a substring across line breaks).
+  The file is the one shown. Several matches (a repeated `}`) are resolved by the hovered line
+  (`ReviewView::hovered_line`, captured when the context menu opens): same side first, then
+  the nearest line; with no hover the first match wins, new side before old. Limits: the
+  text is matched, not the pointer, so a repeated text can link another occurrence (the agent
+  still gets the selected text in full); a selection that crosses from one side to the other
+  in the unified view has no text from the diff and so only opens the panel; the search reads
+  the patch, so it sees what the patch shows (whole file with full context, else the hunks);
+  nothing is derived while an interdiff is shown. A second ask while the old marker is still in the input
   replaces it, so the input never holds two markers for one pending selection.
 - The pending selection (`pending`: path, side, range, the selected text clipped to 20 000
   characters, and the marker string) lives in the panel until the next send, a new ask, "New
@@ -312,7 +310,7 @@ Not here: running the harness (`agent` crate), the profile table and settings
   conversation gets, `prompt` what the agent gets (before the brief or comments
   prefix). The input is the `input: Entity<TextareaState>` field.
 - `Message` keeps `text` (the markdown source) for every message.
-- `ReviewContext::brief.files` lists the review's files, which stops are checked against.
+- `ReviewContext::brief.files` lists the review's files.
 
 ## Decisions
 
@@ -322,12 +320,12 @@ Not here: running the harness (`agent` crate), the profile table and settings
 - The overview button stays visible but disabled until a session can start, rather than being
   absent: the empty state would otherwise invite something with no way to do it.
 - Default key for `ToggleAgent` is ⌘/Ctrl-Shift-A (free, "assistant"). `AskAgent` is
-  ⌘/Ctrl-Shift-K and the stop keys are Alt-Shift-Down / Alt-Shift-Up: the stop keys sit beside
-  the change navigation on Alt-Up / Alt-Down and avoid bracket keys, which sit on letters in the
-  Russian layout. All three propagate while an input has focus, like the other review actions;
-  `OpenDiffLink` is a click and is not in `COMMANDS` or bindable.
-- Stops wrap instead of stopping at the ends, and the panel does not have to be open for the
-  stop keys to work.
+  ⌘/Ctrl-Shift-K, both avoiding bracket keys, which sit on letters in the Russian layout. Both
+  propagate while an input has focus, like the other review actions; `OpenDiffLink` is a click
+  and is not in `COMMANDS` or bindable.
+- The owner removed the walk through an overview's links (a counter with previous and next
+  buttons and two keys): the links in the text are the navigation, and a click on one is all
+  that follows a `diff:` link.
 - A `diff:` click follows the link even when the model's numbers are wrong: a line that is not
   in the patch leaves the view on the file instead of reporting an error.
 - A message typed during a running turn is not queued: sending is disabled and the panel says so.

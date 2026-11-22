@@ -96,6 +96,18 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   launched. A wrapper command that points the CLI elsewhere is not known to the check.
 - The lookup is injectable (`ClaudeDriver::with_lookup`) so tests never read the home folder.
 
+## Model list
+
+- `catalog::claude_models`: the same flags as a session (`plan`, in an empty scratch folder,
+  never the user's repository), then one `{"type":"control_request","request_id":"init-1",
+  "request":{"subtype":"initialize"}}` on stdin and no prompt. The reply (about 0.3 s, no model
+  call; live 2.1.330) is the `control_response` whose `request_id` matches, after
+  `system/hook_*` frames; `response.response.models[]` has `value` (the id passed back with
+  `--model`), `displayName`, `description` and `resolvedModel`. The `default` entry is not
+  listed: the entry whose `resolvedModel` equals its own is marked `is_default`. The same reply
+  carries an `account` object with the user's email: only `models` is read, nothing is logged
+  or kept, and the fixture `fixtures/claude/models.jsonl` keeps only `models` and the version.
+
 ## Known limits
 
 - User-level sandbox settings from `~/.claude/settings.json` (for example

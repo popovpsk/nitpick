@@ -136,6 +136,10 @@ pub fn get_state(id: &str) -> String {
     json!({"id": id, "type": "get_state"}).to_string()
 }
 
+pub fn get_available_models(id: &str) -> String {
+    json!({"id": id, "type": "get_available_models"}).to_string()
+}
+
 pub fn clear_queue(id: &str) -> String {
     json!({"id": id, "type": "clear_queue"}).to_string()
 }

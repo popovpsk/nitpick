@@ -27,6 +27,9 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `registry.rs` — `Registry` of live sessions, `shutdown_all` and `quit`.
 - `session.rs` — `Session`, and the driver seam: `Driver`, `Plan`, `Transport`, `Channels`,
   `Command`, `driver_for`, `start_in`, the supervisor task.
+- `catalog.rs` — `models(kind, command)` and the `Model` it returns (`id`, `name`,
+  `description`, `is_default`); the per-harness question and its parsers (`claude_models`,
+  `acp_models`, `codex_models`, `pi_models`, `opencode_models`).
 - `prompt.rs` — system instructions (`instructions(language, disk_matches_head, user)`),
   `updated_instructions` and `instructions_fingerprint` (what a resumed session is told when its
   instructions changed), the overview and update tasks, `with_brief`, `with_new_comments`,
@@ -152,6 +155,27 @@ sessions without the login shell.
   `Connection::close` flushes what was queued and ends the writer; dropping it aborts both tasks.
 - `probe` runs `<command> --version` with a 10 s limit in the temp folder and returns the first
   non-empty line (stdout, else stderr).
+
+## Model lists
+
+- `models(kind, command)` asks the harness for the models it offers, with a short-lived process
+  per call and a hard limit of 10 s (`MODELS_TIMEOUT`, which includes the first login-shell
+  snapshot): Claude Code answers an `initialize` control request, OpenCode runs
+  `models --verbose` (never ACP, whose `session/new` leaves a session record), Codex is paged
+  through `model/list`, Pi answers `get_available_models`, any other ACP agent is asked for
+  `session/new` and the model option or list in its answer (see the driver docs for what is
+  verified: Claude Code and OpenCode live, the rest from documentation and scripted peers). It
+  reuses `driver_for(kind).plan` (so the read-only launch flags are the session's), the
+  environment merge and scrub, `Process` and the drivers' framing. No prompt is ever sent.
+- The process runs in an empty scratch folder under the system temp folder (`cwd` and the
+  driver's files in a sibling), never in the user's repository, and the folder is removed when
+  the call ends. On timeout or when the future is dropped the child's process group is killed
+  (`Process` kills on drop); on a normal end stdin is closed and the process gets one second
+  to leave, then SIGTERM. The probe is not registered with the `Registry`: it is bounded by the
+  10 s limit and ends on stdin EOF when the app quits, so the quit reaper has nothing to add.
+- Failures are `Error::Probe` (or `NotFound`) and the caller falls back to free text; the
+  result is never cached here. Nothing from a reply except the model list is read or logged
+  (Claude's reply holds the account's email).
 
 ## Brief and prompt texts
 

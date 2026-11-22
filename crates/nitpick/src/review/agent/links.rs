@@ -1,24 +1,10 @@
-use std::rc::Rc;
-
-use ::agent::brief;
 use ::agent::prompt::{self, Selection};
-use gpui::{
-    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, Window, div,
-};
-use gpui_component::{
-    ActiveTheme as _, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
-    h_flex,
-};
-use review_core::diff_link::{self, DiffLink};
+use gpui::{Context, Window};
+use review_core::diff_link::DiffLink;
 use review_core::{LineKind, Side};
 
-use super::messages::{Kind, Role};
-use super::{AgentEvent, AgentPanel};
-use crate::localization::tr;
+use super::AgentPanel;
 use crate::review::comments::opens_in_browser;
-use crate::review::{AgentNextStop, AgentPrevStop};
 
 const SCHEME: &str = "diff:";
 const MAX_SELECTION_CHARS: usize = 20_000;
@@ -58,67 +44,6 @@ pub(super) fn resolve_file<'a>(
         })
 }
 
-pub(super) fn stops(markdown: &str, files: &[brief::File]) -> Vec<DiffLink> {
-    let known = || {
-        files
-            .iter()
-            .map(|file| (file.path.as_str(), file.old_path.as_deref()))
-    };
-    let mut stops: Vec<DiffLink> = Vec::new();
-    for link in diff_link::extract(markdown) {
-        if resolve_file(known(), &link.path).is_none() || stops.last() == Some(&link) {
-            continue;
-        }
-        stops.push(link);
-    }
-    stops
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::review) enum Step {
-    Next,
-    Previous,
-}
-
-pub(super) fn step_cursor(cursor: Option<usize>, len: usize, step: Step) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-    let cursor = cursor.filter(|at| *at < len);
-    Some(match (cursor, step) {
-        (None, Step::Next) => 0,
-        (None, Step::Previous) => len - 1,
-        (Some(at), Step::Next) => (at + 1) % len,
-        (Some(0), Step::Previous) => len - 1,
-        (Some(at), Step::Previous) => at - 1,
-    })
-}
-
-pub(super) fn cursor_after_click(
-    stops: &[DiffLink],
-    clicked: &DiffLink,
-    cursor: Option<usize>,
-) -> Option<usize> {
-    let after = cursor.map_or(0, |at| at + 1);
-    let found = stops
-        .iter()
-        .enumerate()
-        .skip(after)
-        .find(|(_, stop)| *stop == clicked)
-        .or_else(|| stops.iter().enumerate().find(|(_, stop)| *stop == clicked));
-    found.map(|(ix, _)| ix).or(cursor)
-}
-
-pub(super) fn position_label(cursor: Option<usize>, len: usize) -> Option<String> {
-    if len == 0 {
-        return None;
-    }
-    let at = cursor
-        .filter(|at| *at < len)
-        .map_or_else(|| "–".to_owned(), |at| (at + 1).to_string());
-    Some(format!("{at} / {len}"))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::review) struct Target {
     pub file: usize,
@@ -148,6 +73,122 @@ pub(in crate::review) fn plan_link<'a>(
         Some((side, line))
     });
     LinkPlan::Open(Target { file, scroll })
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(in crate::review) struct SideText {
+    pub(in crate::review) text: String,
+    pub(in crate::review) numbers: Vec<u32>,
+}
+
+impl SideText {
+    fn push(&mut self, number: u32, line: &str) {
+        if !self.numbers.is_empty() {
+            self.text.push('\n');
+        }
+        self.text.push_str(line);
+        self.numbers.push(number);
+    }
+}
+
+fn hunk_start(line: &str) -> Option<(u32, u32, u32, u32)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    let parse = |range: &str| -> Option<(u32, u32)> {
+        match range.split_once(',') {
+            Some((start, count)) => Some((start.parse().ok()?, count.parse().ok()?)),
+            None => Some((range.parse().ok()?, 1)),
+        }
+    };
+    let (old_start, old_count) = parse(old)?;
+    let (new_start, new_count) = parse(new)?;
+    Some((old_start, old_count, new_start, new_count))
+}
+
+pub(in crate::review) fn patch_sides(section: &str) -> (SideText, SideText) {
+    let mut old = SideText::default();
+    let mut new = SideText::default();
+    let mut lines = section.split('\n').map(|line| line.trim_end_matches('\r'));
+    while let Some(line) = lines.next() {
+        let Some((old_start, old_count, new_start, new_count)) = hunk_start(line) else {
+            continue;
+        };
+        let (mut old_no, mut old_left) = (old_start, old_count);
+        let (mut new_no, mut new_left) = (new_start, new_count);
+        while old_left > 0 || new_left > 0 {
+            let Some(line) = lines.next() else {
+                break;
+            };
+            match line.as_bytes().first() {
+                Some(b'-') if old_left > 0 => {
+                    old.push(old_no, &line[1..]);
+                    old_no += 1;
+                    old_left -= 1;
+                }
+                Some(b'+') if new_left > 0 => {
+                    new.push(new_no, &line[1..]);
+                    new_no += 1;
+                    new_left -= 1;
+                }
+                Some(b'\\') => {}
+                Some(b' ') | None if old_left > 0 && new_left > 0 => {
+                    let text = line.get(1..).unwrap_or("");
+                    old.push(old_no, text);
+                    new.push(new_no, text);
+                    old_no += 1;
+                    new_no += 1;
+                    old_left -= 1;
+                    new_left -= 1;
+                }
+                _ => break,
+            }
+        }
+    }
+    (old, new)
+}
+
+const MAX_CANDIDATES: usize = 4096;
+
+fn candidates(side: Side, shown: &SideText, text: &str) -> Vec<(Side, u32, u32)> {
+    let breaks = text.matches('\n').count();
+    shown
+        .text
+        .match_indices(text)
+        .take(MAX_CANDIDATES)
+        .filter_map(|(offset, _)| {
+            let first = shown.text[..offset].matches('\n').count();
+            let first_no = *shown.numbers.get(first)?;
+            let last_no = *shown.numbers.get(first + breaks)?;
+            Some((side, first_no, last_no))
+        })
+        .collect()
+}
+
+pub(in crate::review) fn locate_selection(
+    old: &SideText,
+    new: &SideText,
+    text: &str,
+    hovered: Option<(Side, u32)>,
+) -> Option<(Side, u32, u32)> {
+    let text = text.replace("\r\n", "\n");
+    let text = text.trim_matches('\n');
+    if text.is_empty() {
+        return None;
+    }
+    let mut found = candidates(Side::New, new, text);
+    found.extend(candidates(Side::Old, old, text));
+    match hovered {
+        Some((side, line)) => found.into_iter().min_by_key(|&(found_side, first, last)| {
+            let distance = if line < first {
+                first - line
+            } else {
+                line.saturating_sub(last)
+            };
+            (found_side != side, distance)
+        }),
+        None => found.into_iter().next(),
+    }
 }
 
 pub(in crate::review) fn selection_span(
@@ -297,77 +338,7 @@ pub(super) fn input_with_marker(current: &str, old: Option<&str>, marker: &str) 
     value
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::review) enum StopStep {
-    NoOverview,
-    NoStops,
-    Go(DiffLink),
-}
-
 impl AgentPanel {
-    fn latest_overview(&self) -> Option<usize> {
-        self.messages
-            .iter()
-            .rposition(|message| message.role == Role::Assistant && message.kind == Kind::Overview)
-    }
-
-    pub(super) fn refresh_stops(&mut self) {
-        let Some(ix) = self.latest_overview() else {
-            self.stops_owner = None;
-            self.stop_cursor = None;
-            self.stops_label = None;
-            return;
-        };
-        let files = self
-            .context
-            .as_ref()
-            .map_or(&[][..], |context| &context.brief.files[..]);
-        let found = stops(&self.messages[ix].text, files);
-        let owner = self.messages[ix].id;
-        if self.stops_owner != Some(owner) {
-            self.stops_owner = Some(owner);
-            self.stop_cursor = None;
-        }
-        self.messages[ix].links = Rc::from(found);
-        self.sync_stops_label();
-    }
-
-    fn sync_stops_label(&mut self) {
-        let len = self.current_stops().len();
-        self.stop_cursor = self.stop_cursor.filter(|at| *at < len);
-        self.stops_label = position_label(self.stop_cursor, len).map(SharedString::from);
-    }
-
-    fn current_stops(&self) -> Rc<[DiffLink]> {
-        self.latest_overview()
-            .map(|ix| self.messages[ix].links.clone())
-            .unwrap_or_default()
-    }
-
-    pub(in crate::review) fn step_stop(&mut self, step: Step, cx: &mut Context<Self>) -> StopStep {
-        if self.latest_overview().is_none() {
-            return StopStep::NoOverview;
-        }
-        let stops = self.current_stops();
-        let Some(next) = step_cursor(self.stop_cursor, stops.len(), step) else {
-            return StopStep::NoStops;
-        };
-        self.stop_cursor = Some(next);
-        self.sync_stops_label();
-        cx.notify();
-        StopStep::Go(stops[next].clone())
-    }
-
-    pub(in crate::review) fn note_link_clicked(&mut self, link: &DiffLink, cx: &mut Context<Self>) {
-        let stops = self.current_stops();
-        let cursor = cursor_after_click(&stops, link, self.stop_cursor);
-        if cursor != self.stop_cursor {
-            self.stop_cursor = cursor;
-            self.sync_stops_label();
-            cx.notify();
-        }
-    }
-
     pub(in crate::review) fn ask(
         &mut self,
         selection: Option<PendingSelection>,
@@ -388,53 +359,5 @@ impl AgentPanel {
         }
         self.input.update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
-    }
-
-    pub(super) fn render_stops(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let label = self.stops_label.clone()?;
-        let s = tr();
-        let theme = cx.theme();
-        Some(
-            h_flex()
-                .id("agent-stops")
-                .flex_none()
-                .gap_0p5()
-                .items_center()
-                .child(
-                    Button::new("agent-stop-previous")
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::ChevronUp)
-                        .tooltip_with_action(
-                            s.cmd_previous_stop.clone(),
-                            &AgentPrevStop,
-                            Some("Review"),
-                        )
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(AgentEvent::Stop(Step::Previous));
-                        })),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(label),
-                )
-                .child(
-                    Button::new("agent-stop-next")
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::ChevronDown)
-                        .tooltip_with_action(
-                            s.cmd_next_stop.clone(),
-                            &AgentNextStop,
-                            Some("Review"),
-                        )
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(AgentEvent::Stop(Step::Next));
-                        })),
-                )
-                .into_any_element(),
-        )
     }
 }

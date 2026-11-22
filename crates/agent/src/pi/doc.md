@@ -136,6 +136,13 @@ Not here: starting or killing the process (`session`, `process`), the instructio
 - No error text is documented beyond old changelog lines ("No API key found", an OAuth failure
   message); the classifier's hints are guesses at provider messages Pi passes through.
 
+## Model list
+
+- `catalog::pi_models` (unverified, written from public documentation): after the usual launch
+  flags, `{"id":"models-1","type":"get_available_models"}`; the answer is the `response` frame
+  with that `command`, `data.models[]` with `id`, `name`, `provider`. The stored value is
+  `provider/id` (what `--model` accepts as a pattern, also unverified) and the label `name`.
+
 ## Decisions
 
 - Native `pi --mode rpc` rather than `--mode json` per turn: one process serves every turn and

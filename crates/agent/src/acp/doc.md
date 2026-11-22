@@ -58,7 +58,19 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
 - Options: an option with `category: "model"` and a `Launch.model` that is not already its
   `currentValue` is set through `session/set_config_option {sessionId, configId, value}`; values
   are opaque strings (DeepSeek's are JSON text). A refused model fails the session as
-  `ModelNotFound`. The options come from the answer of `new` / `resume` / `load`.
+  `ModelNotFound`. The options come from the answer of `new` / `resume` / `load`. An agent
+  that has no model option but answers `models: {availableModels, currentModelId}` (the unstable
+  shape) gets `session/set_model {sessionId, modelId}` instead when the model differs; a refusal
+  is `ModelNotFound` too. Both paths are covered by scripted peers only; the OpenCode recordings
+  have the config option.
+- Model list (`catalog`): OpenCode is never asked over ACP, since every `session/new` leaves a
+  session record in its store: `<command without a trailing acp> models --verbose` (about 0.6 s,
+  no side effects; live 1.19.4) prints `provider/model` lines each followed by a JSON block, and
+  the stored value is `providerID/id` with the block's `name` as label. Any other ACP agent
+  (DeepSeek, custom) is asked with `initialize` and `session/new {cwd: an empty scratch folder,
+  mcpServers: []}`, no prompt, and the list is the `category: "model"` option (groups are
+  flattened, `currentValue` marks the default) or else `models.availableModels`; either may be
+  absent, and then the list is empty. That path is covered by a scripted peer only.
 - Permissions: a `session/request_permission` is answered at once, in any phase. A tool kind of
   `edit`, `delete` or `move` is rejected, everything else (read, search, execute, think, fetch,
   switch_mode, other, an unknown or missing kind) is allowed. The kind is the request's own, else

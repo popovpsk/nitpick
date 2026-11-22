@@ -119,7 +119,6 @@ impl AgentPanel {
                     .text_color(theme.muted_foreground)
                     .child(self.profile_name.clone()),
             )
-            .children(self.render_stops(cx))
             .when(self.can_start_overview_from_title(), |el| {
                 el.child(
                     Button::new("agent-title-overview")

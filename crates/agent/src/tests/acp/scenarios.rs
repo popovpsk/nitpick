@@ -567,6 +567,75 @@ async fn the_model_is_set_when_it_differs(
     rig.stop().await;
 }
 
+fn model_list(current: &str) -> Value {
+    json!({"currentModelId": current, "availableModels": [{"modelId": "a", "name": "A"}, {"modelId": "b", "name": "B"}]})
+}
+
+#[rstest]
+#[case::different("a", "b", true)]
+#[case::already_current("b", "b", false)]
+#[tokio::test]
+async fn the_unstable_model_list_is_set_through_set_model(
+    #[case] current: &str,
+    #[case] wanted: &str,
+    #[case] sets: bool,
+) {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_model(wanted), relaxed());
+    rig.prompt("hi");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.respond(
+        id,
+        json!({"sessionId": SESSION, "models": model_list(current)}),
+    )
+    .await;
+    if sets {
+        let (id, params) = rig.request("session/set_model").await;
+        assert_eq!(params, json!({"sessionId": SESSION, "modelId": wanted}));
+        rig.respond(id, json!({})).await;
+    }
+    assert_eq!(rig.next().await, session(SESSION));
+    rig.read_prompt().await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_config_option_is_preferred_over_the_unstable_model_list() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("b"), relaxed());
+    rig.prompt("hi");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.respond(
+        id,
+        json!({"sessionId": SESSION, "configOptions": model_option("a"), "models": model_list("a")}),
+    )
+    .await;
+    let (id, params) = rig.request("session/set_config_option").await;
+    assert_eq!(params["value"], "b");
+    rig.respond(id, json!({"configOptions": []})).await;
+    assert_eq!(rig.next().await, session(SESSION));
+    rig.read_prompt().await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_refused_set_model_fails_the_session_as_model_not_found() {
+    let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("zzz"), relaxed());
+    rig.prompt("hi");
+    rig.initialize(NOTHING).await;
+    let (id, _) = rig.request("session/new").await;
+    rig.respond(id, json!({"sessionId": SESSION, "models": model_list("a")}))
+        .await;
+    let (id, _) = rig.request("session/set_model").await;
+    rig.respond_error(id, -32602, "Unknown model", Value::Null)
+        .await;
+    assert_eq!(
+        rig.until_finished().await,
+        vec![failed(FailureKind::ModelNotFound, "Unknown model")]
+    );
+    rig.ends().await;
+}
+
 #[tokio::test]
 async fn no_model_option_or_no_model_means_no_request() {
     let mut rig = Rig::start_with(AcpFlavor::Generic, with_model("a"), relaxed());

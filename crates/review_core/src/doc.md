@@ -128,7 +128,7 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
   backslash escapes, or `<…>`, which may hold spaces), skips fenced code blocks and inline code
   spans (a line at a time), ignores bare `diff:` text, autolinks and link labels, and drops
   `diff:` targets that do not parse. Repeats are kept because the order of mentions is the
-  order of the review stops. `locate` scans at most 4096 lines of a range, so a model's huge
+  author's order. `locate` scans at most 4096 lines of a range, so a model's huge
   range cannot stall the UI thread; the file check (does the review contain the path) is the
   caller's.
 - Fuzzy matching: the query's characters (whitespace dropped, case folded per char) must

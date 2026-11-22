@@ -18,7 +18,7 @@ use super::context::{
     BriefInputs, DiscussionInput, FileInput, WorkdirPlan, assemble, disk_matches, language_name,
     local_head, resolve_workdir, review_key, thread_position,
 };
-use super::links::{self, LinkKind, Step, Target};
+use super::links::{self, LinkKind, Target, locate_selection, patch_sides};
 use super::logic::{
     self, Guard, Launching, LoadAction, OverviewState, Problem, Request, classify, coalesce,
     compose_chat, exit_text, limit_text, load_action, overview_state, problem_text,
@@ -643,121 +643,11 @@ fn bursts_of_text_are_merged_but_other_events_keep_their_place() {
     assert!(coalesce(Vec::new()).is_empty());
 }
 
-fn brief_file(path: &str, old_path: Option<&str>) -> brief::File {
-    brief::File {
-        path: path.to_owned(),
-        old_path: old_path.map(str::to_owned),
-        status: brief::Status::Modified,
-        added: None,
-        removed: None,
-    }
-}
-
 fn link(path: &str, range: Option<(Side, u32, u32)>) -> DiffLink {
     DiffLink {
         path: path.to_owned(),
         range,
     }
-}
-
-#[test]
-fn stops_keep_links_to_files_of_the_review_in_order() {
-    let files = [
-        brief_file("src/a.rs", None),
-        brief_file("src/new name.rs", Some("src/old.rs")),
-    ];
-    let overview = "\
-1. [entry](diff:src/a.rs#R3-R5)
-2. [renamed](diff:src/new%20name.rs#R1-R2) and [old name](diff:src/old.rs#L9)
-3. [outside](diff:src/elsewhere.rs#R1) and [web](https://example.com)
-4. [whole file](diff:src/a.rs)
-```
-[in code](diff:src/a.rs#R99)
-```
-";
-    assert_eq!(
-        links::stops(overview, &files),
-        vec![
-            link("src/a.rs", Some((Side::New, 3, 5))),
-            link("src/new name.rs", Some((Side::New, 1, 2))),
-            link("src/old.rs", Some((Side::Old, 9, 9))),
-            link("src/a.rs", None),
-        ]
-    );
-}
-
-#[test]
-fn stops_drop_only_repeats_that_follow_each_other() {
-    let files = [brief_file("a.rs", None), brief_file("b.rs", None)];
-    let overview = "[x](diff:a.rs#R1) [y](diff:a.rs#R1) [z](diff:b.rs#R2) [w](diff:a.rs#R1)";
-    assert_eq!(
-        links::stops(overview, &files),
-        vec![
-            link("a.rs", Some((Side::New, 1, 1))),
-            link("b.rs", Some((Side::New, 2, 2))),
-            link("a.rs", Some((Side::New, 1, 1))),
-        ]
-    );
-}
-
-#[test]
-fn stops_of_a_review_without_files_are_empty() {
-    assert!(links::stops("[x](diff:a.rs#R1)", &[]).is_empty());
-}
-
-#[rstest]
-#[case::next_from_nothing(None, 3, Step::Next, Some(0))]
-#[case::previous_from_nothing(None, 3, Step::Previous, Some(2))]
-#[case::next_in_the_middle(Some(0), 3, Step::Next, Some(1))]
-#[case::previous_in_the_middle(Some(2), 3, Step::Previous, Some(1))]
-#[case::next_wraps(Some(2), 3, Step::Next, Some(0))]
-#[case::previous_wraps(Some(0), 3, Step::Previous, Some(2))]
-#[case::single_stop_next(Some(0), 1, Step::Next, Some(0))]
-#[case::no_stops(None, 0, Step::Next, None)]
-#[case::cursor_past_the_end_starts_over(Some(7), 3, Step::Next, Some(0))]
-fn the_cursor_walks_the_stops_and_wraps(
-    #[case] cursor: Option<usize>,
-    #[case] len: usize,
-    #[case] step: Step,
-    #[case] expected: Option<usize>,
-) {
-    assert_eq!(links::step_cursor(cursor, len, step), expected);
-}
-
-#[rstest]
-#[case::first_match(None, "b.rs", Some(1))]
-#[case::next_match_after_the_cursor(Some(1), "b.rs", Some(3))]
-#[case::wraps_to_an_earlier_match(Some(3), "b.rs", Some(1))]
-#[case::not_a_stop_keeps_the_cursor(Some(2), "z.rs", Some(2))]
-#[case::not_a_stop_without_cursor(None, "z.rs", None)]
-fn clicking_a_stop_moves_the_cursor_to_it(
-    #[case] cursor: Option<usize>,
-    #[case] clicked: &str,
-    #[case] expected: Option<usize>,
-) {
-    let stops = [
-        link("a.rs", None),
-        link("b.rs", None),
-        link("c.rs", None),
-        link("b.rs", None),
-    ];
-    assert_eq!(
-        links::cursor_after_click(&stops, &link(clicked, None), cursor),
-        expected
-    );
-}
-
-#[rstest]
-#[case::none_yet(None, 7, Some("– / 7"))]
-#[case::first(Some(0), 7, Some("1 / 7"))]
-#[case::last(Some(6), 7, Some("7 / 7"))]
-#[case::empty(None, 0, None)]
-fn the_position_label_counts_from_one(
-    #[case] cursor: Option<usize>,
-    #[case] len: usize,
-    #[case] expected: Option<&str>,
-) {
-    assert_eq!(links::position_label(cursor, len).as_deref(), expected);
 }
 
 #[rstest]
@@ -1297,4 +1187,59 @@ fn a_dispatch_without_a_live_session_starts_one(
     #[case] expected: bool,
 ) {
     assert_eq!(logic::must_start(live, started_now), expected);
+}
+
+const SECTION: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,6 @@
+ fn main() {
+-    let old = 1;
++    let added = 1;
++    let wrapped = a_rather_long_call(first, second, third);
+     helper();
+ }
+ 
+@@ -10,3 +11,3 @@
+ fn helper() {
+-    -- not a header
++    ++ not a header
+ }
+\\ No newline at end of file
+";
+
+#[test]
+fn a_patch_section_gives_each_side_its_lines_and_numbers() {
+    let (old, new) = patch_sides(SECTION);
+    assert_eq!(old.numbers, [1, 2, 3, 4, 5, 10, 11, 12]);
+    assert_eq!(new.numbers, [1, 2, 3, 4, 5, 6, 11, 12, 13]);
+    assert!(old.text.contains("    let old = 1;\n    helper();"));
+    assert!(old.text.contains("    -- not a header"));
+    assert!(new.text.contains("    ++ not a header"));
+    assert!(!new.text.contains("diff --git"));
+}
+
+#[rstest]
+#[case::inside_one_added_line("a_rather_long", None, Some((Side::New, 3, 3)))]
+#[case::whole_added_line("    let added = 1;", None, Some((Side::New, 2, 2)))]
+#[case::two_lines_with_a_trailing_break("    let added = 1;\n    let wrapped = a_rather_long_call(first, second, third);\n", None, Some((Side::New, 2, 3)))]
+#[case::a_deleted_line("let old", None, Some((Side::Old, 2, 2)))]
+#[case::across_the_hunk_gap("}\n\nfn helper() {", None, Some((Side::New, 5, 11)))]
+#[case::missing("nowhere in the file", None, None)]
+#[case::empty("", None, None)]
+#[case::only_breaks("\n\n", None, None)]
+#[case::crlf("let added = 1;\r\n    let wrapped", None, Some((Side::New, 2, 3)))]
+#[case::a_context_line_prefers_the_new_side("fn main()", None, Some((Side::New, 1, 1)))]
+#[case::a_context_line_follows_the_hovered_side("fn main()", Some((Side::Old, 1)), Some((Side::Old, 1, 1)))]
+#[case::a_repeated_line_follows_the_hovered_line("}", Some((Side::New, 13)), Some((Side::New, 13, 13)))]
+#[case::a_repeated_line_without_a_hover_takes_the_first("}", None, Some((Side::New, 5, 5)))]
+fn a_text_selection_is_located_in_the_patch(
+    #[case] text: &str,
+    #[case] hovered: Option<(Side, u32)>,
+    #[case] expected: Option<(Side, u32, u32)>,
+) {
+    let (old, new) = patch_sides(SECTION);
+    assert_eq!(locate_selection(&old, &new, text, hovered), expected);
 }

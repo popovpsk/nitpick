@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use gpui::{
     AnyElement, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, Styled as _, Subscription, div,
@@ -10,8 +8,6 @@ use gpui_component::{
     text::{TextView, TextViewState},
     v_flex,
 };
-
-use review_core::DiffLink;
 
 use super::links::{LinkKind, classify};
 use super::{Activity, AgentPanel};
@@ -37,7 +33,6 @@ pub(super) struct Message {
     pub kind: Kind,
     pub head: String,
     pub text: String,
-    pub links: Rc<[DiffLink]>,
     notice: Option<SharedString>,
     view: Option<Entity<TextViewState>>,
     _observe: Option<Subscription>,
@@ -52,7 +47,6 @@ impl Message {
             kind,
             head,
             text,
-            links: Rc::default(),
             notice,
             view: None,
             _observe: None,

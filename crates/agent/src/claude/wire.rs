@@ -134,6 +134,15 @@ pub fn user_message(text: &str) -> String {
     .to_string()
 }
 
+pub fn initialize_request(request_id: &str) -> String {
+    json!({
+        "type": "control_request",
+        "request_id": request_id,
+        "request": {"subtype": "initialize"},
+    })
+    .to_string()
+}
+
 pub fn interrupt_request(request_id: &str) -> String {
     json!({
         "type": "control_request",

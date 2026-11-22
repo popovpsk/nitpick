@@ -147,7 +147,6 @@ impl AgentPanel {
             self.reset_conversation(cx);
             cx.notify();
         } else if head_changed {
-            self.refresh_stops();
             self.evaluate(cx);
             cx.notify();
         }
@@ -184,7 +183,6 @@ impl AgentPanel {
         self.resumable = false;
         self.settings_notice = None;
         self.pending = None;
-        self.refresh_stops();
         self.load_stored(true, cx);
     }
 
@@ -363,7 +361,6 @@ impl AgentPanel {
         self.settings_notice = None;
         self.stale = false;
         self.pending = None;
-        self.refresh_stops();
         cx.notify();
     }
 
@@ -902,8 +899,6 @@ impl AgentPanel {
         };
         if self.messages[ix].text.trim().is_empty() {
             self.remove_message(ix, cx);
-        } else {
-            self.refresh_stops();
         }
     }
 
@@ -929,7 +924,6 @@ impl AgentPanel {
         self.scroll
             .update(cx, |scroll, cx| scroll.splice(ix..ix, 1, cx));
         self.rows += 1;
-        self.refresh_stops();
         cx.notify();
         ix
     }
@@ -939,7 +933,6 @@ impl AgentPanel {
         self.scroll
             .update(cx, |scroll, cx| scroll.splice(ix..ix + 1, 0, cx));
         self.rows -= 1;
-        self.refresh_stops();
     }
 
     pub(super) fn index_of(&self, id: u64) -> Option<usize> {

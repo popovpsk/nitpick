@@ -26,7 +26,8 @@ use crate::settings_store::{SettingsStore, clamp_agent_panel_width, settings, up
 
 pub(super) use context::{ReviewContext, from_view};
 pub(super) use links::{
-    LinkPlan, PendingSelection, Step, StopStep, can_link_selection, plan_link, selection_span,
+    LinkPlan, PendingSelection, can_link_selection, locate_selection, patch_sides, plan_link,
+    selection_span,
 };
 pub(super) use panel::frame;
 pub(super) use run::init;
@@ -63,7 +64,6 @@ pub(super) enum Lookup {
 
 pub(super) enum AgentEvent {
     OpenSettings,
-    Stop(Step),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,9 +135,6 @@ pub(super) struct AgentPanel {
     rows: usize,
     input: Entity<TextareaState>,
     pending: Option<PendingSelection>,
-    stop_cursor: Option<usize>,
-    stops_owner: Option<u64>,
-    stops_label: Option<SharedString>,
     live: Option<Live>,
     generation: u64,
     operation: u64,
@@ -207,9 +204,6 @@ impl AgentPanel {
             rows: 0,
             input,
             pending: None,
-            stop_cursor: None,
-            stops_owner: None,
-            stops_label: None,
             live: None,
             generation: 0,
             operation: 0,

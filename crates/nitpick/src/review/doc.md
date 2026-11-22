@@ -54,8 +54,8 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   a viewed-marks change and a hidden-files change. A single-commit view is skipped, so the
   assistant always describes the whole review. The other direction lives in `mod.rs`:
   `open_diff_link` (the `OpenDiffLink` action a click on a `diff:` link dispatches),
-  `step_stop` (`AgentNextStop` / `AgentPrevStop` and the panel's stop buttons) and `ask_agent`
-  (`AskAgent`, which reads the diff's selected lines and text).
+  and `ask_agent` / `ask_agent_at` (`AskAgent` and the diff area's "Ask the assistant" menu
+  item, which read the diff's selected lines, or locate its selected text in the patch).
 - `branch_picker.rs` — `BranchPickers`: one fuzzy `Picker` per side of a branch review, the
   branch list loaded when one opens, and the pick → `ReviewEvent::Open`.
 - `commit_picker.rs` — `CommitPicker`: the header's commits button state (the chosen
@@ -510,7 +510,10 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   for the target file, the mode is switched off first (synchronously) because its line numbers
   differ; the scroll is skipped while content is still pending, which after that switch it never is.
   `AskAgent` puts a link to the selection into the assistant's input; the selection is not
-  linked in the single-commit view or on the old side of an interdiff (`agent/doc.md`).
+  linked in the single-commit view or on the old side of an interdiff (`agent/doc.md`). The
+  diff area has a context menu with that one item while the assistant is enabled; the hover
+  callback that tracks the hovered line therefore runs without comments too, and only asks for
+  a re-render when it moves the comment marker.
 - Approve button (left of the refresh button): "Approve" (with the count when others
   approved), "Approved" in the success style once the user approved (a click withdraws on
   GitLab), or just the count when the user can't approve (their own request); hidden when

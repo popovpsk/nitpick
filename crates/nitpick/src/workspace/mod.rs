@@ -278,7 +278,9 @@ impl Workspace {
                     cx.notify();
                 }
                 ReviewEvent::Open(source) => this.open_review(source.clone(), window, cx),
-                ReviewEvent::OpenSettings => this.show_settings(window, cx),
+                ReviewEvent::OpenAssistantSettings => {
+                    this.open_settings(Some(SettingsSection::Assistant), window, cx)
+                }
                 ReviewEvent::EditHiddenFiles => {
                     this.open_settings(Some(SettingsSection::HiddenFiles), window, cx)
                 }

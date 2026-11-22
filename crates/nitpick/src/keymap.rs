@@ -9,10 +9,10 @@ use gpui::{
 use ui_resources::i18n::Strings;
 
 use crate::review::{
-    AddComment, AgentNextStop, AgentPrevStop, AskAgent, CollapseSelected, CopyPath, ExpandSelected,
-    FindFile, FindInFile, FocusDiff, FocusTree, NextChange, NextFile, OpenInEditor, OpenSelected,
-    PreviousChange, PreviousFile, Refresh, SelectNext, SelectPrevious, ToggleAgent, ToggleBlame,
-    ToggleTree, ToggleViewed,
+    AddComment, AskAgent, CollapseSelected, CopyPath, ExpandSelected, FindFile, FindInFile,
+    FocusDiff, FocusTree, NextChange, NextFile, OpenInEditor, OpenSelected, PreviousChange,
+    PreviousFile, Refresh, SelectNext, SelectPrevious, ToggleAgent, ToggleBlame, ToggleTree,
+    ToggleViewed,
 };
 use crate::settings_store::{SettingsStore, settings, update_settings};
 use crate::workspace::{
@@ -104,22 +104,6 @@ pub static COMMANDS: &[Command] = &[
         defaults: &["secondary-shift-k"],
         action: || Box::new(AskAgent),
         title: |s| s.cmd_ask_assistant.clone(),
-    },
-    Command {
-        id: "review.agent_next_stop",
-        group: Group::Review,
-        context: REVIEW,
-        defaults: &["alt-shift-down"],
-        action: || Box::new(AgentNextStop),
-        title: |s| s.cmd_next_stop.clone(),
-    },
-    Command {
-        id: "review.agent_previous_stop",
-        group: Group::Review,
-        context: REVIEW,
-        defaults: &["alt-shift-up"],
-        action: || Box::new(AgentPrevStop),
-        title: |s| s.cmd_previous_stop.clone(),
     },
     Command {
         id: "review.focus_tree",

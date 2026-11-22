@@ -29,11 +29,11 @@ use review_core::{FileStatus, FileTree};
 use ui_resources::Icons;
 
 use super::{
-    AddComment, AgentNextStop, AgentPrevStop, AskAgent, Busy, COMMENT_LANE, COMMENT_MARKER,
-    CrossHint, FindFile, FindInFile, FocusDiff, FocusTree, LoadState, LoadedReview, NextChange,
-    NextFile, OpenDiffLink, PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource,
-    ReviewView, TREE_SLIDE, ToggleAgent, ToggleBlame, ToggleTree, ToggleViewed, agent,
-    comment_list, comments, file_actions,
+    AddComment, AskAgent, Busy, COMMENT_LANE, COMMENT_MARKER, CrossHint, FindFile, FindInFile,
+    FocusDiff, FocusTree, LoadState, LoadedReview, NextChange, NextFile, OpenDiffLink,
+    PreviousChange, PreviousFile, PullSide, Refresh, ReviewSource, ReviewView, TREE_SLIDE,
+    ToggleAgent, ToggleBlame, ToggleTree, ToggleViewed, agent, comment_list, comments,
+    file_actions,
 };
 use crate::localization::tr;
 use crate::picker::Picker;
@@ -759,6 +759,8 @@ impl ReviewView {
         let measure_view = view.clone();
         let can_comment = self.can_comment_lines();
         let hover_view = view.clone();
+        let can_ask = settings(cx).agent.enabled;
+        let ask_view = view.clone();
         let viewed_bg = theme.success.opacity(0.08);
         let current_viewed = self
             .current_file
@@ -796,7 +798,7 @@ impl ReviewView {
         };
         let find_decorations = self.find.as_ref().map(|find| find.decorations());
         let find_bar = self.render_find_bar(cx);
-        div()
+        let area = div()
             .id("diff-area")
             .relative()
             .flex_1()
@@ -862,7 +864,7 @@ impl ReviewView {
                         .render_annotation(move |annotation, window, cx| {
                             comments::render_annotation(&annotation_view, annotation, window, cx)
                         })
-                        .when(can_comment, |diff| {
+                        .when(can_comment || can_ask, |diff| {
                             diff.on_line_hover(move |position, _, cx| {
                                 hover_view.update(cx, |this, cx| {
                                     if this.set_hovered_line(position) {
@@ -964,8 +966,24 @@ impl ReviewView {
                         })),
                 )
             })
-            .children(find_bar)
+            .children(find_bar);
+        if can_ask {
+            area.context_menu(move |menu, _, cx| {
+                let hovered = ask_view.read(cx).hovered_line();
+                let view = ask_view.clone();
+                menu.item(
+                    PopupMenuItem::new(tr().ask_assistant.clone())
+                        .action(Box::new(AskAgent))
+                        .on_click(move |_, window, cx| {
+                            let hovered = hovered.clone();
+                            view.update(cx, |this, cx| this.ask_agent_at(hovered, window, cx))
+                        }),
+                )
+            })
             .into_any_element()
+        } else {
+            area.into_any_element()
+        }
     }
 
     fn end_split_drag(&mut self, cx: &mut Context<Self>) {
@@ -1307,20 +1325,6 @@ impl Render for ReviewView {
                     cx.propagate();
                 } else {
                     this.ask_agent(window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &AgentNextStop, window, cx| {
-                if window.has_focused_input(cx) {
-                    cx.propagate();
-                } else {
-                    this.step_stop(agent::Step::Next, window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &AgentPrevStop, window, cx| {
-                if window.has_focused_input(cx) {
-                    cx.propagate();
-                } else {
-                    this.step_stop(agent::Step::Previous, window, cx);
                 }
             }))
             .on_action(cx.listener(|this, action: &OpenDiffLink, window, cx| {

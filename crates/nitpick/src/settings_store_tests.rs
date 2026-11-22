@@ -170,3 +170,14 @@ fn a_stored_agent_panel_width_is_clamped_on_load(#[case] stored: &str, #[case] e
         serde_json::from_str(&format!(r#"{{ "agent": {{ "panel_width": {stored} }} }}"#)).unwrap();
     assert_eq!(settings.agent.panel_width, expected);
 }
+
+#[test]
+fn a_binding_for_a_removed_command_still_loads_and_is_kept() {
+    let settings: Settings = serde_json::from_str(
+        r#"{ "keybindings": { "review.agent_next_stop": ["alt-shift-down"] } }"#,
+    )
+    .unwrap();
+    assert!(crate::keymap::command("review.agent_next_stop").is_none());
+    let text = serde_json::to_string(&settings).unwrap();
+    assert!(text.contains("review.agent_next_stop"));
+}

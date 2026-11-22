@@ -33,7 +33,7 @@ window options and opening windows (`main.rs`), the settings window (`settings_w
 ## Spec
 
 - Settings open through calls and events (`StartEvent::OpenSettings`,
-  `ReviewEvent::OpenSettings`, `ReviewEvent::EditHiddenFiles`), never only through a
+  `ReviewEvent::OpenAssistantSettings`, `ReviewEvent::EditHiddenFiles`), never only through a
   dispatched action: an action starts from the focused element, and after a popover or menu
   closes nothing in the window may be focused, so it would not reach `Workspace`. Each passes
   this window and its repository as the `Opener`, and a repository switch tells the settings

@@ -96,6 +96,26 @@ pub fn set_option_params(session: &str, option: &str, value: &Value) -> Value {
     json!({"sessionId": session, "configId": option, "value": value})
 }
 
+pub fn set_model_params(session: &str, model: &str) -> Value {
+    json!({"sessionId": session, "modelId": model})
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelState {
+    pub current: Option<String>,
+}
+
+pub fn model_state(result: &Value) -> Option<ModelState> {
+    let models = result.get("models")?;
+    models.get("availableModels")?.as_array()?;
+    Some(ModelState {
+        current: models
+            .get("currentModelId")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
 pub fn session_id(result: &Value) -> Option<&str> {
     result
         .get("sessionId")

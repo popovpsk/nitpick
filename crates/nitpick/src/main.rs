@@ -7,6 +7,7 @@ use gpui_component::*;
 
 use crate::workspace::Workspace;
 
+pub mod agent_models;
 pub mod agent_profiles;
 pub mod app_menu;
 pub mod db;

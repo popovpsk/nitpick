@@ -133,6 +133,13 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
 - No signal for an unknown model is documented; `ModelNotFound` is a text hint on the OpenAI API
   error.
 
+## Model list
+
+- `catalog::codex_models` (unverified, written from public documentation): after `initialize` /
+  `initialized`, `model/list` with `{}` and then `{cursor}` until `nextCursor` is null (at most
+  20 pages); `hidden` entries are skipped, the value passed back is `model` (else `id`), the
+  label `displayName`, `isDefault` marks the default.
+
 ## Decisions
 
 - Native `codex app-server` rather than `codex exec --json`: only the server streams text deltas.

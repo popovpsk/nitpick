@@ -45,6 +45,12 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   included) still loads; the GitHub host default and override; syntax
   palettes per appearance; fitting the split ratio to a width; the `agent` section round-trips
   and its panel width is clamped.
+- `agent_models.rs` — the model picker's data, GPUI-free apart from the cache's `Global`:
+  `choices` (the harness-default entry first, named after the default model when the harness
+  marks one, then every fetched model as "name (id)" with its description, then the stored id as
+  a custom entry when the list lacks it), `position`, `effective_command` (the typed command or
+  the profile's default, what the fetch is keyed on) and `ModelCache` (fetched lists per kind
+  and command, kept for the process).
 - `agent_profiles.rs` — the assistant's profile model over `AgentSettings`, GPUI-free: the
   built-in table (`claude`, `codex`, `opencode`, `deepseek`, `pi`), custom profiles
   (`custom:<name>`, generic ACP), `profiles`, `profile`, `active_profile` (falls back to
@@ -63,8 +69,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   nothing in a window is focused. Like `Workspace`, the view refocuses itself on the next frame
   when its window is active and nothing is focused, so Escape and shortcuts keep working.
 - `settings_view_tests.rs` — the order of the per-repository hidden-file blocks.
-- `settings_view.rs` — the settings view, three pages: Settings, Hidden files and
-  Shortcuts (the shortcut groups stay out of the general page). `reveal` opens a page by
+- `settings_view.rs` — the settings view, four pages: Settings, Hidden files, Shortcuts and
+  Assistant (the shortcut groups stay out of the general page, and nothing assistant-related
+  is on it). `SettingsSection::Assistant` opens the last page (`ASSISTANT_PAGE`), which is
+  where the assistant panel's "open settings" lands (`ReviewEvent::OpenAssistantSettings`). `reveal` opens a page by
   re-creating gpui-component's `Settings` under a new id with that page selected: its
   selection lives in keyed state and only a fresh state takes `default_selected_index`, so a
   new window starts on the first page. Escape and ⌘/Ctrl-W close the window; the view takes
@@ -76,8 +84,7 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   the button and the status only where the updater is built in), then theme and syntax colors (hover
   previews), Zed theme import, review options (the editor command is saved 400 ms
   after typing stops by a detached task, and reloads when the saved value differs from the
-  one it last loaded or saved and the field is not focused), the assistant group (see
-  Rules), hidden-file patterns (all
+  one it last loaded or saved and the field is not focused), hidden-file patterns (all
   repositories, then one block per repository — the window it was opened from first, then
   every other open repository and every repository that has rules, by name, each with its
   path under the title (`hidden_roots`, `RepoRules`; a block whose repository lost its rules
@@ -154,7 +161,10 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   also bound by gpui-component itself (the diff's arrows, `tab`) is flagged, since the deeper
   built-in binding wins where that control has focus.
 
-- Assistant settings group: the dropdown sets `agent.active`; the command and model fields
+- Assistant page, three groups (they expand in the sidebar like the other pages' groups):
+  General (the enabled and auto-overview switches), Agents (the profile dropdown, command,
+  model, "Check", the no-sandbox warning, custom agents) and Instructions. The dropdown sets
+  `agent.active`; the command and model fields
   always show the stored override of the profile `active_profile` resolves (an empty field
   shows the default command as its placeholder) and are saved 400 ms after typing by writing
   both values for the profile on screen, read when the timer fires, so a profile switch never
@@ -164,7 +174,15 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   custom-agents field saves the parsed list and keeps the lines it ignored (reported under
   the field) until the settings change from elsewhere; the instructions field saves its
   trimmed text 400 ms after typing and is reloaded from the settings only while it is not
-  focused; the no-sandbox warning is built into
+  focused. The model control is a searchable `Select` over `agent_models::choices` with the
+  free-text field kept under it (the field stays the one stored value: picking an entry sets
+  it, typing an id outside the list leaves a custom entry selected), and a refresh button. The
+  list comes from `agent::models` when the screen opens, when the profile or its command
+  changes (after the 400 ms save delay), and on refresh; results are cached per (kind, command)
+  in `ModelCache`, only the latest request counts (`catalog_generation`), and while it loads or
+  after a failure or an empty answer the select is absent and only the free-text field shows;
+  a failure is logged at debug level, never a notification. The items are rebuilt when the
+  list or the stored value changes, never in `render`. The no-sandbox warning is built into
   the group only for a profile without one, from the cached profile, so `render` never
   resolves profiles.
 - Syntax colors replace only `highlight_theme.style.syntax`, keeping the app theme's other
@@ -220,6 +238,12 @@ packaging (`Cargo.toml` `[package.metadata.packager]`).
   as `vue`; its parser ABI must be one gpui-component's `tree-sitter` loads.
 
 ## Decisions
+
+- The assistant's settings are their own top-level page, last in the sidebar, not a group of the
+  general page: the owner wanted everything assistant-related in one place, and the panel's
+  "open settings" lands there directly.
+- The model is picked from the list the harness offers, with free text kept as the fallback and
+  the way to type an id the list lacks; `settings.json` still holds the model as a string.
 
 - The default theme (System) is Zed's One Light / One Dark.
 

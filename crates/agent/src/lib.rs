@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod acp;
 pub mod brief;
+pub mod catalog;
 pub mod claude;
 pub mod codex;
 pub mod jsonrpc;
@@ -15,6 +16,7 @@ pub mod session;
 #[cfg(test)]
 mod tests;
 
+pub use catalog::{Model, models};
 pub use registry::{quit, shutdown_all};
 pub use session::Session;
 

@@ -277,6 +277,24 @@ impl Conversation {
     async fn configure(&mut self, result: &Value) -> Result<(), Stop> {
         let limit = self.limits.option;
         let wanted = self.launch.model.clone().filter(|model| !model.is_empty());
+        if let (Some(model), None) = (&wanted, wire::config_option(result, "model"))
+            && let Some(state) = wire::model_state(result)
+            && state.current.as_deref() != Some(model.as_str())
+        {
+            let params = wire::set_model_params(&self.session, model);
+            match self.call("session/set_model", params, limit).await {
+                Ok(_) => {}
+                Err(Fault::Rpc(error)) => {
+                    return Err(Stop::Failed(Failure {
+                        kind: FailureKind::ModelNotFound,
+                        message: error.message,
+                    }));
+                }
+                Err(fault) => {
+                    return Err(self.setup_stop("session/set_model", fault, limit, false));
+                }
+            }
+        }
         if let (Some(model), Some(option)) = (wanted, wire::config_option(result, "model"))
             && !option.is_current(&model)
         {

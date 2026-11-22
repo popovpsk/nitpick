@@ -1,5 +1,6 @@
 mod acp;
 mod brief;
+mod catalog;
 mod claude;
 mod codex;
 mod command;

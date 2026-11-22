@@ -86,8 +86,6 @@ actions!(
         AddComment,
         ToggleAgent,
         AskAgent,
-        AgentNextStop,
-        AgentPrevStop,
     ]
 );
 
@@ -295,7 +293,7 @@ impl DiscussionView {
 pub enum ReviewEvent {
     Changed,
     Open(ReviewSource),
-    OpenSettings,
+    OpenAssistantSettings,
     EditHiddenFiles,
 }
 
@@ -450,9 +448,8 @@ impl ReviewView {
         let agent_events = cx.subscribe_in(
             &agent,
             window,
-            |this, _, event: &agent::AgentEvent, window, cx| match event {
-                agent::AgentEvent::OpenSettings => cx.emit(ReviewEvent::OpenSettings),
-                agent::AgentEvent::Stop(step) => this.step_stop(*step, window, cx),
+            |_, _, event: &agent::AgentEvent, _, cx| match event {
+                agent::AgentEvent::OpenSettings => cx.emit(ReviewEvent::OpenAssistantSettings),
             },
         );
         let agent_sync = cx.observe(&agent, |_, _, cx| cx.notify());
@@ -1705,8 +1702,6 @@ impl ReviewView {
         let Some(link) = diff_link::parse(url) else {
             return;
         };
-        self.agent
-            .update(cx, |panel, cx| panel.note_link_clicked(&link, cx));
         self.go_to_link(link, window, cx);
     }
 
@@ -1784,48 +1779,65 @@ impl ReviewView {
         cx.notify();
     }
 
-    fn step_stop(&mut self, step: agent::Step, window: &mut Window, cx: &mut Context<Self>) {
-        let outcome = self.agent.update(cx, |panel, cx| panel.step_stop(step, cx));
-        match outcome {
-            agent::StopStep::Go(link) => self.go_to_link(link, window, cx),
-            agent::StopStep::NoOverview => {
-                self.notify(Notification::info(tr().assistant_no_overview.clone()), cx)
-            }
-            agent::StopStep::NoStops => {
-                self.notify(Notification::info(tr().assistant_no_stops.clone()), cx)
-            }
-        }
+    pub fn ask_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let hovered = self.hovered_line.clone();
+        self.ask_agent_at(hovered, window, cx);
     }
 
-    pub fn ask_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn ask_agent_at(
+        &mut self,
+        hovered: Option<DiffLinePosition>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !settings(cx).agent.enabled || !matches!(self.load_state, LoadState::Ready) {
             return;
         }
-        let selection = self.selection_for_agent(cx);
+        let selection = self.selection_for_agent(hovered.as_ref(), cx);
         self.agent
             .update(cx, |panel, cx| panel.ask(selection, window, cx));
     }
 
-    fn selection_for_agent(&self, cx: &App) -> Option<agent::PendingSelection> {
+    fn selection_for_agent(
+        &self,
+        hovered: Option<&DiffLinePosition>,
+        cx: &App,
+    ) -> Option<agent::PendingSelection> {
         let review = self.review.as_ref()?;
         let diff = self.diff.read(cx);
-        let range = diff.selected_lines()?;
         let side_of = |side: DiffSide| match side {
             DiffSide::Modified => Side::New,
             DiffSide::Original => Side::Old,
         };
-        let (side, start, end) = agent::selection_span(
-            side_of(range.side()),
-            u32::try_from(range.start()).ok()?,
-            side_of(range.end_side()),
-            u32::try_from(range.end()).ok()?,
-        );
         let interdiff = self.interdiff.is_some() || self.interdiff_loading.is_some();
+        let (path, side, start, end) = match diff.selected_lines() {
+            Some(range) => {
+                let (side, start, end) = agent::selection_span(
+                    side_of(range.side()),
+                    u32::try_from(range.start()).ok()?,
+                    side_of(range.end_side()),
+                    u32::try_from(range.end()).ok()?,
+                );
+                let file = review.file_index(range.path().as_str())?;
+                (review.files[file].path.to_string(), side, start, end)
+            }
+            None => {
+                if interdiff {
+                    return None;
+                }
+                let text = diff.selected_text(cx);
+                let shown = review.files.get(self.current_file?)?;
+                let section = review.patch.get(shown.patch.clone())?;
+                let (old, new) = agent::patch_sides(section);
+                let hovered = hovered
+                    .and_then(|at| Some((side_of(at.side()), u32::try_from(at.line()).ok()?)));
+                let (side, start, end) = agent::locate_selection(&old, &new, &text, hovered)?;
+                (shown.path.to_string(), side, start, end)
+            }
+        };
         if !agent::can_link_selection(self.commit.is_some(), interdiff, side) {
             return None;
         }
-        let file = review.file_index(range.path().as_str())?;
-        let path = review.files[file].path.to_string();
         Some(agent::PendingSelection::new(
             path,
             side,
@@ -1954,15 +1966,19 @@ impl ReviewView {
             return false;
         }
         self.hovered_line = Some(position.clone());
-        self.comment_marker = self
-            .line_commentable(position)
+        let can_comment = self.can_comment_lines();
+        self.comment_marker = (can_comment && self.line_commentable(position))
             .then(|| DiffGutterMarker::new(COMMENT_MARKER, position.clone()));
-        true
+        can_comment
+    }
+
+    pub(super) fn hovered_line(&self) -> Option<DiffLinePosition> {
+        self.hovered_line.clone()
     }
 
     pub(super) fn leave_diff(&mut self) -> bool {
-        self.comment_marker = None;
-        self.hovered_line.take().is_some()
+        self.hovered_line = None;
+        self.comment_marker.take().is_some()
     }
 
     pub(super) fn comment_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
