@@ -195,17 +195,20 @@ pub(super) fn answered(outcome: &Outcome) -> bool {
 
 pub(super) fn auto_attempted_after(
     current: Option<&str>,
-    request: &Request,
+    kind: AgentKind,
     turn_head: &str,
     outcome: &Outcome,
 ) -> Option<String> {
-    let stopped_overview =
-        matches!(outcome, Outcome::Cancelled) && request.kind() == AgentKind::Overview;
+    let stopped_overview = matches!(outcome, Outcome::Cancelled) && kind == AgentKind::Overview;
     if stopped_overview {
         Some(turn_head.to_owned())
     } else {
         current.map(str::to_owned)
     }
+}
+
+pub(super) fn must_start(live: bool, started_now: bool) -> bool {
+    !live && !started_now
 }
 
 pub(super) fn brief_delivered(was: bool, carried: bool, outcome: &Outcome) -> bool {

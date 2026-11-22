@@ -3,7 +3,16 @@ use std::ffi::OsString;
 use crate::Error;
 use rstest::rstest;
 
-use crate::process::{Environment, Grace, Invocation, REAPER_SCRIPT, reaper_args, reaper_path};
+use crate::process::{
+    Environment, Grace, Invocation, REAPER_SCRIPT, reaper_args, reaper_search_path,
+};
+
+fn path_of(entries: &[&str]) -> String {
+    std::env::join_paths(entries)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
 
 fn env_with(pairs: &[(&str, &str)]) -> Environment {
     let vars = pairs
@@ -65,23 +74,24 @@ fn the_reaper_script_checks_for_sleep_before_it_signals_anything() {
 }
 
 #[test]
-fn the_reaper_needs_a_sleep_on_the_search_path() {
-    let with = tempfile::tempdir().unwrap();
-    let without = tempfile::tempdir().unwrap();
-    let program = with
-        .path()
-        .join(if cfg!(windows) { "sleep.exe" } else { "sleep" });
-    std::fs::write(&program, "").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+fn the_reaper_script_waits_before_every_signal_and_gives_up_without_sleep() {
+    assert_eq!(REAPER_SCRIPT.matches("|| exit 0").count(), 3);
+    let second = REAPER_SCRIPT.find("sleep \"$kill\" || exit 0").unwrap();
+    let kill = REAPER_SCRIPT.find("kill -s KILL").unwrap();
+    assert!(second < kill);
+}
+
+#[test]
+fn the_reaper_searches_the_merged_path_then_the_system_folders() {
     let mut env = env_with(&[("PATH", "/nowhere")]);
-    env.set("PATH", &with.path().to_string_lossy());
-    assert_eq!(reaper_path(&env), Some(env.path()));
-    env.set("PATH", &without.path().to_string_lossy());
-    assert_eq!(reaper_path(&env), None);
+    env.set("PATH", &path_of(&["/opt/tools/bin", "/bin"]));
+    let expected = path_of(&["/opt/tools/bin", "/bin", "/usr/bin"]);
+    assert_eq!(reaper_search_path(&env), std::ffi::OsString::from(expected));
+    env.set("PATH", "");
+    assert_eq!(
+        reaper_search_path(&env),
+        std::ffi::OsString::from(path_of(&["/usr/bin", "/bin"]))
+    );
 }
 
 #[test]

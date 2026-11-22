@@ -90,14 +90,16 @@ sessions without the login shell.
   ladder after the app is gone: it sleeps 3 s, sends SIGTERM to every live session's group,
   sleeps 2 s, sends SIGKILL. `quit` first asks every driver to shut down (which drops stdin), then
   starts the reaper; the pipes close with the app at the latest, so the harness sees EOF at once
-  and a polite one (Claude Code finishing a token refresh) exits well inside the 3 s. The reaper
-  gets exactly the app's merged `PATH` (`Environment::cached()`, which never waits for the
-  login-shell snapshot) and nothing else, so `sleep` is found wherever the user's PATH has it
-  (NixOS has none in `/usr/bin`). The wait fails closed: `quit` does not start the reaper when
-  `sleep` is not on that PATH (it logs a warning), and the script itself exits before any signal
-  if `sleep` is missing or the first `sleep` fails. No portable wait exists in `sh` without
-  `sleep` (`read -t` is not POSIX), so without it a harness only gets stdin EOF: a leak is
-  possible, an early kill that costs the user's login is not.
+  and a polite one (Claude Code finishing a token refresh) exits well inside the 3 s. `quit` does
+  no file-system access of its own (a hung mount on the user's `PATH` must not block quitting):
+  it only builds the reaper's `PATH` and spawns `/bin/sh`. That `PATH` is the app's merged one
+  (`Environment::cached()`, which never waits for the login-shell snapshot) with `/usr/bin` and
+  `/bin` appended when missing, so `sleep` is found wherever the user has it (NixOS has none in
+  `/usr/bin`) and when the snapshot and `PATH` are empty; `spawn_reaper` takes an exact `PATH`.
+  The wait fails closed inside the detached script: it exits before any signal if `sleep` is not
+  found (`command -v`), and after either `sleep` that fails. No portable wait exists in `sh`
+  without `sleep` (`read -t` is not POSIX), so without it a harness only gets stdin EOF: a leak
+  is possible, an early kill that costs the user's login is not.
   The reaper's script is a constant; the only data it receives are the two delays and the group
   ids, as arguments that are plain decimal numbers (ids outside 2..=`i32::MAX` are dropped), never
   interpolated into the script. A group id is its leader's pid and stays reserved while any member

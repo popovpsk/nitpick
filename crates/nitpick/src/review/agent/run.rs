@@ -183,6 +183,7 @@ impl AgentPanel {
 
     pub(super) fn end_process(&mut self, cx: &mut Context<Self>) {
         self.operation += 1;
+        self.starting = None;
         self._dispatch = Task::ready(());
         if let Some(turn) = self.turn.take() {
             self.finish_assistant(turn.assistant, cx);
@@ -346,9 +347,17 @@ impl AgentPanel {
         match self.phase {
             Phase::Starting => {
                 self.operation += 1;
-                self.stale = false;
                 self._dispatch = Task::ready(());
+                if let Some((kind, head)) = self.starting.take() {
+                    self.auto_attempted = logic::auto_attempted_after(
+                        self.auto_attempted.as_deref(),
+                        kind,
+                        &head,
+                        &Outcome::Cancelled,
+                    );
+                }
                 self.set_phase(Phase::Idle, cx);
+                self.after_turn(cx);
             }
             Phase::Running => {
                 if let Some(live) = &self.live {
@@ -418,6 +427,7 @@ impl AgentPanel {
         let need_start = self.live.is_none();
         let scratch = scratch_dir();
         let db = crate::db::db(cx);
+        self.starting = Some((request.kind(), context.head.clone()));
         self.set_phase(Phase::Starting, cx);
         self._dispatch = cx.spawn(async move |this, cx| {
             let plan = context.workdir.clone();
@@ -480,6 +490,11 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if operation != self.operation {
+            return;
+        }
+        self.starting = None;
+        if logic::must_start(self.live.is_some(), started.is_some()) {
+            self.dispatch(request, retried, cx);
             return;
         }
         if let Some(started) = started {
@@ -715,7 +730,7 @@ impl AgentPanel {
             }
             self.auto_attempted = logic::auto_attempted_after(
                 self.auto_attempted.as_deref(),
-                &turn.request,
+                turn.request.kind(),
                 &turn.head,
                 &outcome,
             );

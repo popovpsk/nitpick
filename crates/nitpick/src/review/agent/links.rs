@@ -239,6 +239,19 @@ pub(super) fn compose_question(input: &str, pending: Option<&PendingSelection>) 
     Question { shown, prompt }
 }
 
+fn line_break_len(text: &str) -> usize {
+    if text.ends_with("\r\n") {
+        2
+    } else {
+        usize::from(text.ends_with('\n'))
+    }
+}
+
+fn ends_with_blank_line(text: &str) -> bool {
+    let last = line_break_len(text);
+    last > 0 && line_break_len(&text[..text.len() - last]) > 0
+}
+
 pub(super) fn without_marker(text: &str, marker: &str) -> String {
     let horizontal = |c: char| c == ' ' || c == '\t';
     let mut out = String::with_capacity(text.len());
@@ -256,8 +269,11 @@ pub(super) fn without_marker(text: &str, marker: &str) -> String {
         match (line_start, newline) {
             (true, Some(after)) => {
                 rest = after;
-                if out.ends_with("\n\n") {
-                    rest = rest.strip_prefix('\n').unwrap_or(rest);
+                if ends_with_blank_line(&out) {
+                    rest = rest
+                        .strip_prefix("\r\n")
+                        .or_else(|| rest.strip_prefix('\n'))
+                        .unwrap_or(rest);
                 }
             }
             (false, _) if !rest.is_empty() && newline.is_none() => out.push(' '),

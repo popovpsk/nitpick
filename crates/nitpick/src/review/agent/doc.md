@@ -119,7 +119,9 @@ Not here: running the harness (`agent` crate), the profile table and settings
   the stored session id of `(repo, key, profile)` from the database, calls `Session::start` on
   `net_runtime::unblock` (the first call waits for the login-shell snapshot), and comes back to
   `dispatched`, which discards a result whose `operation` is no longer current (a stop, a review
-  change or a settings change in between). A chat message on a live session whose brief was
+  change or a settings change in between). `dispatched` starts a session itself
+  (one more `dispatch`, which then has none to lose) when the request found a live session at
+  dispatch time and that session ended while the work directory was being resolved. A chat message on a live session whose brief was
   delivered skips all of that and goes out at once.
 - Work directory: local changes use the repository root. Branches and merge requests use the
   source branch's own checkout (`checkout_of`), else the root. `disk_matches_head` is whether
@@ -160,8 +162,10 @@ Not here: running the harness (`agent` crate), the profile table and settings
   is added (nothing was answered, so "partial" would be false), the brief and the comments stay
   pending (`logic::answered` is false), and a cancelled overview or update pins `auto_attempted`
   to the turn's head, so with `auto_overview` on it does not restart until the head, the
-  settings or an explicit request change; a Stop while the session is still starting clears
-  `stale` for the same reason. A cancelled question's pending selection is already cleared at
+  settings or an explicit request change; a Stop while the session is still starting goes
+  through the same `auto_attempted_after` with the request that was starting, and then evaluates
+  a head change seen meanwhile, so both stop paths end alike: a stopped overview or update is
+  not retried for its head, a stopped question pins nothing, and a newer head is still handled. A cancelled question's pending selection is already cleared at
   send, so its marker must be asked for again (`AskAgent`); the link stays in the stored message.
   Any other failure becomes `Phase::Failed` with a localized text; an `Exited` during a turn becomes a failure too and leaves the panel ready for
   a new session that resumes the stored id.

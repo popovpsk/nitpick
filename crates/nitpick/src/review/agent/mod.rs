@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use ::agent::Session;
 use ::agent::process::{Environment, Invocation};
+use app_db::AgentKind;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, Window,
 };
@@ -131,6 +132,7 @@ pub(super) struct AgentPanel {
     generation: u64,
     operation: u64,
     turn: Option<Turn>,
+    starting: Option<(AgentKind, String)>,
     seen: HashMap<String, u64>,
     session_id: Option<String>,
     settings_used: bool,
@@ -200,6 +202,7 @@ impl AgentPanel {
             generation: 0,
             operation: 0,
             turn: None,
+            starting: None,
             seen: HashMap::new(),
             session_id: None,
             settings_used: false,

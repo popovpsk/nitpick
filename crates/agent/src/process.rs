@@ -673,7 +673,7 @@ kill=$2
 shift 2
 sleep \"$term\" || exit 0
 for g in \"$@\"; do kill -s TERM -- \"-$g\" 2>/dev/null; done
-sleep \"$kill\"
+sleep \"$kill\" || exit 0
 for g in \"$@\"; do kill -s KILL -- \"-$g\" 2>/dev/null; done
 ";
 
@@ -701,8 +701,17 @@ pub fn reaper_args(groups: &[u32], grace: Grace) -> Option<Vec<String>> {
     Some(args)
 }
 
-pub fn reaper_path(env: &Environment) -> Option<&OsStr> {
-    resolve_program("sleep", env.path(), &pathext()).map(|_| env.path())
+pub fn reaper_search_path(env: &Environment) -> OsString {
+    let mut entries: Vec<PathBuf> = std::env::split_paths(env.path())
+        .filter(|entry| !entry.as_os_str().is_empty())
+        .collect();
+    for fallback in ["/usr/bin", "/bin"] {
+        let fallback = PathBuf::from(fallback);
+        if !entries.contains(&fallback) {
+            entries.push(fallback);
+        }
+    }
+    std::env::join_paths(&entries).unwrap_or_else(|_| env.path().to_os_string())
 }
 
 #[cfg(unix)]
@@ -730,16 +739,7 @@ pub fn spawn_reaper(
 
 #[cfg(unix)]
 pub fn reap(groups: &[u32], grace: Grace, env: &Environment) -> std::io::Result<()> {
-    if reaper_args(groups, grace).is_none() {
-        return Ok(());
-    }
-    let Some(path) = reaper_path(env) else {
-        log::warn!(
-            "no `sleep` on the search path: the shutdown ladder cannot outlive the app, so the harnesses only see the end of their input"
-        );
-        return Ok(());
-    };
-    spawn_reaper(groups, grace, path).map(drop)
+    spawn_reaper(groups, grace, &reaper_search_path(env)).map(drop)
 }
 
 #[cfg(not(unix))]

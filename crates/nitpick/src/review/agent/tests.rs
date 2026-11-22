@@ -910,6 +910,11 @@ fn a_question_with_the_marker_carries_the_selected_text() {
 #[case::own_line_at_the_end("One.\n\nM", "One.")]
 #[case::own_line_with_indentation("One.\n  M  \nTwo.", "One.\nTwo.")]
 #[case::crlf("One.\r\nM\r\nTwo.", "One.\r\nTwo.")]
+#[case::crlf_between_paragraphs("One.\r\n\r\nM\r\n\r\nTwo.", "One.\r\n\r\nTwo.")]
+#[case::crlf_at_the_end("One.\r\n\r\nM", "One.")]
+#[case::mixed_blank_line_crlf_then_lf("One.\r\n\nM\n\r\nTwo.", "One.\r\n\nTwo.")]
+#[case::mixed_blank_line_lf_then_crlf("One.\n\r\nM\r\n\nTwo.", "One.\n\r\nTwo.")]
+#[case::mixed_plain_lines("One.\nM\r\nTwo.", "One.\nTwo.")]
 #[case::code_after_the_marker(
     "M what does this do?\n\n    fn f() {\n        g();\n    }",
     "what does this do?\n\n    fn f() {\n        g();\n    }"
@@ -1140,7 +1145,20 @@ fn a_cancelled_overview_request_is_not_retried_for_the_same_head(
     #[case] expected: Option<&str>,
 ) {
     assert_eq!(
-        logic::auto_attempted_after(current, &request, "h1", &outcome).as_deref(),
+        logic::auto_attempted_after(current, request.kind(), "h1", &outcome).as_deref(),
         expected
     );
+}
+
+#[rstest]
+#[case::session_still_there(true, false, false)]
+#[case::session_just_started(false, true, false)]
+#[case::session_lost_meanwhile(false, false, true)]
+#[case::both_present(true, true, false)]
+fn a_dispatch_without_a_live_session_starts_one(
+    #[case] live: bool,
+    #[case] started_now: bool,
+    #[case] expected: bool,
+) {
+    assert_eq!(logic::must_start(live, started_now), expected);
 }
