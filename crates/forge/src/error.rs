@@ -10,6 +10,8 @@ pub enum Error {
     CannotReply(String),
     #[error("draft {0} is not known")]
     UnknownDraft(String),
+    #[error("GitLab saved the review draft without its line (GitLab before 16.3)")]
+    DraftLineIgnored,
     #[error("{0} is not supported here")]
     Unsupported(&'static str),
 }

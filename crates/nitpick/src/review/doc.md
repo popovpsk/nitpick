@@ -136,8 +136,9 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
 - `find_bar.rs` — `FindBar`: find in the shown file (the text of both sides read off the UI
   thread, line hits as `Diff` decorations, the overlay bar).
 - `since_viewed.rs` — the "since last view" mode: which files were viewed at an earlier
-  version (`seen_before`), loading and installing the `Interdiff`, the toolbar toggle and
-  the tree badge.
+  version (`seen_before`), loading and installing the `Interdiff`, line positions between
+  it and the request's diff (`shown_position`, `review_position`, `reveal_line`), the
+  toolbar toggle and the tree badge.
 - `file_actions.rs` — `CopyPath`, `OpenInEditor` (a target outside the checkout, through a
   symlink, is refused; with no editor command a `launchable` file — a script, binary, app
   bundle or shortcut — is revealed in the file manager, `reveal_invocation`, instead of being
@@ -168,7 +169,9 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
 - Diff content: `install_content` is the one place a file's diff goes into the `DiffState`:
   the review's own file (`diff_file`, parsed on the UI thread when it is shown), or the `Interdiff` when "since last view" applies to the
   file. While an interdiff loads the state is empty (`content_pending`), and change steps
-  wait; a cross-file step remembers its direction (`pending_jump`) and lands once it is in.
+  wait; a cross-file step remembers its direction (`pending_jump`) and a reveal (a thread,
+  a draft, the composer: `reveal_line`) its line (`pending_scroll`), and they land once it
+  is in.
 - "Since last view" (`since_mode`, view state, off by default): a file whose current
   fingerprint is not marked viewed in the store but an older version of it is
   (`ViewedStore::viewed_versions_except`, newest first, skipping versions with the current
@@ -176,8 +179,16 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   in the tree while unviewed, and the toolbar shows the toggle while it is shown (viewed or
   not). With the toggle on such a file shows `git diff <viewed new blob> <current new blob>`
   (full context, the review's whitespace setting, named after the file), or a "nothing
-  changed" state when the blobs match; comments, line discussions and blame are off for it,
-  and find and change navigation follow it. Not for the work-tree review (its blobs are
+  changed" state when the blobs match; blame is off for it, and find and change navigation
+  follow it. Comments stay on: its new side is the request's new side, so threads, drafts
+  and the composer keep the request's coordinates and are drawn through `shown_position`
+  (a new line as is, an old line at its context line's new number, a removed line not at
+  all), and a line picked in it goes back through `review_position` (an old line of the
+  interdiff via its own map; a line only the viewed version has, or one the request's own
+  map lacks because a huge review fell back to 3 lines of context, explains itself and
+  opens nothing). Revealing a thread, a draft or the composer it cannot draw (or any, when
+  nothing changed) switches the mode off first. Lines folded in it stay folded with their
+  threads until revealed. Not for the work-tree review (its blobs are
   hashed without being written) or binary files; a failed comparison (a blob gone after a
   force push and gc) notifies once and drops that version from the candidates.
 - Files filter: the search button in the Files header (`FindFile`, ⌘/Ctrl-P) slides out a
@@ -383,7 +394,8 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   reloads the discussions (a GitLab submit is several calls and may stop halfway). Drafts load
   with every discussion reload; a failed first load (an old GitLab without the draft notes
   API) leaves `pending` empty and the composer posts directly, and a failed later load keeps
-  the drafts already shown. The verdicts are fixed when the sheet opens (`ReviewForm`), and
+  the drafts already shown. A line draft GitLab stored without its line (`forge`'s
+  `DraftLineIgnored`) keeps the composer open with a notice pointing at "Comment now". The verdicts are fixed when the sheet opens (`ReviewForm`), and
   the header label and the composer's key hints are built when their data changes, not per
   frame. The composer's footer wraps: in a narrow card (the sheet) the key hint keeps one line
   and the buttons move below it instead of squeezing it to a letter-wide column.

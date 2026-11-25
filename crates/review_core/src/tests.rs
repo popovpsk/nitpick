@@ -392,6 +392,22 @@ fn shown_block_starts_follow_the_folding(
 }
 
 #[rstest]
+#[case::context_above_an_addition("..+..", 2, Some(2))]
+#[case::context_below_an_addition("..+..", 3, Some(4))]
+#[case::context_below_a_removal("..-..", 4, Some(3))]
+#[case::removed_line("..-..", 3, None)]
+#[case::past_the_end("..+..", 5, None)]
+#[case::line_zero("..+..", 0, None)]
+fn an_old_line_maps_to_its_new_number_only_when_unchanged(
+    #[case] ops: &str,
+    #[case] old: u32,
+    #[case] expected: Option<u32>,
+) {
+    let map = &line_maps(&whole_file_patch(ops))[0];
+    assert_eq!(map.new_line_for_old(old), expected);
+}
+
+#[rstest]
 #[case::changed_line(".........+..........", Side::New, 10, true)]
 #[case::three_below_an_added_line(".........+..........", Side::New, 13, true)]
 #[case::four_below_an_added_line(".........+..........", Side::New, 14, false)]

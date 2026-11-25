@@ -105,6 +105,22 @@ pub(crate) fn gitlab_position(position: &NewPosition) -> gitlab::NewPosition {
     }
 }
 
+pub(crate) fn gitlab_line_position(position: &Position) -> Option<gitlab::NewPosition> {
+    if position.old_line.is_none() && position.new_line.is_none() {
+        return None;
+    }
+    let new_path = position.new_path.as_ref().or(position.old_path.as_ref())?;
+    Some(gitlab::NewPosition {
+        base_sha: position.base_sha.clone()?,
+        start_sha: position.start_sha.clone()?,
+        head_sha: position.head_sha.clone()?,
+        old_path: position.old_path.as_ref().unwrap_or(new_path).clone(),
+        new_path: new_path.clone(),
+        old_line: position.old_line,
+        new_line: position.new_line,
+    })
+}
+
 pub(crate) fn github_user(user: &github::User) -> User {
     User {
         username: user.login.clone(),

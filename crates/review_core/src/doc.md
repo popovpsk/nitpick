@@ -27,6 +27,7 @@ drawing the tree or deciding when to save (`nitpick/src/review/doc.md`), the pic
 - `line_map.rs` — `file_spans(patch)`: the byte range of each `diff --git` file section, in
   patch order; `line_maps(patch)`: one `LineMap` per `diff --git` file in patch order;
   `LineMap::locate(side, line)` → `LineKind` (context with both numbers, added, removed);
+  `new_line_for_old(old)` → the new number of an unchanged old line (none for a removed one);
   `LineMap::changes()` → each run of changed lines (`Change`: its first line, and an anchor
   up to two context lines above it within the hunk, else the first line);
   `LineMap::rows()` → the patch's rows in display order (removed lines before the added

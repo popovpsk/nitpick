@@ -348,13 +348,7 @@ impl ReviewView {
                     .as_ref()
                     .and_then(|r| r.file_index(position.path()))
                 {
-                    if self.current_file != Some(file) {
-                        self.show_file(file, cx);
-                    }
-                    if !self.content_pending() {
-                        self.diff
-                            .update(cx, |state, cx| state.scroll_to_line(position, cx));
-                    }
+                    self.reveal_line(file, position, cx);
                 }
             }
             ComposerTarget::Reply(id) => {
@@ -445,13 +439,21 @@ impl ReviewView {
             return;
         }
         let id = edit.id.clone();
+        let Some(draft) = self
+            .drafts
+            .pending
+            .as_ref()
+            .and_then(|p| p.drafts.iter().find(|d| d.id == id))
+            .cloned()
+        else {
+            return;
+        };
         self.drafts.busy = true;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
-            let edited = id.clone();
             let result = net_runtime::spawn(async move {
                 ctx.client
-                    .edit_draft(&ctx.project, ctx.request.number, &edited, &body)
+                    .edit_draft(&ctx.project, ctx.request.number, &draft, &body)
                     .await
             })
             .await;
@@ -471,6 +473,7 @@ impl ReviewView {
                                 .title(tr().comment_edit_failed.clone()),
                             cx,
                         );
+                        this.load_pending(cx);
                     }
                 }
                 cx.notify();
@@ -521,14 +524,8 @@ impl ReviewView {
             else {
                 return;
             };
-            if self.current_file != Some(file) {
-                self.show_file(file, cx);
-            }
+            self.reveal_line(file, position, cx);
             self.focus_diff(window, cx);
-            if !self.content_pending() {
-                self.diff
-                    .update(cx, |state, cx| state.scroll_to_line(position, cx));
-            }
         } else if let Some(ix) = draft
             .reply_to
             .and_then(|id| self.discussions.iter().position(|d| d.id == id))

@@ -1,7 +1,7 @@
 use crate::convert;
 use crate::error::Error;
 use crate::models::{
-    Approval, Discussion, DraftTarget, ForgeKind, NewPosition, PendingReview, Request,
+    Approval, Discussion, Draft, DraftTarget, ForgeKind, NewPosition, PendingReview, Request,
     RequestState, ReviewHandle, User, Verdict,
 };
 
@@ -339,9 +339,16 @@ impl Client {
                     },
                     _ => gitlab::DraftTarget::General,
                 };
-                client
-                    .create_draft_note(&gitlab_project(project), number, body, target)
+                let project = gitlab_project(project);
+                let created = client
+                    .create_draft_note(&project, number, body, target)
                     .await?;
+                if position.is_some() && !created.on_line() {
+                    if let Err(err) = client.delete_draft_note(&project, number, created.id).await {
+                        log::warn!("removing a draft GitLab saved without its line: {err}");
+                    }
+                    return Err(Error::DraftLineIgnored);
+                }
             }
             Client::GitHub(client) => {
                 let repo = github::RepoRef::parse(project)?;
@@ -394,21 +401,29 @@ impl Client {
         &self,
         project: &str,
         number: u64,
-        draft_id: &str,
+        draft: &Draft,
         body: &str,
     ) -> Result<(), Error> {
         match self {
             Client::GitLab(client) => {
-                client
-                    .update_draft_note(
-                        &gitlab_project(project),
-                        number,
-                        gitlab_draft_id(draft_id)?,
-                        body,
-                    )
+                let project = gitlab_project(project);
+                let id = gitlab_draft_id(&draft.id)?;
+                let updated = client
+                    .update_draft_note(&project, number, id, body, None)
                     .await?;
+                let line = draft
+                    .position
+                    .as_ref()
+                    .and_then(convert::gitlab_line_position);
+                if let Some(position) = line
+                    && !updated.on_line()
+                {
+                    client
+                        .update_draft_note(&project, number, id, body, Some(&position))
+                        .await?;
+                }
             }
-            Client::GitHub(client) => client.update_draft(draft_id, body).await?,
+            Client::GitHub(client) => client.update_draft(&draft.id, body).await?,
         }
         Ok(())
     }

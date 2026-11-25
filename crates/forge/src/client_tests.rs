@@ -451,3 +451,131 @@ async fn a_github_review_started_elsewhere_is_reused() {
         .await
         .unwrap();
 }
+
+fn gitlab_draft(position: serde_json::Value) -> serde_json::Value {
+    json!({"id": 41, "note": "n", "position": position})
+}
+
+fn line_draft() -> crate::Draft {
+    crate::Draft {
+        id: "41".into(),
+        body: "n".into(),
+        position: Some(crate::Position {
+            base_sha: Some("b".into()),
+            start_sha: Some("s".into()),
+            head_sha: Some("h".into()),
+            old_path: Some("a.rs".into()),
+            new_path: Some("a.rs".into()),
+            old_line: None,
+            new_line: Some(4),
+        }),
+        reply_to: None,
+        resolve: false,
+    }
+}
+
+#[tokio::test]
+async fn a_gitlab_line_draft_saved_without_its_line_is_removed() {
+    let server = MockServer::start().await;
+    let mr = "/api/v4/projects/g%2Fp/merge_requests/5";
+    Mock::given(method("POST"))
+        .and(path(format!("{mr}/draft_notes")))
+        .respond_with(json_response(201, gitlab_draft(json!(null))))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{mr}/draft_notes/41")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    let err = client
+        .add_draft("g/p", 5, None, "n", crate::DraftTarget::Line(&position()))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, crate::Error::DraftLineIgnored));
+}
+
+#[tokio::test]
+async fn a_gitlab_line_draft_on_its_line_is_kept() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/g%2Fp/merge_requests/5/draft_notes"))
+        .respond_with(json_response(
+            201,
+            gitlab_draft(json!({"new_path": "a.rs", "new_line": 4})),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    client
+        .add_draft("g/p", 5, None, "n", crate::DraftTarget::Line(&position()))
+        .await
+        .unwrap();
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_gitlab_draft_edit_that_drops_the_line_puts_it_back() {
+    let server = MockServer::start().await;
+    let draft = "/api/v4/projects/g%2Fp/merge_requests/5/draft_notes/41";
+    Mock::given(method("PUT"))
+        .and(path(draft))
+        .and(body_json(json!({"note": "better"})))
+        .respond_with(json_response(200, gitlab_draft(json!({}))))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(draft))
+        .and(body_json(json!({
+            "note": "better",
+            "position": {"position_type": "text", "base_sha": "b", "start_sha": "s",
+                         "head_sha": "h", "old_path": "a.rs", "new_path": "a.rs", "new_line": 4}
+        })))
+        .respond_with(json_response(
+            200,
+            gitlab_draft(json!({"new_path": "a.rs", "new_line": 4})),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    client
+        .edit_draft("g/p", 5, &line_draft(), "better")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_gitlab_draft_edit_that_keeps_the_line_is_one_call() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path(
+            "/api/v4/projects/g%2Fp/merge_requests/5/draft_notes/41",
+        ))
+        .and(body_json(json!({"note": "better"})))
+        .respond_with(json_response(
+            200,
+            gitlab_draft(json!({"new_path": "a.rs", "new_line": 4})),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(ForgeKind::GitLab, &server.uri(), TOKEN).unwrap();
+
+    client
+        .edit_draft("g/p", 5, &line_draft(), "better")
+        .await
+        .unwrap();
+
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}

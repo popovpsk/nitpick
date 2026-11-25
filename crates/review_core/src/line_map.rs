@@ -65,6 +65,10 @@ impl LineMap {
         }
     }
 
+    pub fn new_line_for_old(&self, old: u32) -> Option<u32> {
+        self.locate(Side::Old, old)?.new_line()
+    }
+
     pub fn near_change(&self, line: LineKind, context: u32) -> bool {
         let LineKind::Context { old, new } = line else {
             return true;

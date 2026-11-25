@@ -704,9 +704,52 @@ async fn drafts_are_edited_deleted_and_published() {
     let client = client(&server);
 
     client
-        .update_draft_note(&project(), 133, 41, "better")
+        .update_draft_note(&project(), 133, 41, "better", None)
         .await
         .unwrap();
     client.delete_draft_note(&project(), 133, 41).await.unwrap();
     client.publish_draft_notes(&project(), 133).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_draft_edit_can_resend_the_position() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{MR_PATH}/draft_notes/41")))
+        .and(body_json(
+            json!({"note": "better", "position": {"position_type": "text",
+            "base_sha": "base", "start_sha": "start", "head_sha": "head",
+            "old_path": "src/old.rs", "new_path": "src/new.rs", "old_line": 3, "new_line": 4}}),
+        ))
+        .respond_with(json_response(200, DRAFT_NOTE))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .update_draft_note(
+            &project(),
+            133,
+            41,
+            "better",
+            Some(&position(Some(3), Some(4))),
+        )
+        .await
+        .unwrap();
+}
+
+#[rstest]
+#[case::general(DRAFT_NOTE, false)]
+#[case::no_position(r#"{"id": 1, "position": null}"#, false)]
+#[case::empty_position(r#"{"id": 1, "position": {}}"#, false)]
+#[case::file(
+    r#"{"id": 1, "position": {"new_path": "a.rs", "position_type": "file"}}"#,
+    false
+)]
+#[case::line(r#"{"id": 1, "position": {"new_path": "a.rs", "new_line": 4}}"#, true)]
+#[case::old_line(r#"{"id": 1, "position": {"old_path": "a.rs", "old_line": 2}}"#, true)]
+fn a_draft_is_on_a_line_with_a_path_and_a_line(#[case] json: &str, #[case] expected: bool) {
+    let draft: crate::DraftNote = serde_json::from_str(json).unwrap();
+
+    assert_eq!(draft.on_line(), expected);
 }

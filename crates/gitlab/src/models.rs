@@ -245,3 +245,12 @@ pub struct DraftNote {
     #[serde(default)]
     pub position: Option<Position>,
 }
+
+impl DraftNote {
+    pub fn on_line(&self) -> bool {
+        self.position.as_ref().is_some_and(|p| {
+            (p.new_path.is_some() || p.old_path.is_some())
+                && (p.new_line.is_some() || p.old_line.is_some())
+        })
+    }
+}

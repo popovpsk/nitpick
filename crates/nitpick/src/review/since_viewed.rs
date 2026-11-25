@@ -5,11 +5,11 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Icon, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
-    diff::DiffFile,
+    diff::{DiffFile, DiffLinePosition, DiffSide},
     notification::Notification,
     tooltip::Tooltip,
 };
-use review_core::{Change, fingerprint_blobs};
+use review_core::{Change, Side, fingerprint_blobs};
 use ui_resources::Icons;
 
 use super::find_bar::{FindSource, TextSource};
@@ -118,6 +118,7 @@ impl ReviewView {
             self.interdiff = None;
             self.interdiff_loading = None;
             self.pending_jump = None;
+            self.pending_scroll = None;
             let diff_file = review.diff_file(file);
             self.sync_diff_mode(cx);
             self.set_diff_files(diff_file.into_iter().collect(), cx);
@@ -185,12 +186,20 @@ impl ReviewView {
                 let files: Vec<DiffFile> = interdiff.diff.clone().into_iter().collect();
                 self.interdiff = Some(interdiff);
                 self.set_diff_files(files, cx);
+                self.rebuild_annotations();
                 self.sync_find(cx);
-                if let Some(forward) = self.pending_jump.take() {
+                let scroll = self.pending_scroll.take();
+                if let Some(forward) = self.pending_jump.take()
+                    && scroll.is_none()
+                {
                     let count = self.shown_changes(file).len();
                     if count > 0 {
                         self.scroll_to_change(file, if forward { 0 } else { count - 1 }, cx);
                     }
+                }
+                if let Some(position) = scroll {
+                    self.diff
+                        .update(cx, |state, cx| state.scroll_to_line(position, cx));
                 }
             }
             Err((previous, err)) => {
@@ -203,9 +212,19 @@ impl ReviewView {
                     cx,
                 );
                 if let Some(file) = self.current_file {
+                    let scroll = self.pending_scroll.take();
                     self.install_content(file, cx);
                     self.rebuild_annotations();
                     self.sync_find(cx);
+                    match scroll {
+                        Some(position) if self.content_pending() => {
+                            self.pending_scroll = Some(position);
+                        }
+                        Some(position) => self
+                            .diff
+                            .update(cx, |state, cx| state.scroll_to_line(position, cx)),
+                        None => {}
+                    }
                 }
             }
         }
@@ -234,8 +253,77 @@ impl ReviewView {
         self.change_cursor = None;
         self.change_scrolled = false;
         self.pending_jump = None;
+        self.pending_scroll = None;
         self.sync_since_viewed(cx);
         cx.notify();
+    }
+
+    pub(super) fn shown_position(&self, position: &DiffLinePosition) -> Option<DiffLinePosition> {
+        let review = self.review.as_ref()?;
+        let file = review.file_index(position.path())?;
+        if self.interdiff_key(file).is_none() || matches!(position.side(), DiffSide::Modified) {
+            return Some(position.clone());
+        }
+        let line = review.files[file]
+            .line_map
+            .new_line_for_old(position.line() as u32)?;
+        Some(DiffLinePosition::new(
+            position.path().clone(),
+            DiffSide::Modified,
+            line as usize,
+        ))
+    }
+
+    pub(super) fn review_position(&self, shown: &DiffLinePosition) -> Option<DiffLinePosition> {
+        let review = self.review.as_ref()?;
+        let file = review.file_index(shown.path())?;
+        if self.interdiff_key(file).is_none() {
+            return Some(shown.clone());
+        }
+        let line = match shown.side() {
+            DiffSide::Modified => shown.line() as u32,
+            DiffSide::Original => self
+                .interdiff
+                .as_ref()
+                .filter(|d| d.file == file)?
+                .map
+                .new_line_for_old(shown.line() as u32)?,
+        };
+        review.files[file].line_map.locate(Side::New, line)?;
+        Some(DiffLinePosition::new(
+            shown.path().clone(),
+            DiffSide::Modified,
+            line as usize,
+        ))
+    }
+
+    pub(super) fn reveal_line(
+        &mut self,
+        file: usize,
+        position: DiffLinePosition,
+        cx: &mut Context<Self>,
+    ) {
+        let empty = self
+            .interdiff
+            .as_ref()
+            .is_some_and(|d| d.file == file && d.is_empty());
+        if self.interdiff_key(file).is_some() && (empty || self.shown_position(&position).is_none())
+        {
+            self.toggle_since_mode(cx);
+        }
+        if self.current_file != Some(file) {
+            self.show_file(file, cx);
+        }
+        let Some(shown) = self.shown_position(&position) else {
+            return;
+        };
+        self.change_cursor = None;
+        if self.content_pending() {
+            self.pending_scroll = Some(shown);
+        } else {
+            self.diff
+                .update(cx, |state, cx| state.scroll_to_line(shown, cx));
+        }
     }
 
     pub(super) fn shown_changes(&self, file: usize) -> &[Change] {

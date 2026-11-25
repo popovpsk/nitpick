@@ -274,10 +274,14 @@ impl Client {
         iid: u64,
         draft_id: u64,
         body: &str,
+        position: Option<&NewPosition>,
     ) -> Result<DraftNote, Error> {
         let path = format!("{}/draft_notes/{draft_id}", mr_path(project, iid));
-        self.call(Method::PUT, &path, &[], Some(&DraftEditBody { note: body }))
-            .await
+        let payload = DraftEditBody {
+            note: body,
+            position: position.map(WirePosition::from),
+        };
+        self.call(Method::PUT, &path, &[], Some(&payload)).await
     }
 
     pub async fn delete_draft_note(

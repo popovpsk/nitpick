@@ -390,6 +390,7 @@ pub struct ReviewView {
     blob_checking: bool,
     _blob_check: Task<()>,
     pending_jump: Option<bool>,
+    pending_scroll: Option<DiffLinePosition>,
     pending_link: Option<DiffLink>,
     _interdiff: Task<()>,
     ask_generation: u64,
@@ -552,6 +553,7 @@ impl ReviewView {
             blob_checking: false,
             _blob_check: Task::ready(()),
             pending_jump: None,
+            pending_scroll: None,
             pending_link: None,
             _interdiff: Task::ready(()),
             ask_generation: 0,
@@ -1099,6 +1101,7 @@ impl ReviewView {
             self.cross_hint = None;
             self.current_file = Some(ix);
             self.pending_jump = None;
+            self.pending_scroll = None;
             self.install_content(ix, cx);
             if settings(cx).show_whole_file {
                 if self.content_pending() {
@@ -1679,34 +1682,32 @@ impl ReviewView {
         if self.tree.file_node(file).is_none() {
             return;
         }
-        if self.current_file != Some(file) {
-            self.show_file(file, cx);
+        let position = thread
+            .placed
+            .then(|| {
+                let pos = self.discussions.get(ix)?.position.as_ref()?;
+                let path = self.review.as_ref()?.files.get(file)?.path.clone();
+                match (pos.new_line, pos.old_line) {
+                    (Some(line), _) => Some(DiffLinePosition::new(
+                        path,
+                        DiffSide::Modified,
+                        line as usize,
+                    )),
+                    (None, Some(line)) => Some(DiffLinePosition::new(
+                        path,
+                        DiffSide::Original,
+                        line as usize,
+                    )),
+                    (None, None) => None,
+                }
+            })
+            .flatten();
+        match position {
+            Some(position) => self.reveal_line(file, position, cx),
+            None if self.current_file != Some(file) => self.show_file(file, cx),
+            None => {}
         }
         self.focus_diff(window, cx);
-        let position = thread.placed.then(|| {
-            let pos = self.discussions.get(ix)?.position.as_ref()?;
-            let path = self.review.as_ref()?.files.get(file)?.path.clone();
-            match (pos.new_line, pos.old_line) {
-                (Some(line), _) => Some(DiffLinePosition::new(
-                    path,
-                    DiffSide::Modified,
-                    line as usize,
-                )),
-                (None, Some(line)) => Some(DiffLinePosition::new(
-                    path,
-                    DiffSide::Original,
-                    line as usize,
-                )),
-                (None, None) => None,
-            }
-        });
-        if let Some(Some(position)) = position
-            && !self.content_pending()
-        {
-            self.change_cursor = None;
-            self.diff
-                .update(cx, |state, cx| state.scroll_to_line(position, cx));
-        }
         cx.notify();
     }
 
@@ -1976,11 +1977,8 @@ impl ReviewView {
     }
 
     fn rebuild_annotations(&mut self) {
-        let mut annotations = Vec::new();
-        let other_content = self.interdiff.is_some() || self.interdiff_loading.is_some();
-        if let (Some(review), Some(file), false) =
-            (self.review.as_ref(), self.current_file, other_content)
-        {
+        let mut placed: Vec<(ElementId, DiffLinePosition)> = Vec::new();
+        if let (Some(review), Some(file)) = (self.review.as_ref(), self.current_file) {
             let path = review.files[file].path.clone();
             if let Some(list) = self.by_file.get(&path) {
                 for &ix in list {
@@ -1996,19 +1994,13 @@ impl ReviewView {
                         }
                         (None, None) => continue,
                     };
-                    annotations.push(DiffAnnotation::line(
-                        ElementId::from(("discussion", ix)),
-                        position,
-                    ));
+                    placed.push((ElementId::from(("discussion", ix)), position));
                 }
             }
             if let Some(list) = self.drafts.by_file.get(&path) {
                 for &ix in list {
                     if let Some(position) = self.drafts.list[ix].placed.clone() {
-                        annotations.push(DiffAnnotation::line(
-                            ElementId::from(("pending-draft", ix)),
-                            position,
-                        ));
+                        placed.push((ElementId::from(("pending-draft", ix)), position));
                     }
                 }
             }
@@ -2019,12 +2011,15 @@ impl ReviewView {
                 && review.commit.is_none()
                 && position.path() == &path
             {
-                annotations.push(DiffAnnotation::line(
-                    ElementId::from(("draft", 0usize)),
-                    position.clone(),
-                ));
+                placed.push((ElementId::from(("draft", 0usize)), position.clone()));
             }
         }
+        let annotations = placed
+            .into_iter()
+            .filter_map(|(id, position)| {
+                Some(DiffAnnotation::line(id, self.shown_position(&position)?))
+            })
+            .collect();
         self.annotations = Rc::new(annotations);
     }
 
@@ -2036,7 +2031,6 @@ impl ReviewView {
 
     pub(super) fn can_comment_lines(&self) -> bool {
         self.request_open()
-            && self.interdiff.is_none()
             && self
                 .review
                 .as_ref()
@@ -2060,8 +2054,12 @@ impl ReviewView {
         }
         self.hovered_line = Some(position.clone());
         let can_comment = self.can_comment_lines();
-        self.comment_marker = (can_comment && self.line_commentable(position))
-            .then(|| DiffGutterMarker::new(COMMENT_MARKER, position.clone()));
+        let commentable = can_comment
+            && self
+                .review_position(position)
+                .is_some_and(|line| self.line_commentable(&line));
+        self.comment_marker =
+            commentable.then(|| DiffGutterMarker::new(COMMENT_MARKER, position.clone()));
         can_comment
     }
 
@@ -2096,7 +2094,14 @@ impl ReviewView {
             return;
         }
         let side = range.end_side();
-        let position = DiffLinePosition::new(range.path().clone(), side, range.end());
+        let shown = DiffLinePosition::new(range.path().clone(), side, range.end());
+        let Some(position) = self.review_position(&shown) else {
+            window.push_notification(
+                Notification::info(tr().comment_line_gone_since_viewed.clone()),
+                cx,
+            );
+            return;
+        };
         if !self.line_commentable(&position) {
             window.push_notification(
                 Notification::info(tr().comment_line_far_from_change.clone()),
@@ -2289,10 +2294,14 @@ impl ReviewView {
                         } else {
                             tr().comment_failed.clone()
                         };
-                        window.push_notification(
-                            Notification::error(err.to_string()).title(title),
-                            cx,
-                        );
+                        let message: SharedString = match err {
+                            forge::Error::DraftLineIgnored => {
+                                this.load_pending(cx);
+                                tr().draft_line_ignored.clone()
+                            }
+                            err => err.to_string().into(),
+                        };
+                        window.push_notification(Notification::error(message).title(title), cx);
                     }
                 }
                 this.rebuild_annotations();

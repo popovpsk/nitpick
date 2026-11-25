@@ -151,6 +151,8 @@ pub(crate) struct NewDraftBody<'a> {
 #[derive(Serialize)]
 pub(crate) struct DraftEditBody<'a> {
     pub note: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<WirePosition<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

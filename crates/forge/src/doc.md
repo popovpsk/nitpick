@@ -32,7 +32,8 @@ tokens (the app, `secret_store`).
   Gravatar link (gravatar.com or a subdomain), which GitLab hands out for users without an
   uploaded picture — those show initials and no request leaves for Gravatar.
 - `error.rs` — `Error`: the host's error as is (`transparent`), plus the neutral refusals
-  (`Unsupported`: withdrawing a GitHub approval).
+  (`Unsupported`: withdrawing a GitHub approval; `DraftLineIgnored`: a GitLab line draft
+  stored without its line).
 - `request_url.rs` — `parse_request_url` (GitLab or GitHub URL → kind, project, number),
   `parse_reference` (`!123`, `#123`, `123`).
 - `convert_tests.rs`, `client_tests.rs`, `request_url_tests.rs` — conversions, dispatch to
@@ -98,6 +99,15 @@ tokens (the app, `secret_store`).
   may have been started on the web or by a draft whose reload has not landed: one pending
   review per user and request) and starts one only when there is none, at the draft's
   `head_sha` (`commitOID`), so its line numbers mean the loaded diff even after a push.
+- GitLab drafts and their line: GitLab before 16.3 ignores a draft's `position`, so a line
+  draft whose answer has no line (`DraftNote::on_line`) is deleted again and refused with
+  `DraftLineIgnored` rather than left to publish as a general comment. Until GitLab fixed
+  it, its draft update replaced the position with whatever the request carried, so a
+  text-only edit turned a line draft into a general one; `edit_draft` takes the `Draft` and,
+  when the answer has lost the line, sends the edit again with the position rebuilt from
+  it (`gitlab_line_position`: no line range, so on those versions a multi-line draft made on
+  the web comes back as a draft on its last line). A server that keeps the position takes
+  one call.
 
 ## Decisions
 
