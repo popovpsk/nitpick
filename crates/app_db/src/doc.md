@@ -65,5 +65,6 @@ written (`nitpick` `review/viewed.rs`), the assistant's conversation logic
   construction and the UI never waits on a lock.
 - The old `reviews/*.json` files are not imported; marks start empty with this database.
 - The assistant's conversation is not stored: a thread belongs to its window and to the
-  harness, which keeps its own history; the database holds only the id to continue it from.
+  harness, which keeps its own history (the panel reads it back from there); the database holds
+  only the id to continue it from.
   The earlier `agent_messages` table is dropped by a migration, its rows are not carried over.

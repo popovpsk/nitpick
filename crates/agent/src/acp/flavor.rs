@@ -85,10 +85,17 @@ impl ResumeVia {
     }
 }
 
-pub fn resume_via(flavor: AcpFlavor, capabilities: &Capabilities) -> Option<ResumeVia> {
-    if capabilities.resume {
+pub fn resume_via(
+    flavor: AcpFlavor,
+    capabilities: &Capabilities,
+    history: bool,
+) -> Option<ResumeVia> {
+    let load = capabilities.load_session && flavor != AcpFlavor::DeepSeek;
+    if history && load {
+        Some(ResumeVia::Load)
+    } else if capabilities.resume {
         Some(ResumeVia::Resume)
-    } else if capabilities.load_session && flavor != AcpFlavor::DeepSeek {
+    } else if load {
         Some(ResumeVia::Load)
     } else {
         None

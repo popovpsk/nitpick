@@ -86,7 +86,7 @@ fn user_instructions_are_cut_at_the_limit_on_a_character_boundary() {
 fn updated_instructions_come_before_the_message() {
     let text = updated_instructions("RULES\n", "question");
     assert!(text.starts_with("The instructions for this conversation were updated."));
-    assert!(text.ends_with("RULES\n\n---\nquestion"));
+    assert!(text.ends_with("RULES\n\n--- end of the updated instructions ---\n\nquestion"));
 }
 
 #[test]

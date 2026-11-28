@@ -12,6 +12,7 @@ fn launch(kind: HarnessKind) -> Launch {
         cwd: std::env::temp_dir(),
         model: None,
         resume: None,
+        history: false,
         instructions: String::new(),
         scratch: Default::default(),
     }

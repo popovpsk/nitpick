@@ -132,7 +132,20 @@ fn resuming_follows_the_declared_capabilities(
     #[case] capabilities: Capabilities,
     #[case] expected: Option<ResumeVia>,
 ) {
-    assert_eq!(resume_via(flavor, &capabilities), expected);
+    assert_eq!(resume_via(flavor, &capabilities, false), expected);
+}
+
+#[rstest]
+#[case::load_for_history(AcpFlavor::OpenCode, caps(true, true), Some(ResumeVia::Load))]
+#[case::resume_without_load(AcpFlavor::Generic, caps(false, true), Some(ResumeVia::Resume))]
+#[case::deepseek_still_resumes(AcpFlavor::DeepSeek, caps(true, true), Some(ResumeVia::Resume))]
+#[case::nothing(AcpFlavor::Generic, caps(false, false), None)]
+fn history_prefers_load_when_it_is_declared(
+    #[case] flavor: AcpFlavor,
+    #[case] capabilities: Capabilities,
+    #[case] expected: Option<ResumeVia>,
+) {
+    assert_eq!(resume_via(flavor, &capabilities, true), expected);
 }
 
 #[test]

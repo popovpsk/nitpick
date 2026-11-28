@@ -126,6 +126,7 @@ async fn fetch(
         cwd: scratch.cwd(),
         model: None,
         resume: None,
+        history: false,
         instructions: String::new(),
         scratch: scratch.files(),
     };

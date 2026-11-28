@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::codex::{CodexDriver, Limits};
 use crate::lines::Lines;
 use crate::session::{Channels, Command, Driver, Transport};
-use crate::{Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
+use crate::{Entry, EntryRole, Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
 
 const WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(100);
@@ -25,6 +25,7 @@ fn launch() -> Launch {
         cwd: PathBuf::from("/work/toy"),
         model: None,
         resume: None,
+        history: false,
         instructions: "Be brief.".into(),
         scratch: PathBuf::new(),
     }
@@ -562,6 +563,101 @@ async fn a_resumed_thread_sends_the_same_policy_and_the_thread_id() {
     rig.prompt("again");
     let (_, params) = rig.request("turn/start").await;
     assert_eq!(params["threadId"], "thread-old");
+    rig.stop().await;
+}
+
+fn turn(user: &str, answers: &[&str]) -> Value {
+    let mut items = vec![json!({"type": "userMessage", "id": "u", "content": [
+        {"type": "text", "text": user, "text_elements": []}]})];
+    items.push(json!({"type": "reasoning", "id": "r", "summary": ["hm"], "content": []}));
+    for answer in answers {
+        items.push(json!({"type": "agentMessage", "id": "a", "text": answer, "phase": null}));
+    }
+    json!({"id": user, "items": items, "itemsView": "full", "status": "completed"})
+}
+
+async fn resumed_with_history(rig: &mut Rig) {
+    let (id, _) = rig.request("initialize").await;
+    rig.respond(id, json!({"userAgent": USER_AGENT})).await;
+    rig.notification("initialized").await;
+    let (id, resume) = rig.request("thread/resume").await;
+    assert_eq!(resume["excludeTurns"], true);
+    rig.respond(id, thread_result("thread-old")).await;
+}
+
+fn history_launch() -> Launch {
+    let mut launch = launch();
+    launch.resume = Some("thread-old".into());
+    launch.history = true;
+    launch
+}
+
+#[tokio::test]
+async fn a_resume_for_history_pages_the_turns_newest_first() {
+    let mut rig = Rig::start_with(history_launch(), Limits::default());
+    resumed_with_history(&mut rig).await;
+    let (id, params) = rig.request("thread/turns/list").await;
+    assert_eq!(
+        params,
+        json!({"threadId": "thread-old", "cursor": null, "limit": 100,
+            "sortDirection": "desc", "itemsView": "full"})
+    );
+    rig.respond(
+        id,
+        json!({"data": [turn("third", &[]), turn("second", &["two", "parts"])],
+            "nextCursor": "c1", "backwardsCursor": null}),
+    )
+    .await;
+    let (id, params) = rig.request("thread/turns/list").await;
+    assert_eq!(params["cursor"], "c1");
+    rig.respond(
+        id,
+        json!({"data": [turn("first", &["one"])], "nextCursor": null}),
+    )
+    .await;
+    let user = |text: &str| Entry {
+        role: EntryRole::User,
+        text: text.into(),
+    };
+    let assistant = |text: &str| Entry {
+        role: EntryRole::Assistant,
+        text: text.into(),
+    };
+    assert_eq!(
+        rig.next().await,
+        Event::History(vec![
+            user("first"),
+            assistant("one"),
+            user("second"),
+            assistant("two\n\nparts"),
+            user("third"),
+        ])
+    );
+    assert_eq!(rig.next().await, session("thread-old"));
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_refused_turn_list_still_resumes_the_thread() {
+    let mut rig = Rig::start_with(history_launch(), Limits::default());
+    resumed_with_history(&mut rig).await;
+    let (id, _) = rig.request("thread/turns/list").await;
+    rig.respond_error(id, "unknown method").await;
+    assert_eq!(rig.next().await, Event::History(Vec::new()));
+    assert_eq!(rig.next().await, session("thread-old"));
+    rig.prompt("again");
+    let (_, params) = rig.request("turn/start").await;
+    assert_eq!(params["threadId"], "thread-old");
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_new_thread_never_asks_for_turns() {
+    let mut launch = launch();
+    launch.history = true;
+    let mut rig = Rig::start_with(launch, Limits::default());
+    rig.handshake().await;
+    assert_eq!(rig.next().await, session(THREAD));
     rig.stop().await;
 }
 

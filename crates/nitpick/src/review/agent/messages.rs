@@ -158,6 +158,7 @@ impl AgentPanel {
     fn progress_label(&self) -> SharedString {
         let s = tr();
         match self.turn.as_ref().map(|turn| &turn.activity) {
+            None if self.restoring => s.assistant_restoring.clone(),
             None => s.assistant_starting.clone(),
             Some(Activity::Working) => s.assistant_working.clone(),
             Some(Activity::Thinking) => s.assistant_thinking.clone(),

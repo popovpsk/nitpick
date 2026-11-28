@@ -10,6 +10,7 @@ use crate::session::{BoxFuture, Channels, Command, Driver, Plan, Transport};
 use crate::{Error, Event, Failure, FailureKind, Launch, Outcome};
 
 pub mod classify;
+pub mod history;
 pub mod normalize;
 pub mod wire;
 
@@ -159,6 +160,7 @@ impl Conversation {
             }
             Some(id) => self.resume(id).await?,
         };
+        let resumed = requested.is_some();
         let id = wire::thread_id(&result)
             .map(str::to_owned)
             .or(requested)
@@ -166,10 +168,44 @@ impl Conversation {
         if !version_known {
             require_version(wire::cli_version(&result).and_then(classify::parse_version))?;
         }
+        if resumed && self.launch.history {
+            let entries = self.history(&id).await?;
+            let _ = self.events.send(Event::History(entries));
+        }
         self.normalizer.set_thread(&id);
         self.thread = id.clone();
         let _ = self.events.send(Event::Session { id });
         Ok(())
+    }
+
+    async fn history(&mut self, id: &str) -> Result<Vec<crate::Entry>, Stop> {
+        let limit = self.limits.thread;
+        let mut turns = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..history::MAX_PAGES {
+            let params = history::turns_params(id, cursor.as_deref());
+            match self.call("thread/turns/list", params, limit).await {
+                Ok(result) => {
+                    let (page, next) = history::page(&result);
+                    turns.extend(page);
+                    match next {
+                        Some(next) => cursor = Some(next),
+                        None => break,
+                    }
+                }
+                Err(Fault::Shutdown) => return Err(Stop::Shutdown),
+                Err(Fault::Rpc(error)) => {
+                    log::debug!("reading the thread's turns failed: {}", error.message);
+                    break;
+                }
+                Err(Fault::Closed | Fault::TimedOut) => {
+                    log::debug!("reading the thread's turns did not finish");
+                    break;
+                }
+            }
+        }
+        turns.reverse();
+        Ok(history::entries(&turns))
     }
 
     async fn resume(&mut self, id: &str) -> Result<Value, Stop> {

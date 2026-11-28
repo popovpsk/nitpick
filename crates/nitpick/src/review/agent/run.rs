@@ -160,6 +160,9 @@ impl AgentPanel {
     pub(super) fn end_process(&mut self, cx: &mut Context<Self>) {
         self.operation += 1;
         self.starting = None;
+        if std::mem::take(&mut self.restoring) && self.messages.is_empty() {
+            self.resumable = true;
+        }
         self._dispatch = Task::ready(());
         if let Some(turn) = self.turn.take() {
             self.finish_assistant(turn.assistant, cx);
@@ -226,7 +229,24 @@ impl AgentPanel {
         if evaluate {
             self.evaluate(cx);
         }
+        self.maybe_restore(cx);
         cx.notify();
+    }
+
+    pub(super) fn maybe_restore(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.open
+            && self.resumable
+            && self.loaded
+            && self.messages.is_empty()
+            && self.live.is_none()
+            && !self.phase.is_busy()
+            && self.lookup != Lookup::Missing
+            && !self.command.trim().is_empty()
+            && settings(cx).agent.enabled;
+        if wanted {
+            self.restoring = true;
+            self.launch(None, false, cx);
+        }
     }
 
     fn refresh_overview(&mut self) {
@@ -307,6 +327,12 @@ impl AgentPanel {
             Phase::Starting => {
                 self.operation += 1;
                 self._dispatch = Task::ready(());
+                if std::mem::take(&mut self.restoring) {
+                    self.retire_live();
+                    if self.messages.is_empty() {
+                        self.resumable = true;
+                    }
+                }
                 if let Some((kind, head)) = self.starting.take() {
                     self.auto_attempted = logic::auto_attempted_after(
                         self.auto_attempted.as_deref(),
@@ -375,18 +401,25 @@ impl AgentPanel {
     }
 
     fn dispatch(&mut self, request: Request, retried: bool, cx: &mut Context<Self>) {
+        self.launch(Some(request), retried, cx);
+    }
+
+    fn launch(&mut self, request: Option<Request>, retried: bool, cx: &mut Context<Self>) {
         let Some(context) = self.context.clone() else {
             return;
         };
         self.operation += 1;
         self.settings_used = true;
         let operation = self.operation;
-        let chat = matches!(request, Request::Chat { .. });
+        let chat = matches!(request, Some(Request::Chat { .. }));
         let live_delivered = self.live.as_ref().map(|live| live.brief_delivered);
-        if logic::goes_out_at_once(chat, live_delivered) {
+        if logic::goes_out_at_once(chat, live_delivered)
+            && let Some(request) = request
+        {
             self.send_now(request, retried, None, cx);
             return;
         }
+        let history = request.is_none();
         let kind = self.profile.kind;
         let command = self.command.clone();
         let model = self.model.clone();
@@ -404,7 +437,9 @@ impl AgentPanel {
         let need_start = self.live.is_none();
         let scratch = scratch_dir();
         let db = crate::db::db(cx);
-        self.starting = Some((request.kind(), context.head.clone()));
+        self.starting = request
+            .as_ref()
+            .map(|request| (request.kind(), context.head.clone()));
         self.set_phase(Phase::Starting, cx);
         self._dispatch = cx.spawn(async move |this, cx| {
             let plan = context.workdir.clone();
@@ -455,6 +490,10 @@ impl AgentPanel {
                         }
                     }
                 };
+                if history && resume.is_none() {
+                    let _ = this.update(cx, |this, cx| this.restore_unavailable(operation, cx));
+                    return;
+                }
                 let instructions =
                     prompt::instructions(language, workdir.disk_matches_head, &user_instructions);
                 let launch = Launch {
@@ -463,6 +502,7 @@ impl AgentPanel {
                     cwd: workdir.cwd.clone(),
                     model,
                     resume: resume.as_ref().map(|resume| resume.id.clone()),
+                    history,
                     instructions: instructions.clone(),
                     scratch: scratch.clone(),
                 };
@@ -494,7 +534,7 @@ impl AgentPanel {
     fn dispatched(
         &mut self,
         operation: u64,
-        request: Request,
+        request: Option<Request>,
         retried: bool,
         workdir: Workdir,
         started: Option<Result<Started, Error>>,
@@ -505,7 +545,7 @@ impl AgentPanel {
         }
         self.starting = None;
         if logic::must_start(self.live.is_some(), started.is_some()) {
-            self.dispatch(request, retried, cx);
+            self.launch(request, retried, cx);
             return;
         }
         if let Some(started) = started {
@@ -521,11 +561,16 @@ impl AgentPanel {
                 }
             }
         }
-        self.send_now(request, retried, Some(workdir.disk_matches_head), cx);
+        if let Some(request) = request {
+            self.send_now(request, retried, Some(workdir.disk_matches_head), cx);
+        }
     }
 
     fn start_failed(&mut self, err: Error, cx: &mut Context<Self>) {
         log::warn!("starting the assistant: {err}");
+        if std::mem::take(&mut self.restoring) && self.messages.is_empty() {
+            self.resumable = true;
+        }
         match err {
             Error::NotFound(_) => {
                 self.lookup = Lookup::Missing;
@@ -655,7 +700,13 @@ impl AgentPanel {
 
     fn apply_event(&mut self, event: Event, cx: &mut Context<Self>) -> bool {
         match event {
-            Event::Session { id } => self.remember_session(id, cx),
+            Event::History(entries) => self.on_history(&entries, cx),
+            Event::Session { id } => {
+                self.remember_session(id, cx);
+                if self.restoring {
+                    self.finish_restore(cx);
+                }
+            }
             Event::Text(text) => self.on_text(text, cx),
             Event::Thinking(_) => {
                 if let Some(turn) = self.turn.as_mut()
@@ -749,6 +800,61 @@ impl AgentPanel {
         .detach();
     }
 
+    fn on_history(&mut self, entries: &[::agent::Entry], cx: &mut Context<Self>) {
+        if !self.restoring {
+            return;
+        }
+        if self.messages.is_empty() {
+            let fallback = match (&self.bound, &self.context) {
+                (Some(bound), _) if !bound.brief_head.is_empty() => bound.brief_head.clone(),
+                (_, Some(context)) => context.head.clone(),
+                _ => String::new(),
+            };
+            let restored = logic::restored(entries, &fallback);
+            let start = self.messages.len();
+            for message in restored {
+                let id = self.next_message;
+                self.next_message += 1;
+                self.messages.push(Message::new(
+                    id,
+                    message.role,
+                    message.kind,
+                    message.head,
+                    message.text,
+                ));
+            }
+            let count = self.messages.len() - start;
+            if count > 0 {
+                self.scroll
+                    .update(cx, |scroll, cx| scroll.splice(start..start, count, cx));
+                self.rows += count;
+            }
+        }
+        self.finish_restore(cx);
+    }
+
+    fn finish_restore(&mut self, cx: &mut Context<Self>) {
+        self.restoring = false;
+        self.resumable = self.messages.is_empty();
+        self.set_phase(Phase::Idle, cx);
+        self.refresh_overview();
+        if self.overview == OverviewState::None && !self.messages.is_empty() {
+            self.auto_attempted = self.context.as_ref().map(|context| context.head.clone());
+        }
+        self.evaluate(cx);
+    }
+
+    fn restore_unavailable(&mut self, operation: u64, cx: &mut Context<Self>) {
+        if operation != self.operation {
+            return;
+        }
+        self.starting = None;
+        self.restoring = false;
+        self.resumable = false;
+        self.set_phase(Phase::Idle, cx);
+        self.evaluate(cx);
+    }
+
     fn save_session_state(&self, cx: &mut Context<Self>) {
         let (Some(bound), Some(context), Some(db)) = (
             self.bound.as_ref(),
@@ -818,6 +924,19 @@ impl AgentPanel {
     }
 
     fn on_turn_finished(&mut self, outcome: Outcome, cx: &mut Context<Self>) -> bool {
+        if self.turn.is_none() && std::mem::take(&mut self.restoring) {
+            if let Outcome::Failed(failure) = &outcome
+                && failure.kind == ::agent::FailureKind::SessionLost
+            {
+                log::info!("the earlier assistant session is gone: {}", failure.message);
+                self.clear_session_id(cx);
+                self.retire_live();
+                self.set_phase(Phase::Idle, cx);
+                self.evaluate(cx);
+                return false;
+            }
+            self.resumable = self.messages.is_empty();
+        }
         let turn = self.turn.take();
         if let Some(turn) = &turn {
             self.finish_assistant(turn.assistant, cx);
@@ -934,6 +1053,13 @@ impl AgentPanel {
 
     fn on_exited(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
         self.retire_live();
+        if std::mem::take(&mut self.restoring) {
+            log::warn!("the assistant stopped while loading the conversation: {reason:?}");
+            self.resumable = self.messages.is_empty();
+            let text = logic::exit_text(reason.as_deref(), tr());
+            self.set_phase(Phase::Failed(text.into()), cx);
+            return;
+        }
         let turn = self.turn.take();
         if let Some(turn) = turn {
             self.finish_assistant(turn.assistant, cx);

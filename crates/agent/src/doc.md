@@ -12,9 +12,9 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 
 ## Files
 
-- `lib.rs` — the contract: `HarnessKind`, `AcpFlavor`, `Launch`, `Event`, `Outcome`,
-  `Failure`, `FailureKind`, `Error`, `probe`; re-exports `Session`, `shutdown_all` and `quit`. The app
-  uses only these.
+- `lib.rs` — the contract: `HarnessKind`, `AcpFlavor`, `Launch`, `Event`, `Entry`,
+  `EntryRole`, `Outcome`, `Failure`, `FailureKind`, `Error`, `probe`; re-exports `Session`,
+  `shutdown_all` and `quit`. The app uses only these, `prompt`, `brief` and `shown`.
 - `process.rs` — command splitting, login-shell environment snapshot, environment merge and
   scrub, program lookup, `Invocation`, `Process` (spawn in a process group / job object, soft
   shutdown, stderr tail), the quit-time reaper (`reap`, `reaper_args`), `drain`, `probe_version`,
@@ -30,21 +30,28 @@ Not here: UI, settings and persistence (`nitpick`, `app_db`), filling a `Brief` 
 - `catalog.rs` — `models(kind, command)` and the `Model` it returns (`id`, `name`,
   `description`, `is_default`); the per-harness question and its parsers (`claude_models`,
   `acp_models`, `codex_models`, `pi_models`, `opencode_models`).
-- `prompt.rs` — system instructions (`instructions(language, disk_matches_head, user)`),
-  `updated_instructions` and `instructions_fingerprint` (what a resumed session is told when its
-  instructions changed), the overview and update tasks, `with_brief`, `with_new_comments`,
-  `selection_link`, `selection_question` and `Selection`.
+- `prompt.rs` — system instructions (`instructions(language, disk_matches_head, user)`,
+  `is_instructions`), `updated_instructions` and `instructions_fingerprint` (what a resumed
+  session is told when its instructions changed), the overview and update tasks, `with_brief`,
+  `with_new_comments`, `selection_link`, `selection_question` and `Selection`.
+- `shown.rs` — the inverse of `prompt`: `shown(prompt)` turns a prompt the app sent back into
+  what the user saw (`Shown`, `ShownKind`), `after_instructions` cuts an instructions block off
+  the front of a replayed first prompt.
 - `brief.rs` — `Brief` and its parts (plain data), `render`, `render_threads`, thread digest and
   fingerprint (`Thread::digest`, `Thread::fingerprint`, `fingerprints`, `changed_since`), the limits.
 - `acp/` — the generic ACP driver and its flavors (`mod.rs`, `wire.rs`, `normalize.rs`,
-  `permission.rs`, `flavor.rs`); see `acp/doc.md`. OpenCode is verified live, DeepSeek is not.
-- `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`); see `claude/doc.md`.
-- `codex/` — the Codex driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see
-  `codex/doc.md`. Written from documentation, not run against a real CLI.
-- `pi/` — the Pi driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`); see `pi/doc.md`.
-  Written from documentation, not run against a real CLI.
+  `permission.rs`, `flavor.rs`, `history.rs`); see `acp/doc.md`. OpenCode is verified live,
+  DeepSeek is not.
+- `claude/` — the Claude Code driver (`mod.rs`, `wire.rs`, `normalize.rs`, `history.rs`); see
+  `claude/doc.md`.
+- `codex/` — the Codex driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`,
+  `history.rs`); see `codex/doc.md`. Written from documentation, not run against a real CLI.
+- `pi/` — the Pi driver (`mod.rs`, `wire.rs`, `normalize.rs`, `classify.rs`, `history.rs`); see
+  `pi/doc.md`. Written from documentation, not run against a real CLI.
 - `fixtures/` — recorded harness sessions (`claude/*.jsonl` stdout, `opencode/*.jsonl` with the
-  `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand. The Codex
+  `.sent.jsonl` requests) that drive the driver tests; they are never edited by hand.
+  `claude/history.jsonl` is a session file Claude Code wrote, cut down to the fields the
+  history reader uses (no paths, no system text). The Codex
   and Pi tests use synthetic transcripts written in the test code, not fixtures; the ACP tests replay
   the OpenCode recordings and add scripted peers.
 - `tests/` — unit tests per module (`#[cfg(unix)]` for the ones that spawn `sh`).
@@ -66,6 +73,15 @@ driver on `tokio::io::duplex` halves without a process; `start_in` takes a regis
 sessions without the login shell.
 
 ## Spec
+
+- History: with `Launch.history` and `Launch.resume` both set, a driver sends
+  `Event::History(Vec<Entry>)` once, before `Event::Session`, with the session's earlier
+  conversation as the harness keeps it: a user entry is the prompt as sent (brief, prefixes and
+  all; the app decodes it with `shown`), an assistant entry is the text of one answer (the
+  turn's messages joined by a blank line; thinking, tools and errored messages left out),
+  entries with no text are skipped. A history that cannot be read is empty or partial and only
+  logged; it never fails the session. Where a harness has no way to read it (an ACP agent that
+  cannot `session/load`), no `History` is sent. How each driver reads it is in its doc.
 
 - All process work runs on `net_runtime`'s tokio runtime through `handle().spawn(..)` with
   the `JoinHandle` kept (`net_runtime::spawn` would detach a task whose future is dropped).
@@ -216,7 +232,8 @@ sessions without the login shell.
   ids come from the brief, so after a head change the app sends a fresh brief along with
   `update_task`.
 - `updated_instructions` puts the whole instruction text, marked as replacing the earlier one,
-  in front of a message; the app uses it for a resumed session whose instruction fingerprint
+  in front of a message, closed by a fixed `--- end of the updated instructions ---` line (the
+  user's own instructions may hold a `---` rule, and `shown` must find the end); the app uses it for a resumed session whose instruction fingerprint
   (`instructions_fingerprint`, FNV-1a 64 as 16 hex digits) differs, since no harness is known to
   apply a changed system prompt on resume (Claude Code verifiably keeps the old one).
 - A selection is sent as the user's text, `Selected: [<path> <side><start>-<end>](diff:...)` (just
@@ -225,6 +242,17 @@ sessions without the login shell.
   is repository text, so in what the agent receives it appears only percent-encoded (label and
   link target alike, from `review_core::diff_link::format`); `selection_link`, the marker shown
   to the user in the input, keeps the readable escaped path as the label.
+
+- `shown` reads a prompt from the front: the updated-instructions block (up to its fixed end
+  line; the older `\n---\n` end is still read after the fixed "Be concise" line), the brief
+  (lines are scanned outside untrusted fences, which content cannot fake, up to the fixed end of
+  the `## Review comments` section, the last one `render` writes; an unfenced `Head commit:`
+  gives the head), the new-comments prefix and the moved-head note; the rest is the overview
+  task, an update task, or the user's text, whose trailing selection block (`Selected:` line,
+  fence, text, the same fence last; the opening fence is the last line equal to the closing one,
+  since no run in the text is as long) becomes the question and its link. Anything else is shown
+  as sent. Any change to the texts in `prompt` or `brief::render` must keep this inverse: the
+  round-trip tests in `tests/shown.rs` compose with the real functions.
 
 ## Decisions
 

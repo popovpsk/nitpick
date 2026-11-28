@@ -11,6 +11,7 @@ fn launch() -> Launch {
         cwd: PathBuf::from("/work/toy"),
         model: Some("gpt-5.6-sol".into()),
         resume: Some("thread-old".into()),
+        history: false,
         instructions: "Be brief.".into(),
         scratch: PathBuf::new(),
     }

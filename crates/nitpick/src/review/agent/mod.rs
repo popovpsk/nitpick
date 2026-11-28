@@ -152,6 +152,7 @@ pub(super) struct AgentPanel {
     owner: u64,
     bound: Option<Bound>,
     resumable: bool,
+    restoring: bool,
     settings_used: bool,
     settings_notice: Option<u64>,
     _close: Task<()>,
@@ -221,6 +222,7 @@ impl AgentPanel {
             owner: claims::next_owner(),
             bound: None,
             resumable: false,
+            restoring: false,
             settings_used: false,
             settings_notice: None,
             _close: Task::ready(()),
@@ -258,6 +260,7 @@ impl AgentPanel {
         self.unread = false;
         self._close = Task::ready(());
         self.start_lookup(cx);
+        self.maybe_restore(cx);
         cx.notify();
     }
 
@@ -385,6 +388,7 @@ impl AgentPanel {
                 self.settings_notice = self.messages.last().map(|message| message.id);
             }
             self.start_lookup(cx);
+            self.maybe_restore(cx);
         }
         cx.notify();
     }

@@ -6,16 +6,16 @@ const DEFAULT_LANGUAGE: &str = "English";
 
 pub const MAX_USER_INSTRUCTIONS: usize = 20_000;
 
-const USER_HEADING: &str =
+pub(crate) const USER_HEADING: &str =
     "\nAdditional instructions from the user (the rules above still apply):\n";
 
-const UPDATED_INSTRUCTIONS: &str = "\
+pub(crate) const UPDATED_INSTRUCTIONS: &str = "\
 The instructions for this conversation were updated. They replace the instructions you were given
 earlier; follow them from now on.
 
 ";
 
-const INSTRUCTIONS_HEAD: &str = "\
+pub(crate) const INSTRUCTIONS_HEAD: &str = "\
 You are assisting a human who is reviewing a code change in Nitpick, a read-only diff reviewer.
 Your job is to help them understand the change and find their way through it. You are not the
 reviewer: do not produce a list of defects, a verdict, or review comments. Point at what deserves
@@ -43,7 +43,7 @@ const INSTRUCTIONS_LINKS: &str = "\
   seen in the diff or the file; never guess them. Do not link files outside the change.
 ";
 
-const OVERVIEW: &str = "\
+pub(crate) const OVERVIEW: &str = "\
 Write an overview of this change for the reviewer:
 1. What it does and why, in a few sentences.
 2. A suggested order to read it: a numbered list; each step links the code and says in one line
@@ -54,10 +54,10 @@ Write an overview of this change for the reviewer:
 Keep it under 600 words.
 ";
 
-const LOCAL_UPDATE: &str =
+pub(crate) const LOCAL_UPDATE: &str =
     "The working tree changed since the last overview. Re-read it and update the overview.";
 
-const COMMENTS_HEADING: &str = "New and changed comments since the last message:";
+pub(crate) const COMMENTS_HEADING: &str = "New and changed comments since the last message:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection<'a> {
@@ -94,8 +94,18 @@ fn user_text(text: &str) -> String {
     }
 }
 
+pub(crate) const INSTRUCTIONS_END: &str = "\n--- end of the updated instructions ---\n\n";
+
 pub fn updated_instructions(instructions: &str, message: &str) -> String {
-    format!("{UPDATED_INSTRUCTIONS}{instructions}\n---\n{message}")
+    format!("{UPDATED_INSTRUCTIONS}{instructions}{INSTRUCTIONS_END}{message}")
+}
+
+pub fn is_instructions(text: &str) -> bool {
+    let first = INSTRUCTIONS_HEAD
+        .lines()
+        .next()
+        .unwrap_or(INSTRUCTIONS_HEAD);
+    text.trim_start().starts_with(first)
 }
 
 pub fn instructions_fingerprint(instructions: &str) -> String {

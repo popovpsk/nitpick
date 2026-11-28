@@ -13,11 +13,13 @@ use crate::session::{BoxFuture, Channels, Command, Driver, Plan, Transport};
 use crate::{AcpFlavor, Error, Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
 
 pub mod flavor;
+pub mod history;
 pub mod normalize;
 pub mod permission;
 pub mod wire;
 
 use flavor::{Dialect, ResumeVia};
+use history::Replay;
 use normalize::{Normalizer, outcome_from_stop};
 use wire::Capabilities;
 
@@ -170,6 +172,7 @@ struct Conversation {
     queue: VecDeque<String>,
     normalizer: Normalizer,
     turn: Option<Turn>,
+    replay: Option<Replay>,
 }
 
 async fn converse(
@@ -196,6 +199,7 @@ async fn converse(
         queue: VecDeque::new(),
         normalizer: Normalizer::default(),
         turn: None,
+        replay: None,
     };
     let (stop, ready) = match conversation.handshake().await {
         Ok(()) => (conversation.serve().await, true),
@@ -247,7 +251,9 @@ impl Conversation {
                 (id, result)
             }
             Some(id) => {
-                let Some(via) = flavor::resume_via(self.flavor, &self.capabilities) else {
+                let Some(via) =
+                    flavor::resume_via(self.flavor, &self.capabilities, self.launch.history)
+                else {
                     return Err(Stop::Failed(Failure {
                         kind: FailureKind::SessionLost,
                         message: "The agent cannot resume a session.".to_owned(),
@@ -257,11 +263,17 @@ impl Conversation {
                     ResumeVia::Resume => self.limits.session,
                     ResumeVia::Load => self.limits.load,
                 };
+                if via == ResumeVia::Load && self.launch.history {
+                    self.replay = Some(Replay::new(&id, &self.launch.instructions));
+                }
                 let params = wire::resume_params(&self.launch, &id, system_prompt);
-                let result = self
-                    .call(via.method(), params, limit)
-                    .await
-                    .map_err(|fault| self.setup_stop(via.method(), fault, limit, true))?;
+                let answer = self.call(via.method(), params, limit).await;
+                let replay = self.replay.take();
+                let result =
+                    answer.map_err(|fault| self.setup_stop(via.method(), fault, limit, true))?;
+                if let Some(replay) = replay {
+                    let _ = self.events.send(Event::History(replay.finish()));
+                }
                 let id = wire::session_id(&result).map(str::to_owned).unwrap_or(id);
                 (id, result)
             }
@@ -473,6 +485,9 @@ impl Conversation {
         match incoming {
             Incoming::Notification { method, params } => {
                 if method == UPDATE_METHOD {
+                    if let Some(replay) = self.replay.as_mut() {
+                        replay.feed(&params);
+                    }
                     let events = self.normalizer.feed(&params);
                     self.emit(events);
                 }

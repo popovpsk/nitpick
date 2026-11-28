@@ -401,6 +401,7 @@ pub struct Strings {
     pub assistant_changed_banner: SharedString,
     pub assistant_update_overview: SharedString,
     pub assistant_starting: SharedString,
+    pub assistant_restoring: SharedString,
     pub assistant_working: SharedString,
     pub assistant_thinking: SharedString,
     pub assistant_new_conversation: SharedString,

@@ -3,8 +3,9 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::classify;
+use super::history::{self, HISTORY_ID};
 use super::wire::{self, Frame, State};
-use crate::{Event, Failure, Outcome};
+use crate::{Entry, Event, Failure, Outcome};
 
 pub const STATE_ID: &str = "nitpick-state";
 
@@ -23,6 +24,7 @@ pub struct Output {
     pub events: Vec<Event>,
     pub reply: Option<String>,
     pub state: Option<Result<State, Failure>>,
+    pub history: Option<Vec<Entry>>,
     pub finished: bool,
 }
 
@@ -105,6 +107,15 @@ impl Normalizer {
                 } else {
                     Ok(State::from_data(frame.data.as_ref()))
                 });
+            }
+            Some("get_messages") if frame.id_str() == Some(HISTORY_ID) => {
+                if frame.success == Some(false) {
+                    log::debug!(
+                        "Pi refused get_messages: {}",
+                        frame.error_text().unwrap_or_default()
+                    );
+                }
+                out.history = Some(history::entries(frame.data.as_ref()));
             }
             Some("prompt") => {
                 let Some(turn) = self.turn.as_ref() else {

@@ -2,8 +2,9 @@
 
 The review assistant: `AgentPanel`, a separate entity that `ReviewView` holds. It is the
 slide-out side panel (frame, resize edge, conversation, input), the conversation of one window
-(in memory only, never written to `nitpick.db`), and the orchestration of the harness session
-behind it (lazy start, overview, chat, resume, recovery). The header button and the `ToggleAgent` action live in
+(held in memory, never written to `nitpick.db`; an earlier one is read back from the harness),
+and the orchestration of the harness session behind it (lazy start, overview, chat, resume,
+restore, recovery). The header button and the `ToggleAgent` action live in
 `review/` and only read and drive this entity.
 
 Not here: running the harness (`agent` crate), the profile table and settings
@@ -18,15 +19,16 @@ Not here: running the harness (`agent` crate), the profile table and settings
   lookup, the conversation, the session binding), `Turn`, `Live`, `Bound`, `Activity`,
   `AgentEvent`, `apply_settings`, `locate` / `locate_in`, `unread_after`.
 - `run.rs` — the orchestration: `set_review`, reading the stored session pointer, `evaluate`
-  (overview decision), `dispatch` / `dispatched` / `send_now`, the event pump and
-  `apply_event`, session binding and its stored state, failure recovery, row bookkeeping,
-  `init`, scratch folders, `retire`.
+  (overview decision), `dispatch` / `launch` / `dispatched` / `send_now`, the restore
+  (`maybe_restore`, `on_history`, `finish_restore`), the event pump and `apply_event`, session
+  binding and its stored state, failure recovery, row bookkeeping, `init`, scratch folders,
+  `retire`.
 - `claims.rs` — the process-wide set of session ids held by a window (`Claim`, `is_held`,
   `next_owner`).
 - `logic.rs` — the pure decisions: `OverviewState`, `load_action`, `Request`, `compose` /
   `compose_chat`, `goes_out_at_once`, `adopt`, `Resume`, `instructions_due`,
   `with_updated_instructions`, `Launching`, `classify` / `problem_text` / `exit_text`,
-  `limit_text`, `coalesce`.
+  `limit_text`, `coalesce`, `restored` / `Restored` (harness history to rows).
 - `context.rs` — `ReviewContext` (key, head, the `Brief`, the work-directory plan), `from_view`
   (reads `ReviewView`), `review_key`, `local_head`, `assemble` (plain inputs to `Brief`),
   `resolve_workdir`, `language_name`.
@@ -44,7 +46,8 @@ Not here: running the harness (`agent` crate), the profile table and settings
   repositories, the overview decision table, failure texts, the changed-comments prefix,
   session claims and adoption, the chat-after-overview route, instruction delivery on resume,
   launch comparison, event coalescing, link resolution against a line map, the
-  selection question and locating a text selection in a patch.
+  selection question and locating a text selection in a patch, a restored conversation built
+  from composed prompts.
 
 ## Invariants and spec
 
@@ -108,29 +111,63 @@ Not here: running the harness (`agent` crate), the profile table and settings
   history costs nothing until the panel is opened, and a closed panel creates none). Streaming
   appends with `push_str` and the view fades the new words in. Assistant, user and notice rows are
   different: notices are plain muted text, user messages sit in a tinted box under a "You" label.
-- The conversation lives only in the window's memory: messages, overview and notices
-  are never written to `nitpick.db` or read from it, and are gone when the window closes or
-  the review changes. Text that is only whitespace is dropped and its row removed when its turn
-  ends (completed, interrupted, failed or the process died). A stopped turn keeps its partial
-  text and gets a notice. What survives is the harness's own session, which a stored pointer
-  can continue (see Session).
+- The window's messages are held in memory: messages, overview and notices are never written
+  to `nitpick.db` or read from it, and are dropped when the window closes or the review changes.
+  Text that is only whitespace is dropped and its row removed when its turn ends (completed,
+  interrupted, failed or the process died). A stopped turn keeps its partial text and gets a
+  notice. What survives is the harness's own session, which a stored pointer can continue and
+  whose history the panel reads back (Restore, below).
 - A window with no messages but a free stored session id for the active profile (after a
-  restart, or on returning to the review) is resumable: it shows "continue the earlier
-  conversation" instead of the overview invitation, the input stays enabled, and no automatic
-  overview starts (`load_action` with `resumable`), since it would spend a full overview on
-  every app start. "Request an overview" stays on screen and runs as a turn of that session.
+  restart, or on returning to the review) is resumable: no automatic overview starts
+  (`load_action` with `resumable`), since it would spend a full overview on every app start.
+  While it stays resumable (the panel is closed, the harness gave no history, or the restore
+  was stopped) it shows "continue the earlier conversation" instead of the overview invitation,
+  the input stays enabled, and "Request an overview" runs as a turn of that session.
+
+### Restore
+
+- `maybe_restore` runs when the panel is open, the window is resumable and has no messages, no
+  process is live and none is starting: from `open`, from `install_stored` (the stored pointer
+  arrived while the panel was open) and after a settings change. It is `launch` without a
+  request: the same work directory, adoption and claim as a dispatch (so a second window on the
+  review starts its own thread), `Launch.history` set, and no prompt. `dispatch` never asks for
+  history: a window that has messages never reloads them. A closed panel starts nothing.
+- The phase is `Starting` with `restoring` set; the progress row says "Loading the earlier
+  conversation…" and sending waits, as for any start. `Event::History` arrives before
+  `Event::Session`; it is applied only while restoring and with no messages, and ends the
+  restore. A `Session` with no `History` before it (DeepSeek, which cannot load) ends it too,
+  with nothing shown, so the window stays resumable.
+- `logic::restored` turns entries into rows: a user entry is decoded with
+  `agent::shown::shown` (the inverse of what `compose` and `with_updated_instructions` send), a
+  chat becomes the user's message as shown when it was sent (a selection becomes the question
+  and its link), an overview or update request shows nothing and makes the next answer
+  `Kind::Overview`. A row's `head` is the head named by the latest brief so far (a non-local
+  review's `Head commit`), else the bound session's `brief_head`, else the review's head, so the
+  overview state and its banner work on restored rows. Rows are inserted in one splice.
+- After a restore `evaluate` runs: an overview written for an older head shows the banner and,
+  with auto on for a non-local review, runs the update, as a head change in an open window
+  does. A restored conversation without an overview pins `auto_attempted` to the head, so
+  opening the panel never starts an overview by itself.
+- Failures: a lost session (`SessionLost` with no turn) clears the stored id quietly and goes
+  back to the overview invitation, with no banner; a stored id another window took meanwhile
+  ends the restore before anything starts (`restore_unavailable`); any other failure, or the
+  process exiting, shows the usual banner. Stop, a review change and a settings change end a
+  restore and leave the window resumable (Stop also ends a process that already started, so
+  reopening the panel restores again; the claim stays with the window), and a settings change
+  restores again under the new settings.
 
 ### Session
 
-- Lazy: nothing starts until a prompt must be sent. `evaluate` starts the overview right after
+- Lazy: nothing starts until a prompt must be sent or an open panel restores an earlier
+  conversation (Restore). `evaluate` starts the overview right after
   the conversation loads when `agent.auto_overview` and `agent.enabled` are on, even with the
-  panel closed; otherwise the first button press or message does. `dispatch` is the only way in:
-  it resolves the work directory on the background executor (`context::resolve_workdir`), picks
+  panel closed; otherwise the first button press or message does. `launch` is the only way in
+  (`dispatch` with a request, `maybe_restore` without one): it resolves the work directory on the background executor (`context::resolve_workdir`), picks
   the session to resume (below), calls `Session::start` on
   `net_runtime::unblock` (the first call waits for the login-shell snapshot), and comes back to
   `dispatched`, which discards a result whose `operation` is no longer current (a stop, a review
   change or a settings change in between). `dispatched` starts a session itself
-  (one more `dispatch`, which then has none to lose) when the request found a live session at
+  (one more `launch`, which then has none to lose) when the request found a live session at
   dispatch time and that session ended while the work directory was being resolved. A chat message on a live session whose brief was
   delivered skips all of that and goes out at once.
 - Work directory: local changes use the repository root. Branches and merge requests use the
@@ -366,9 +403,11 @@ Not here: running the harness (`agent` crate), the profile table and settings
   not kept, since it describes the moment and the next action replaces it.
 - A conversation belongs to its window and to the harness, not to nitpick's database: each
   window has an independent thread and threads never intersect. Nitpick stores only the id
-  (and two flags) to continue a harness session from, so a thread survives a restart as the
-  agent's own history, not as messages the app can show; the owner chose this over a shared,
-  stored transcript.
+  (and two flags) to continue a harness session from. The earlier conversation a window shows
+  after a restart is read back from the harness's own session (`Launch.history`); nitpick keeps
+  no copy of it.
+- The restore starts the harness when the panel opens, not when the review opens: no process
+  is spawned for a window whose panel stays closed.
 - An earlier conversation is resumed on the first message, not at startup: an automatic
   overview would spend a full overview on every app start.
 - Changed instructions on a resumed session travel as a message block, for every harness,

@@ -15,6 +15,7 @@ fn launch(flavor: AcpFlavor, command: &str) -> Launch {
         cwd: PathBuf::from("/work/toy"),
         model: None,
         resume: None,
+        history: false,
         instructions: "Be brief.".into(),
         scratch: PathBuf::new(),
     }

@@ -19,6 +19,7 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
 - `normalize.rs` — `Normalizer`: updates to `Event`s, tool lifecycle, paragraph separators, the
   cancellation-note filter, the turn outcome.
 - `permission.rs` — pure: tool kind to verdict, verdict and options to the reply.
+- `history.rs` — `Replay`: a `session/load` replay to `Entry`s.
 - `flavor.rs` — per-flavor environment, config dialect, resume method, error classification.
 
 ## Invariants and spec
@@ -36,11 +37,22 @@ argument itself (it is part of the user's command; `Driver::plan` adds no argume
   no answer does not count): the app resumes the stored id, and the instructions are never sent
   on the resume path, so an id must not be stored before they were delivered. The event then
   comes just before that turn's `TurnFinished`.
-- Resume (`Launch.resume` set): `sessionCapabilities.resume` declared selects `session/resume`;
-  else `loadSession` selects `session/load` (DeepSeek never loads); neither is a lost session.
-  Both take `{sessionId, cwd, mcpServers}` and the `cwd` must equal the original one.
-  `session/load` replays the history as updates before its answer; no turn is running then, so the
-  replay never becomes an event. Waits: 60 s for new and resume, 90 s for load.
+- Resume (`Launch.resume` set): with `Launch.history` and `loadSession` declared (DeepSeek never
+  loads) `session/load` is used; otherwise `sessionCapabilities.resume` selects
+  `session/resume`, else `loadSession` selects `session/load`; none is a lost session. Both take
+  `{sessionId, cwd, mcpServers}` and the `cwd` must equal the original one. `session/load`
+  replays the history as updates before its answer; no turn is running then, so the replay never
+  becomes a turn event. With `history` it is collected (`Replay`) and sent as one
+  `Event::History` when the answer arrives, before `Event::Session`: `user_message_chunk` and
+  `agent_message_chunk` text of the session, chunks of one `messageId` joined directly, agent
+  messages of one turn by a blank line, a new user `messageId` starting a new entry (an agent
+  that sends no ids gets consecutive user chunks as one entry, so two prompts with no answer
+  between them read as one). A user
+  message that starts with the instructions (`prompt::is_instructions`) loses them
+  (`shown::after_instructions`: the launch's own text when it matches, else up to the fixed end
+  of the instructions, past a user part up to the brief that every first prompt carries).
+  Without `history`, or when only `session/resume` exists, nothing is collected. Waits: 60 s for
+  new and resume, 90 s for load.
 - A lost session is reported by failing the turn with `FailureKind::SessionLost`, never by
   silently starting a fresh session: the app clears the stored id and sends the request again to a
   new session. It is raised only while resuming: for no usable method, `-32002`, a message
@@ -180,7 +192,11 @@ the replay tests drive the real driver with them and assert the bytes it writes.
   `usage_update`. Cancel: after `session/cancel` the tool completes and the answer
   `stopReason: "cancelled"` arrives within about 4 s; the next prompt in the same process works.
 - `session/load` replays the history (`user_message_chunk`, `agent_message_chunk`, `tool_call`,
-  …) before its answer; `session/resume` replays nothing, so it is the path used.
+  …) before its answer, one chunk per message part; `session/resume` replays nothing, so it is
+  the path used when no history is wanted.
+- Live against 2.4.2 (`session/load` only, through the real driver): the text blocks of one
+  prompt come back as one `user_message_chunk` joined by `\n`, so a first prompt reads as the
+  instructions followed by the message.
 - An unknown session id fails `session/resume` and `session/load` with `-32603`, "Internal error:
   OpenCode service failure", `data: {"service": "session"}`.
 - With the ask config a shell command sends `session/request_permission` with options `once`

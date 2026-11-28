@@ -10,7 +10,9 @@ Not here: starting or killing the process (`session`, `process`), the instructio
 ## Files
 
 - `mod.rs` — `ClaudeDriver` (`Driver::plan` and `run`), the pure builders `arguments`,
-  `settings_json`, `environment`, `Os`, `SessionArg`, the session-file lookup, and the turn loop.
+  `settings_json`, `environment`, `Os`, `SessionArg`, the session-file lookup (`session_file`),
+  and the turn loop.
+- `history.rs` — `read` / `parse`: the session file to `Entry`s.
 - `wire.rs` — frame types (every field optional, a mistyped field reads as absent) and the lines
   written to stdin.
 - `normalize.rs` — `Normalizer`: frames to `Event`s, tool titles, result classification.
@@ -94,7 +96,23 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   (`<config>` is `CLAUDE_CONFIG_DIR` as the child will see it, else `~/.claude`; the id may hold
   only letters, digits, `-`, `_`). Otherwise `plan` returns `Plan::refusal` and nothing is
   launched. A wrapper command that points the CLI elsewhere is not known to the check.
-- The lookup is injectable (`ClaudeDriver::with_lookup`) so tests never read the home folder.
+- The lookup is injectable (`ClaudeDriver::with_lookup`, it returns the file's path) so tests
+  never read the home folder.
+- History: the CLI has no command that prints a session, so with `Launch.history` the driver
+  reads the file the lookup found. `plan` keeps its path in the driver (one driver per session)
+  and `run` reads it on `net_runtime::unblock` before reading stdout, so `History` comes before
+  the first turn's `Session`. Files over 64 MiB give no history. Facts about 2.1.331–2.1.332:
+  one JSON record per line, of many types (`user`, `assistant`, `attachment`,
+  `queue-operation`, `api-request-blob`, `system`, …); a prompt is a `user` record whose
+  `message.content` is the string as sent; every content block of an answer is its own
+  `assistant` record carrying `message.id`; tool output is a `user` record of `tool_result`
+  blocks. Read: `user` and `assistant` records not marked `isSidechain`, `isMeta`,
+  `isCompactSummary` or `isApiErrorMessage`, without a string `error` and not by the
+  `<synthetic>` model; a prompt is its string or `text` blocks, `[Request interrupted by user…`
+  is dropped; the `text` blocks of the answers until the next prompt make one entry (blocks of
+  one message joined directly, messages by a blank line, as the live stream reads). Records
+  are taken in file order; the `parentUuid` chain is not followed, since a print-mode session
+  never branches.
 
 ## Model list
 

@@ -198,6 +198,7 @@ async fn a_new_session_declares_no_client_capabilities() {
 fn resuming() -> Launch {
     Launch {
         resume: Some("ses_old".into()),
+        history: false,
         ..launch()
     }
 }
@@ -397,6 +398,7 @@ fn with_instructions(resume: Option<&str>) -> Launch {
     Launch {
         instructions: "Be brief.".into(),
         resume: resume.map(str::to_owned),
+        history: false,
         ..launch()
     }
 }

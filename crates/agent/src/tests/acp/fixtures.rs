@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use super::rig::*;
 use crate::session::Command;
-use crate::{AcpFlavor, Event, FailureKind, Launch};
+use crate::{AcpFlavor, Entry, EntryRole, Event, FailureKind, Launch};
 
 const BASIC: &str = include_str!("../../fixtures/opencode/basic.jsonl");
 const BASIC_SENT: &str = include_str!("../../fixtures/opencode/basic.sent.jsonl");
@@ -162,6 +162,7 @@ fn without_resume(mut line: Value) -> Value {
 fn resuming(id: &str) -> Launch {
     Launch {
         resume: Some(id.into()),
+        history: false,
         ..launch()
     }
 }
@@ -341,6 +342,40 @@ async fn the_history_replayed_by_load_never_reaches_the_events() {
         said,
         "You first asked me to run `git log --oneline` and tell you how many commits there were."
     );
+    played.await.unwrap();
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_load_for_history_sends_the_replay_before_the_session() {
+    let launch = Launch {
+        history: true,
+        ..resuming(BASIC_SESSION)
+    };
+    let (rig, played) = started(AcpFlavor::Generic, launch, LOAD, LOAD_SENT, untouched);
+    rig.prompt(FIRST_QUESTION);
+    let events = rig.until_finished().await;
+    let user = |text: &str| Entry {
+        role: EntryRole::User,
+        text: text.into(),
+    };
+    let assistant = |text: &str| Entry {
+        role: EntryRole::Assistant,
+        text: text.into(),
+    };
+    assert_eq!(
+        events.first(),
+        Some(&Event::History(vec![
+            user("Run `git log --oneline` and tell me how many commits there are."),
+            assistant("I'll run that command for you.\n\n2 commits."),
+            user("In one sentence: what was the first thing I asked you?"),
+            assistant(
+                "You first asked me to run `git log --oneline` and tell you how many commits there were."
+            ),
+        ]))
+    );
+    assert_eq!(events.get(1), Some(&session(BASIC_SESSION)));
+    assert_eq!(events.last(), Some(&completed()));
     played.await.unwrap();
     rig.stop().await;
 }

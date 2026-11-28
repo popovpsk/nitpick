@@ -12,6 +12,7 @@ use crate::session::{BoxFuture, BoxReader, BoxWriter, Channels, Command, Driver,
 use crate::{Error, Event, Failure, FailureKind, Launch, Outcome};
 
 pub mod classify;
+pub mod history;
 pub mod normalize;
 pub mod wire;
 
@@ -147,6 +148,7 @@ struct Interrupt {
 
 struct Conversation {
     requested: Option<String>,
+    wants_history: bool,
     limits: Limits,
     lines: Lines<BoxReader>,
     writer: BoxWriter,
@@ -162,6 +164,7 @@ struct Conversation {
 async fn converse(launch: Launch, limits: Limits, transport: Transport, channels: Channels) {
     let Transport { reader, writer } = transport;
     let mut conversation = Conversation {
+        wants_history: launch.history,
         requested: launch.resume.filter(|id| !id.is_empty()),
         limits,
         lines: Lines::new(reader),
@@ -204,7 +207,18 @@ impl Conversation {
                             return Err(Stop::Failed(other(NOT_READY)));
                         }
                         if let Some(state) = output.state {
-                            return self.admit(state);
+                            let id = self.admit(state)?;
+                            if self.requested.is_some() && self.wants_history {
+                                let entries = self.history().await?;
+                                let _ = self.events.send(Event::History(entries));
+                            }
+                            match id {
+                                Some(id) => {
+                                    let _ = self.events.send(Event::Session { id });
+                                }
+                                None => log::warn!("Pi did not report the id of a new session"),
+                            }
+                            return Ok(());
                         }
                     }
                     Ok(None) => return Err(Stop::Failed(other(NOT_READY))),
@@ -222,7 +236,50 @@ impl Conversation {
         }
     }
 
-    fn admit(&mut self, state: Result<State, Failure>) -> Result<(), Stop> {
+    async fn history(&mut self) -> Result<Vec<crate::Entry>, Stop> {
+        if self
+            .write(&history::get_messages(history::HISTORY_ID))
+            .await
+            .is_err()
+        {
+            return Err(Stop::Failed(other(NOT_READY)));
+        }
+        let limit = self.limits.state;
+        let deadline = Instant::now() + limit;
+        loop {
+            tokio::select! {
+                command = self.commands.recv_async() => {
+                    if self.on_command(command).is_break() {
+                        return Err(Stop::Shutdown);
+                    }
+                }
+                line = self.lines.next_line() => match line {
+                    Ok(Some(line)) => {
+                        let output = self.normalizer.feed(&line);
+                        if let Some(reply) = output.reply
+                            && self.write(&reply).await.is_err()
+                        {
+                            return Err(Stop::Failed(other(NOT_READY)));
+                        }
+                        if let Some(entries) = output.history {
+                            return Ok(entries);
+                        }
+                    }
+                    Ok(None) => return Err(Stop::Failed(other(NOT_READY))),
+                    Err(error) => {
+                        log::debug!("reading the assistant's output failed: {error}");
+                        return Err(Stop::Failed(other(NOT_READY)));
+                    }
+                },
+                () = tokio::time::sleep_until(deadline) => {
+                    log::debug!("Pi did not answer get_messages within {limit:?}");
+                    return Ok(Vec::new());
+                }
+            }
+        }
+    }
+
+    fn admit(&mut self, state: Result<State, Failure>) -> Result<Option<String>, Stop> {
         let state = state.map_err(Stop::Failed)?;
         if let Some(requested) = &self.requested
             && state.message_count.unwrap_or(0) == 0
@@ -232,17 +289,10 @@ impl Conversation {
                 message: format!("Pi has no history for the session {requested}."),
             }));
         }
-        let id = state
+        Ok(state
             .session_id
             .filter(|id| !id.is_empty())
-            .or_else(|| self.requested.clone());
-        match id {
-            Some(id) => {
-                let _ = self.events.send(Event::Session { id });
-            }
-            None => log::warn!("Pi did not report the id of a new session"),
-        }
-        Ok(())
+            .or_else(|| self.requested.clone()))
     }
 
     async fn serve(&mut self) -> Stop {

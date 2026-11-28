@@ -5,7 +5,7 @@ use std::process::Command;
 
 use ::agent::brief::{self, Brief};
 use ::agent::process::Environment;
-use ::agent::{Event, Failure, FailureKind, Outcome};
+use ::agent::{Entry, EntryRole, Event, Failure, FailureKind, Outcome, prompt};
 use forge::ForgeKind;
 use git_repo::Repo;
 use gpui::SharedString;
@@ -25,7 +25,7 @@ use super::logic::{
     self, Guard, Launching, LoadAction, OverviewState, Problem, Request, classify, coalesce,
     compose_chat, exit_text, limit_text, load_action, overview_state, problem_text,
 };
-use super::messages::Kind;
+use super::messages::{Kind, Role};
 use super::{LinkPlan, Lookup, PendingSelection, Phase, locate_in, unread_after};
 use crate::agent_profiles::LoginHint;
 use crate::review::ReviewSource;
@@ -1056,7 +1056,7 @@ fn a_resumed_session_gets_the_instructions_again_only_when_they_differ() {
 fn updated_instructions_lead_the_first_message_of_a_resumed_session() {
     let sent = logic::with_updated_instructions(Some("RULES"), "question".to_string());
     assert!(sent.starts_with("The instructions for this conversation were updated."));
-    assert!(sent.ends_with("RULES\n---\nquestion"));
+    assert!(sent.ends_with("RULES\n--- end of the updated instructions ---\n\nquestion"));
     assert_eq!(
         logic::with_updated_instructions(None, "question".to_string()),
         "question"
@@ -1419,5 +1419,152 @@ fn a_new_conversation_leaves_a_session_another_window_holds() {
     assert_eq!(
         logic::clearable(Some(&theirs)).as_deref(),
         Some("clear-theirs")
+    );
+}
+
+const OLD_HEAD: &str = "1111111111111111111111111111111111111111";
+const NEW_HEAD: &str = "2222222222222222222222222222222222222222";
+
+fn said(text: String) -> Entry {
+    Entry {
+        role: EntryRole::User,
+        text,
+    }
+}
+
+fn answer(text: &str) -> Entry {
+    Entry {
+        role: EntryRole::Assistant,
+        text: text.into(),
+    }
+}
+
+fn restored_row(role: Role, kind: Kind, head: &str, text: &str) -> logic::Restored {
+    logic::Restored {
+        role,
+        kind,
+        head: head.into(),
+        text: text.into(),
+    }
+}
+
+fn brief_at(head: &str) -> Brief {
+    let mut brief = brief_with(vec![("t1", false, "please rename")]);
+    brief.kind = brief::Kind::Branches {
+        source: "feature".into(),
+        target: "main".into(),
+    };
+    brief.head_sha = Some(head.into());
+    brief.base_sha = Some("3333333333333333333333333333333333333333".into());
+    brief
+}
+
+#[test]
+fn a_restored_conversation_shows_what_the_user_saw() {
+    let old = brief_at(OLD_HEAD);
+    let new = brief_at(NEW_HEAD);
+    let seen = HashMap::new();
+    let selection = prompt::Selection {
+        path: "src/a.rs",
+        range: Some((Side::New, 3, 4)),
+        text: "let x = 1;\n",
+    };
+    let entries = vec![
+        said(logic::compose(
+            &Request::Overview,
+            &old,
+            false,
+            OLD_HEAD,
+            true,
+            &seen,
+            None,
+        )),
+        answer("The overview."),
+        said(compose_chat(&old, "Why the cache?", false, &seen, None)),
+        answer("Speed."),
+        said(logic::with_updated_instructions(
+            Some(&prompt::instructions("Russian", true, "Be short.")),
+            compose_chat(
+                &new,
+                &prompt::selection_question("And this?", &selection),
+                true,
+                &seen,
+                Some((OLD_HEAD, NEW_HEAD)),
+            ),
+        )),
+        answer("A constant."),
+        said(logic::compose(
+            &Request::Update {
+                old_head: OLD_HEAD.into(),
+            },
+            &new,
+            false,
+            NEW_HEAD,
+            true,
+            &seen,
+            None,
+        )),
+        answer("The updated overview."),
+    ];
+    assert_eq!(
+        logic::restored(&entries, "fallback"),
+        vec![
+            restored_row(Role::Assistant, Kind::Overview, OLD_HEAD, "The overview."),
+            restored_row(Role::User, Kind::Chat, OLD_HEAD, "Why the cache?"),
+            restored_row(Role::Assistant, Kind::Chat, OLD_HEAD, "Speed."),
+            restored_row(
+                Role::User,
+                Kind::Chat,
+                NEW_HEAD,
+                "And this?\n\n[src/a.rs R3-4](diff:src/a.rs#R3-R4)"
+            ),
+            restored_row(Role::Assistant, Kind::Chat, NEW_HEAD, "A constant."),
+            restored_row(
+                Role::Assistant,
+                Kind::Overview,
+                NEW_HEAD,
+                "The updated overview."
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_restored_conversation_without_a_brief_uses_the_fallback_head() {
+    let entries = vec![said("hello".into()), answer("hi"), answer("  ")];
+    assert_eq!(
+        logic::restored(&entries, "local:abc"),
+        vec![
+            restored_row(Role::User, Kind::Chat, "local:abc", "hello"),
+            restored_row(Role::Assistant, Kind::Chat, "local:abc", "hi"),
+        ]
+    );
+}
+
+#[test]
+fn the_latest_restored_overview_decides_the_overview_state() {
+    let entries = vec![
+        said(logic::compose(
+            &Request::Overview,
+            &brief_at(OLD_HEAD),
+            false,
+            OLD_HEAD,
+            true,
+            &HashMap::new(),
+            None,
+        )),
+        answer("The overview."),
+    ];
+    let rows = logic::restored(&entries, "");
+    let latest = rows
+        .iter()
+        .rev()
+        .find(|row| row.kind == Kind::Overview)
+        .map(|row| row.head.as_str());
+    assert_eq!(
+        overview_state(latest, NEW_HEAD),
+        OverviewState::Outdated {
+            stored: OLD_HEAD.into()
+        }
     );
 }

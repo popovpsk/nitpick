@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::lines::Lines;
 use crate::pi::{Limits, PiDriver};
 use crate::session::{Channels, Command, Driver, Transport};
-use crate::{Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
+use crate::{Entry, EntryRole, Event, Failure, FailureKind, HarnessKind, Launch, Outcome};
 
 const WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(100);
@@ -34,6 +34,10 @@ impl Rig {
     }
 
     fn with(resume: Option<&str>, limits: Limits) -> Self {
+        Self::with_history(resume, limits, false)
+    }
+
+    fn with_history(resume: Option<&str>, limits: Limits, history: bool) -> Self {
         let (driver_end, peer_end) = duplex(1 << 20);
         let (driver_reader, driver_writer) = split(driver_end);
         let (peer_reader, peer_writer) = split(peer_end);
@@ -45,6 +49,7 @@ impl Rig {
             cwd: PathBuf::from("/work/toy"),
             model: None,
             resume: resume.map(str::to_owned),
+            history,
             instructions: String::new(),
             scratch: PathBuf::new(),
         };
@@ -1128,4 +1133,70 @@ async fn a_state_timeout_after_a_cancel_still_reports_a_prompt_that_is_on_its_wa
     );
     assert!(rig.no_events().await);
     rig.ends().await;
+}
+
+fn history_entry(role: EntryRole, text: &str) -> Entry {
+    Entry {
+        role,
+        text: text.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_resume_for_history_reads_the_messages_before_the_session() {
+    let mut rig = Rig::with_history(Some("nitpick-stored"), Limits::default(), true);
+    rig.answer_state(&state("nitpick-stored", 6)).await;
+    let request = rig.read().await;
+    assert_eq!(
+        request,
+        json!({"id": "nitpick-history", "type": "get_messages"})
+    );
+    rig.write_values(&[json!({"id": "nitpick-history", "type": "response",
+        "command": "get_messages", "success": true, "data": {"messages": [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": [{"type": "thinking", "thinking": "hm"},
+                {"type": "text", "text": "Look"}, {"type": "text", "text": "ing."},
+                {"type": "toolCall", "id": "t", "name": "bash", "arguments": {}}],
+                "stopReason": "toolUse"},
+            {"role": "toolResult", "toolCallId": "t", "content": [{"type": "text", "text": "out"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "Done."}], "stopReason": "stop"},
+            {"role": "user", "content": [{"type": "text", "text": "second"}, {"type": "image", "data": ""}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "API error"}],
+                "stopReason": "error", "errorMessage": "boom"},
+            {"role": "bashExecution", "command": "ls"},
+        ]}})])
+    .await;
+    assert_eq!(
+        rig.next().await,
+        Event::History(vec![
+            history_entry(EntryRole::User, "first"),
+            history_entry(EntryRole::Assistant, "Looking.\n\nDone."),
+            history_entry(EntryRole::User, "second"),
+        ])
+    );
+    assert_eq!(rig.next().await, session_event("nitpick-stored"));
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_refused_message_list_still_resumes() {
+    let mut rig = Rig::with_history(Some("nitpick-stored"), Limits::default(), true);
+    rig.answer_state(&state("nitpick-stored", 2)).await;
+    rig.read().await;
+    rig.write_values(&[json!({"id": "nitpick-history", "type": "response",
+        "command": "get_messages", "success": false, "error": "no"})])
+        .await;
+    assert_eq!(rig.next().await, Event::History(Vec::new()));
+    assert_eq!(rig.next().await, session_event("nitpick-stored"));
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_resume_without_history_asks_for_no_messages() {
+    let mut rig = Rig::with(Some("nitpick-stored"), Limits::default());
+    rig.answer_state(&state("nitpick-stored", 2)).await;
+    assert_eq!(rig.next().await, session_event("nitpick-stored"));
+    assert!(rig.reads_nothing().await);
+    rig.stop().await;
 }

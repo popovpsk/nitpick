@@ -12,6 +12,7 @@ pub mod process;
 pub mod prompt;
 pub mod registry;
 pub mod session;
+pub mod shown;
 
 #[cfg(test)]
 mod tests;
@@ -42,12 +43,26 @@ pub struct Launch {
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub resume: Option<String>,
+    pub history: bool,
     pub instructions: String,
     pub scratch: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub role: EntryRole,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    History(Vec<Entry>),
     Session { id: String },
     Text(String),
     Thinking(String),

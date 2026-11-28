@@ -5,8 +5,7 @@ use rstest::rstest;
 use serde_json::Value;
 
 use crate::claude::{
-    ClaudeDriver, Os, SessionArg, arguments, config_dir, environment, session_file_exists,
-    settings_json,
+    ClaudeDriver, Os, SessionArg, arguments, config_dir, environment, session_file, settings_json,
 };
 use crate::process::Environment;
 use crate::registry::Registry;
@@ -22,6 +21,7 @@ fn launch() -> Launch {
         cwd: PathBuf::from("/work/toy"),
         model: None,
         resume: None,
+        history: false,
         instructions: "Be brief.".into(),
         scratch: PathBuf::from("/scratch"),
     }
@@ -154,7 +154,12 @@ fn the_environment_turns_off_background_work() {
 }
 
 fn driver(os: Os, known: &'static [&'static str]) -> ClaudeDriver {
-    ClaudeDriver::with_lookup(Arc::new(move |id| known.contains(&id))).with_os(os)
+    ClaudeDriver::with_lookup(Arc::new(move |id| {
+        known
+            .contains(&id)
+            .then(|| std::path::PathBuf::from(format!("/sessions/{id}.jsonl")))
+    }))
+    .with_os(os)
 }
 
 fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -212,6 +217,7 @@ fn planning_a_known_session_resumes_it() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some(ID.into()),
+        history: false,
         ..launch()
     };
     let plan = driver(Os::Windows, &[ID]).plan(&launch).unwrap();
@@ -230,6 +236,7 @@ fn planning_a_missing_session_refuses_without_writing() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some(ID.into()),
+        history: false,
         ..launch()
     };
     let plan = driver(Os::Unix, &[]).plan(&launch).unwrap();
@@ -256,6 +263,7 @@ async fn a_missing_session_is_reported_through_the_event_stream() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some(ID.into()),
+        history: false,
         ..launch()
     };
     let (session, events) = start_in(
@@ -320,13 +328,13 @@ fn session_files_are_looked_up_under_every_project(
     let folder = config.path().join("projects").join(project);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join(file), "{}\n").unwrap();
-    assert_eq!(session_file_exists(config.path(), id), expected);
+    assert_eq!(session_file(config.path(), id).is_some(), expected);
 }
 
 #[test]
 fn no_projects_folder_means_no_session() {
     let config = tempfile::tempdir().unwrap();
-    assert!(!session_file_exists(config.path(), ID));
+    assert!(session_file(config.path(), ID).is_none());
 }
 
 #[rstest]

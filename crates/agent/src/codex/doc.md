@@ -19,6 +19,7 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
   notifications (every field optional, a mistyped field reads as absent).
 - `normalize.rs` — `Normalizer`: notifications to `Event`s, tool titles, turn outcome.
 - `classify.rs` — error classification, resume-error classification, the version rule.
+- `history.rs` — the `thread/turns/list` request, its pages and the turns to `Entry`s.
 
 ## Invariants and spec
 
@@ -43,6 +44,15 @@ Not here: starting or killing the process (`session`, `process`), the JSON-RPC f
 - `cwd` is the launch folder made absolute. The model is sent only when set.
 - `Event::Session` is emitted once, when `thread/start` or `thread/resume` has answered, with
   `thread.id` (the requested id when a resume answer carries none).
+- History: `thread/resume` keeps `excludeTurns: true` (a full history on resume is deprecated
+  for paginated threads from 0.151). With `Launch.history`, after the resume answer and before
+  `Event::Session`, the driver pages `thread/turns/list {threadId, cursor, limit: 100,
+  sortDirection: "desc", itemsView: "full"}` along `nextCursor`, at most 20 pages, each bounded
+  by the thread wait, and reverses the turns. Per turn: a `userMessage` item's `text` inputs are
+  a user entry; the `agentMessage` items' `text` joined by a blank line is the answer; every
+  other item type is skipped. A refused or unanswered page ends the history there (logged); only
+  a shutdown stops the session. The method exists from 0.146 (experimental until 0.151, which
+  `experimentalApi: true` covers). From the app-server protocol source, not run live.
 - Every server request is answered at once, in any phase: `item/commandExecution/requestApproval`
   and `item/fileChange/requestApproval` get `{"decision":"decline"}`,
   `item/permissions/requestApproval` gets `{"permissions":{},"scope":"turn"}`,

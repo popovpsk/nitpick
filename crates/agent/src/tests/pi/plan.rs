@@ -15,6 +15,7 @@ fn launch() -> Launch {
         cwd: PathBuf::from("/work/toy"),
         model: None,
         resume: None,
+        history: false,
         instructions: "Be brief.".into(),
         scratch: PathBuf::from("/scratch"),
     }
@@ -59,6 +60,7 @@ fn a_new_session_gets_the_fixed_flags_and_the_given_id() {
 fn a_resume_passes_the_stored_id_with_the_same_flags() {
     let launch = Launch {
         resume: Some("nitpick-stored".into()),
+        history: false,
         ..launch()
     };
     let mut expected = fixed();
@@ -160,6 +162,7 @@ fn plan_resumes_by_the_stored_id() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some("nitpick-stored".into()),
+        history: false,
         ..launch()
     };
     let plan = PiDriver::new().plan(&launch).unwrap();
@@ -177,6 +180,7 @@ fn an_empty_resume_id_starts_a_new_session() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some(String::new()),
+        history: false,
         ..launch()
     };
     let plan = PiDriver::new().plan(&launch).unwrap();
@@ -194,6 +198,7 @@ fn an_id_pi_cannot_accept_is_a_lost_session_without_a_process() {
     let launch = Launch {
         scratch: scratch.path().to_path_buf(),
         resume: Some("--mode".into()),
+        history: false,
         ..launch()
     };
     let plan = PiDriver::new().plan(&launch).unwrap();

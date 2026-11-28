@@ -21,6 +21,7 @@ Not here: starting or killing the process (`session`, `process`), the instructio
 - `normalize.rs` — `Normalizer`: frames to `Event`s, the turn state, tool titles, the outcome at
   `agent_settled`, the answer to extension dialogs.
 - `classify.rs` — failure kind from error text.
+- `history.rs` — the `get_messages` command and the messages to `Entry`s.
 
 ## Invariants and spec
 
@@ -53,6 +54,16 @@ Not here: starting or killing the process (`session`, `process`), the instructio
   app then clears the stored id and sends its request with the brief to a new session. A session
   Pi creates but never completes a turn in has no file (Pi writes it with the first assistant
   message), so it counts as lost on the next resume.
+- History: with `Launch.history` on a resume, after `get_state` passes and before
+  `Event::Session`, the driver sends `{"id":"nitpick-history","type":"get_messages"}` and waits up
+  to `Limits::state` for the `response` with that id (commands are polled meanwhile). Of
+  `data.messages`: `user` (`content` a string or `text` blocks) is a user entry; `assistant`
+  `text` blocks, joined directly within a message and by a blank line between messages until
+  the next user message, are the answer, except a message with `stopReason: "error"`; `system`,
+  `toolResult`, `bashExecution`, `custom`, the summaries and unknown roles are skipped. A refused
+  or unanswered request gives an empty history and the session goes on. Pi returns the active
+  branch as the model sees it, so messages before a compaction are not in it. Documented in Pi
+  1.0–1.7, not run live.
 - `Event::Session { id }` is emitted once, after `get_state` passes: Pi's `sessionId`, else the
   requested id. A new session whose state carries no `sessionId` emits none (it works, but cannot
   be resumed). A failed `get_state` (`success: false`) fails the queued prompts with the error

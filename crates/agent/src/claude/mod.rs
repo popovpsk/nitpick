@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::json;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -10,8 +10,9 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use crate::lines::Lines;
 use crate::process::Environment;
 use crate::session::{BoxFuture, Channels, Command, Driver, Plan, Transport};
-use crate::{Error, Failure, FailureKind, Launch};
+use crate::{Error, Event, Failure, FailureKind, Launch};
 
+pub mod history;
 pub mod normalize;
 pub mod wire;
 
@@ -41,22 +42,24 @@ pub enum SessionArg {
     Resume(String),
 }
 
-pub type SessionLookup = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+pub type SessionLookup = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
 
 pub struct ClaudeDriver {
     os: Os,
     lookup: SessionLookup,
+    history: Mutex<Option<PathBuf>>,
 }
 
 impl ClaudeDriver {
     pub fn new() -> Self {
-        Self::with_lookup(Arc::new(session_exists))
+        Self::with_lookup(Arc::new(find_session))
     }
 
     pub fn with_lookup(lookup: SessionLookup) -> Self {
         Self {
             os: Os::current(),
             lookup,
+            history: Mutex::new(None),
         }
     }
 
@@ -74,9 +77,19 @@ impl Default for ClaudeDriver {
 
 impl Driver for ClaudeDriver {
     fn plan(&self, launch: &Launch) -> Result<Plan, Error> {
-        let session = match launch.resume.as_deref().filter(|id| !id.is_empty()) {
-            Some(id) if (self.lookup)(id) => SessionArg::Resume(id.to_owned()),
-            Some(id) => {
+        let found = launch
+            .resume
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(|id| (id, (self.lookup)(id)));
+        let session = match found {
+            Some((id, Some(file))) => {
+                if launch.history {
+                    *self.history.lock().unwrap_or_else(PoisonError::into_inner) = Some(file);
+                }
+                SessionArg::Resume(id.to_owned())
+            }
+            Some((id, None)) => {
                 return Ok(Plan {
                     refusal: Some(Failure {
                         kind: FailureKind::SessionLost,
@@ -106,7 +119,18 @@ impl Driver for ClaudeDriver {
     }
 
     fn run(&self, _launch: Launch, transport: Transport, channels: Channels) -> BoxFuture {
-        Box::pin(converse(transport, channels))
+        let history = self
+            .history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        Box::pin(async move {
+            if let Some(file) = history {
+                let entries = net_runtime::unblock(move || history::read(&file)).await;
+                let _ = channels.events.send(Event::History(entries));
+            }
+            converse(transport, channels).await;
+        })
     }
 }
 
@@ -185,27 +209,26 @@ pub fn config_dir(configured: Option<&std::ffi::OsStr>, home: Option<&Path>) -> 
     }
 }
 
-pub fn session_file_exists(config: &Path, id: &str) -> bool {
+pub fn session_file(config: &Path, id: &str) -> Option<PathBuf> {
     let valid = !id.is_empty()
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if !valid {
-        return false;
+        return None;
     }
-    let Ok(projects) = fs::read_dir(config.join("projects")) else {
-        return false;
-    };
+    let projects = fs::read_dir(config.join("projects")).ok()?;
     let file = format!("{id}.jsonl");
     projects
         .flatten()
-        .any(|project| project.path().join(&file).is_file())
+        .map(|project| project.path().join(&file))
+        .find(|path| path.is_file())
 }
 
-fn session_exists(id: &str) -> bool {
+fn find_session(id: &str) -> Option<PathBuf> {
     let env = Environment::current();
     config_dir(env.get(CONFIG_DIR_VAR), dirs::home_dir().as_deref())
-        .is_some_and(|config| session_file_exists(&config, id))
+        .and_then(|config| session_file(&config, id))
 }
 
 struct Turns {

@@ -1,0 +1,54 @@
+{"type": "session-owner"}
+{"type": "derived-from"}
+{"type": "queue-operation"}
+{"type": "queue-operation"}
+{"type": "attachment"}
+{"type": "user", "isSidechain": false, "uuid": "f1b6e703-d276-4a78-8bff-c826a18b29c0", "parentUuid": "93040d24-d5d2-4daa-aa88-7c32e40ff26c", "version": "2.1.332", "message": {"role": "user", "content": "Reply with exactly the two words: first answer"}}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "data-flow-records"}
+{"type": "atis-latch"}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "api-request-shape"}
+{"type": "api-request-blob"}
+{"type": "api-request-blob"}
+{"type": "api-request"}
+{"type": "last-prompt"}
+{"type": "session-owner"}
+{"type": "atis-latch"}
+{"type": "data-flow-records"}
+{"type": "assistant", "isSidechain": false, "uuid": "da690128-4ded-4b3f-846c-7bfb61c62340", "parentUuid": "1e0916d7-2724-4549-a327-b80b2580b2e4", "version": "2.1.332", "message": {"role": "assistant", "id": "msg_011ChUr5RCmcHqwJPzqur6k1", "model": "claude-haiku-5-5", "stop_reason": "end_turn", "content": [{"type": "text", "text": "first answer"}]}}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "system"}
+{"type": "queue-operation"}
+{"type": "queue-operation"}
+{"type": "user", "isSidechain": false, "uuid": "07f6cba5-fb78-48b1-a425-f2aa2562912c", "parentUuid": "7a875d67-52bb-4f0c-8af9-e59474ee21f6", "version": "2.1.332", "message": {"role": "user", "content": "Use the Read tool on note.txt, then reply with its content as one word."}}
+{"type": "attachment"}
+{"type": "api-request-blob"}
+{"type": "api-request"}
+{"type": "tools-used"}
+{"type": "data-flow-records"}
+{"type": "assistant", "isSidechain": false, "uuid": "061f4f65-5187-4ca5-81f8-75bffb5d31dc", "parentUuid": "c6106ea3-6650-4077-b98f-0ed6b912b8c1", "version": "2.1.332", "message": {"role": "assistant", "id": "msg_011ChUr7CtAm5vk1dMLZQVog", "model": "claude-haiku-5-5", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "The user wants the file read.", "signature": ""}]}}
+{"type": "assistant", "isSidechain": false, "uuid": "c847956d-37d9-4d39-a375-80ce65ad94f8", "parentUuid": "061f4f65-5187-4ca5-81f8-75bffb5d31dc", "version": "2.1.332", "message": {"role": "assistant", "id": "msg_011ChUr7CtAm5vk1dMLZQVog", "model": "claude-haiku-5-5", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "toolu_01TAjpTpf4FcfRMQ6qprXK34", "name": "Read", "input": {"file_path": "note.txt"}}]}}
+{"type": "attachment"}
+{"type": "user", "isSidechain": false, "uuid": "2d1a1e9f-0388-4f0f-a99a-e63759ad26ec", "parentUuid": "c847956d-37d9-4d39-a375-80ce65ad94f8", "version": "2.1.332", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01TAjpTpf4FcfRMQ6qprXK34", "content": "1\tpineapple\n"}]}, "toolUseResult": {"type": "text"}}
+{"type": "attachment"}
+{"type": "last-prompt"}
+{"type": "session-owner"}
+{"type": "atis-latch"}
+{"type": "attachment"}
+{"type": "attachment"}
+{"type": "api-request-blob"}
+{"type": "api-request-blob"}
+{"type": "api-request"}
+{"type": "data-flow-records"}
+{"type": "assistant", "isSidechain": false, "uuid": "c61586c7-93bc-4c7b-9db8-3ca678e7ed86", "parentUuid": "3553e54b-3079-43be-a9d4-56a63dc7772c", "version": "2.1.332", "message": {"role": "assistant", "id": "msg_011ChUr7L6FQRk9TPpPbAJjz", "model": "claude-haiku-5-5", "stop_reason": "end_turn", "content": [{"type": "text", "text": "pineapple"}]}}
+{"type": "attachment"}
+{"type": "system"}
+{"type": "last-prompt"}
+{"type": "cost-state"}

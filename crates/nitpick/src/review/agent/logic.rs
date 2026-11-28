@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use ::agent::brief::{self, Brief, Thread};
-use ::agent::{Event, Failure, FailureKind, Outcome, prompt};
+use ::agent::shown::{ShownKind, shown};
+use ::agent::{Entry, EntryRole, Event, Failure, FailureKind, Outcome, prompt};
 use app_db::AgentSession;
 use ui_resources::i18n::Strings;
 
-use super::messages::Kind;
+use super::messages::{Kind, Role};
 use crate::agent_profiles::LoginHint;
 
 pub(super) const MAX_MESSAGE_CHARS: usize = 500;
@@ -348,4 +349,52 @@ impl<T> Drop for Guard<T> {
             (self.dispose)(value);
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Restored {
+    pub role: Role,
+    pub kind: Kind,
+    pub head: String,
+    pub text: String,
+}
+
+pub(super) fn restored(entries: &[Entry], fallback_head: &str) -> Vec<Restored> {
+    let mut out = Vec::new();
+    let mut head = fallback_head.to_owned();
+    let mut answer_kind = Kind::Chat;
+    for entry in entries {
+        match entry.role {
+            EntryRole::User => {
+                let decoded = shown(&entry.text);
+                if let Some(brief_head) = decoded.head {
+                    head = brief_head;
+                }
+                answer_kind = match decoded.kind {
+                    ShownKind::Overview | ShownKind::Update => Kind::Overview,
+                    ShownKind::Chat => Kind::Chat,
+                };
+                if decoded.kind == ShownKind::Chat && !decoded.text.trim().is_empty() {
+                    out.push(Restored {
+                        role: Role::User,
+                        kind: Kind::Chat,
+                        head: head.clone(),
+                        text: decoded.text,
+                    });
+                }
+            }
+            EntryRole::Assistant => {
+                if entry.text.trim().is_empty() {
+                    continue;
+                }
+                out.push(Restored {
+                    role: Role::Assistant,
+                    kind: answer_kind,
+                    head: head.clone(),
+                    text: entry.text.clone(),
+                });
+            }
+        }
+    }
+    out
 }

@@ -48,6 +48,7 @@ impl Rig {
             cwd: PathBuf::from("/work/toy"),
             model: None,
             resume: None,
+            history: false,
             instructions: String::new(),
             scratch: PathBuf::new(),
         };
