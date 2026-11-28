@@ -101,6 +101,7 @@ pub(super) struct FindBar {
     loading: Option<String>,
     hits: Vec<usize>,
     current: Option<usize>,
+    anchor: Option<DiffLinePosition>,
     jump_on_load: bool,
     count: SharedString,
     decorations: Rc<Vec<DiffDecoration>>,
@@ -118,6 +119,25 @@ impl FindBar {
         self.loading = None;
         self._load = Task::ready(());
     }
+}
+
+pub(super) fn seed_query(selected: &str) -> Option<&str> {
+    let text = match selected.strip_suffix('\n') {
+        Some(text) => text.strip_suffix('\r').unwrap_or(text),
+        None => selected,
+    };
+    (!text.contains('\n') && !text.trim().is_empty()).then_some(text)
+}
+
+pub(super) fn start_hit(rows: &[LineKind], hits: &[usize], anchor: Option<(Side, u32)>) -> usize {
+    let at = anchor.and_then(|(side, line)| {
+        rows.iter().position(|row| match side {
+            Side::Old => row.old_line() == Some(line),
+            Side::New => row.new_line() == Some(line),
+        })
+    });
+    at.and_then(|at| hits.iter().position(|&hit| hit >= at))
+        .unwrap_or(0)
 }
 
 pub(super) fn text_side(blob: &str) -> TextSource {
@@ -202,17 +222,41 @@ impl ReviewView {
     }
 
     pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(find) = &self.find {
+        let seed = {
+            let diff = self.diff.read(cx);
+            match diff.selected_lines() {
+                Some(_) => None,
+                None => seed_query(&diff.selected_text(cx)).map(str::to_owned),
+            }
+        };
+        let anchor = seed.as_ref().and(self.hovered_line.clone());
+        if let Some(find) = self.find.as_mut() {
             let input = find.input.clone();
             input.update(cx, |state, cx| {
+                if let Some(seed) = &seed {
+                    state.set_value(seed.clone(), window, cx);
+                }
                 state.focus(window, cx);
                 state.select_all(window, cx);
             });
+            if seed.is_some() {
+                find.anchor = anchor;
+                if find.text.is_none() && find.loading.is_some() {
+                    find.jump_on_load = true;
+                }
+                self.run_find(true, cx);
+            }
             return;
         }
         let input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(tr().find_in_file_placeholder.clone())
         });
+        if let Some(seed) = &seed {
+            input.update(cx, |state, cx| {
+                state.set_value(seed.clone(), window, cx);
+                state.select_all(window, cx);
+            });
+        }
         let subscription =
             cx.subscribe_in(
                 &input,
@@ -231,7 +275,8 @@ impl ReviewView {
             loading: None,
             hits: Vec::new(),
             current: None,
-            jump_on_load: false,
+            jump_on_load: seed.is_some(),
+            anchor,
             count: SharedString::default(),
             decorations: Rc::default(),
             _subscription: subscription,
@@ -334,7 +379,23 @@ impl ReviewView {
                 .collect(),
             _ => Vec::new(),
         };
-        find.current = (jump && !find.hits.is_empty()).then_some(0);
+        find.current = match &text {
+            Some(text) if jump && !find.hits.is_empty() => {
+                let anchor = find
+                    .anchor
+                    .take()
+                    .filter(|anchor| *anchor.path() == text.path);
+                let anchor = anchor.and_then(|anchor| {
+                    let side = match anchor.side() {
+                        DiffSide::Original => Side::Old,
+                        DiffSide::Modified => Side::New,
+                    };
+                    Some((side, u32::try_from(anchor.line()).ok()?))
+                });
+                Some(start_hit(&text.rows, &find.hits, anchor))
+            }
+            _ => None,
+        };
         self.refresh_find_view(cx);
         if find_jump_target(self).is_some() && jump {
             self.scroll_to_find_hit(cx);
@@ -533,3 +594,7 @@ fn find_jump_target(view: &ReviewView) -> Option<(SharedString, LineKind)> {
     }
     Some((text.path.clone(), text.rows[anchor]))
 }
+
+#[cfg(test)]
+#[path = "find_bar_tests.rs"]
+mod tests;

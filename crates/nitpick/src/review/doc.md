@@ -134,7 +134,9 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
 - `file_search.rs` — `FileSearch`: the Files header's sliding filter field, its ranked rows
   and their rendering in place of the tree.
 - `find_bar.rs` — `FindBar`: find in the shown file (the text of both sides read off the UI
-  thread, line hits as `Diff` decorations, the overlay bar).
+  thread, line hits as `Diff` decorations, the overlay bar), `seed_query` and `start_hit`
+  (the query and first hit taken from a selection).
+- `find_bar_tests.rs` — which selections seed the query and which hit comes first.
 - `since_viewed.rs` — the "since last view" mode: which files were viewed at an earlier
   version (`seen_before`), loading and installing the `Interdiff`, line positions between
   it and the request's diff (`shown_position`, `review_position`, `reveal_line`), the
@@ -211,6 +213,14 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   shown rows above it (`LineMap::shown_lines`) so a folded line is never unfolded just for
   the lead. Escape or the close button closes it and focuses the diff. The bar stays open
   across file switches and recounts.
+- `FindInFile` with a mouse text selection in the diff puts that text into the field (all
+  selected), whether the bar was closed or open, and searches at once; otherwise the field
+  keeps its last text. Only a one-line selection seeds it (a trailing line break is dropped),
+  since matching is per line and a longer query could never match; a gutter range does not,
+  since it picks lines for a comment. The first hit is the one at or after the line under the
+  pointer (`hovered_line`, kept as the bar's one-shot `anchor`; with the text still loading
+  it waits for the load), so the view stays on the selection instead of jumping to the file's
+  first occurrence; with no hover it is the first hit.
 - Whole files (`show_whole_file`): the `DiffState` gets `context_lines(None)` instead of
   3, so nothing is folded; blame chips are recomputed for it. Opening a file then lands on
   its first change (the change cursor is on it, so Next goes to the second), as IntelliJ
