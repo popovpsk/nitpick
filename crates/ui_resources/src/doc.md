@@ -30,7 +30,10 @@ conversion itself (`zed_theme`); applying a theme or syntax palette (`nitpick/sr
   atomic (`set_active`, `active`, `strings`), interpolation accessors, `relative_time`.
 - `i18n/en.rs`, `i18n/ru.rs` — one `static` table per language.
 - `../build.rs` — reruns the build when any file under `assets/` changes, so `rust-embed`
-  picks up new icons.
+  picks up new icons. The path is relative (cargo resolves it against the package and scans
+  the folder): a path built with `env!("CARGO_MANIFEST_DIR")` is baked into the compiled
+  script, and after the checkout moves it names a missing folder, which cargo treats as a
+  change on every build.
 
 ## Rules
 
