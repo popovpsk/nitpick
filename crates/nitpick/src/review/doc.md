@@ -25,7 +25,7 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   `comparison_for_mr`; `interdiff` (one file's diff from the
   version viewed before to the current blob, `Interdiff`).
 - `model_grammars.rs` — `register_highlight_queries`: highlight queries for grammars
-  gpui-component 0.9.1 links without one (C#, Swift, CMake from their grammar crates; C++ as
+  gpui-component links without one (C#, Swift, CMake from their grammar crates; C++ as
   the C++ query plus C's; proto and GraphQL from `../../queries/*/highlights.scm`), and the
   `vue` language gpui-component lacks (`tree-sitter-vue-next` with our own
   `../../queries/vue/` queries: the crate's are nvim-treesitter's, with `inherits` and
