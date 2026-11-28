@@ -638,6 +638,15 @@ impl ReviewView {
                     })),
             )
             .child(
+                Button::new("find")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Search)
+                    .selected(self.find.is_some())
+                    .tooltip_with_action(s.find_in_file.clone(), &FindInFile, Some("Review"))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_find(window, cx))),
+            )
+            .child(
                 DropdownButton::new("viewed")
                     .small()
                     .map(|button| {

@@ -133,10 +133,13 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   (`BlameMarks::render_chip`).
 - `file_search.rs` — `FileSearch`: the Files header's sliding filter field, its ranked rows
   and their rendering in place of the tree.
-- `find_bar.rs` — `FindBar`: find in the shown file (the text of both sides read off the UI
-  thread, line hits as `Diff` decorations, the overlay bar), `seed_query` and `start_hit`
-  (the query and first hit taken from a selection).
-- `find_bar_tests.rs` — which selections seed the query and which hit comes first.
+- `find_bar.rs` — `FindBar`: find in the review (the shown file's text and every file's text
+  read off the UI thread, the per-file counts for the tree, line hits as `Diff` decorations,
+  the overlay bar), `FindSource`.
+- `find_match.rs` — the pure part of find: `TextSource`, `FindText` (lines as written and
+  lowercased), `Hit`, `find_hits`, `hit_lines`, `seed_query`, `query_for`, `start_hit`.
+- `find_match_tests.rs` — which selections seed the query, which hit comes first, several-line
+  hits in each reading, case.
 - `since_viewed.rs` — the "since last view" mode: which files were viewed at an earlier
   version (`seen_before`), loading and installing the `Interdiff`, line positions between
   it and the request's diff (`shown_position`, `review_position`, `reveal_line`), the
@@ -159,7 +162,7 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   for a binary image, their off-thread loading and decoding, and their rendering. A GIF or
   WebP is shown as its first frame (`first_frame_png`): gpui keeps every frame as a
   full-size buffer, so a small file of many frames would otherwise exhaust memory.
-  `read_regular_file` (also used by `find_bar.rs`) reads a work-tree file only when it
+  `read_regular_file` (also used by `find_match.rs`) reads a work-tree file only when it
   resolves to a regular file, and at most the caller's limit plus one byte: a symlink to
   `/dev/zero` or a FIFO in the work tree would otherwise never finish or never return.
 - `image_preview_tests.rs` — `load` on a throwaway repository with gpui's real (CPU)
@@ -202,22 +205,44 @@ wraps `gitlab` and `github`; nothing here names those crates), running the assis
   outside the `ReviewTree` key context, so letters typed there never reach the tree's
   single-letter bindings; the tree's focus, context and mouse-down focus live on the list
   below it.
-- Find in file (`FindInFile`, ⌘/Ctrl-F): an overlay bar at the top right of the diff.
-  The text of both sides of the shown content (blobs, or the file on disk for the work
-  tree's new side; up to 16 MB) is read off the UI thread when the bar opens and when the
-  shown content changes; matching is case-insensitive and line-based over
-  `LineMap::rows()` (a context line counts once), every hit line is tinted with a
-  `DiffDecoration` (both sides of a context line, ranges merged) and the current one more
-  strongly, since the `Diff` has no inline search highlight. Typing jumps to the first hit;
-  Enter / Shift-Enter step with wrap-around; a jump scrolls to the hit with up to three
+- Find (`FindInFile`, ⌘/Ctrl-F, or the magnifier left of Viewed, which also closes it): an
+  overlay bar at the top right of the diff. The text of both sides of the shown content
+  (blobs, or the file on disk for the work tree's new side; up to 16 MB) is read off the UI
+  thread when the bar opens and when the shown content changes; matching is over
+  `LineMap::rows()` (a context line counts once), case-insensitive unless "Aa" is on
+  (`find_case`, kept by the window while the bar is closed; `FindText` holds the lines as
+  written and lowercased), every hit line is tinted with a `DiffDecoration` (both sides of a
+  context line, ranges merged) and the current one more strongly, since the `Diff` has no
+  inline search highlight. A one-line query hits every row that contains it. A query of
+  several lines (`find_hits`) hits consecutive lines whose first ends with its first line,
+  whose middle ones equal its middle lines and whose last starts with its last line, read
+  three ways so a selection from either view is found: the rows in shown order (as the
+  unified view and `selected_text` read them; tinted by row kind) and each side's own lines
+  (as a split column reads them; tinted on that side). Hits that start on the same row count
+  once. The field is a `TextareaState` (one to six rows) so such a query fits: Enter steps
+  forward (`submit_on_enter`), Shift-Enter steps back: the bar takes the input's
+  `Enter { shift }` action in the capture phase (gpui runs bound actions before any key
+  listener, so a key listener would come after the newline), so a line break comes only from a
+  selection or a paste. Typing jumps to the first hit; Enter /
+  Shift-Enter step with wrap-around; a jump scrolls to the hit with up to three
   shown rows above it (`LineMap::shown_lines`) so a folded line is never unfolded just for
   the lead. Escape or the close button closes it and focuses the diff. The bar stays open
   across file switches and recounts.
+- Every file of the review is searched too. When the bar opens, and after an install
+  (`install_generation`), the text of every non-binary file of the request's diff is read
+  once into the bar's index on the background executor (the request's sides, not the
+  since-last-view interdiff; up to 256 MB counted twice for the two cases, the files past the
+  limit are left out and logged). A changed query or case scans the index 120 ms later on the
+  background executor; a result for an older query is dropped. The per-file counts tint the
+  tree: a file with a hit, and a collapsed folder holding one, get a faint yellow background
+  (`TreeRow::found`, before the viewed tint; the selection still wins); closing the bar clears
+  it. Stepping (Enter, Shift-Enter, the arrows) stays inside the shown file; "No results" is
+  about the shown file and turns red only when no file matches.
 - `FindInFile` with a mouse text selection in the diff puts that text into the field (all
   selected), whether the bar was closed or open, and searches at once; otherwise the field
-  keeps its last text. Only a one-line selection seeds it (a trailing line break is dropped),
-  since matching is per line and a longer query could never match; a gutter range does not,
-  since it picks lines for a comment. The first hit is the one at or after the line under the
+  keeps its last text. Any selection that is not blank seeds it, several lines included (one
+  trailing line break is dropped); a gutter range does not, since it picks lines for a
+  comment. The first hit is the one at or after the line under the
   pointer (`hovered_line`, kept as the bar's one-shot `anchor`; with the text still loading
   it waits for the load), so the view stays on the selection instead of jumping to the file's
   first occurrence; with no hover it is the first hit.

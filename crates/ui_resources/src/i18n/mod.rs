@@ -186,6 +186,7 @@ pub struct Strings {
     pub no_matching_files: SharedString,
     pub find_in_file: SharedString,
     pub find_in_file_placeholder: SharedString,
+    pub find_match_case: SharedString,
     pub find_next: SharedString,
     pub find_previous: SharedString,
     pub no_results: SharedString,

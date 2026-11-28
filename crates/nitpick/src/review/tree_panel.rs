@@ -500,6 +500,8 @@ impl ReviewView {
         });
         let background = if selected {
             Some(theme.list_active)
+        } else if row.found {
+            Some(theme.yellow.opacity(0.12))
         } else if complete {
             Some(theme.success.opacity(0.06))
         } else {

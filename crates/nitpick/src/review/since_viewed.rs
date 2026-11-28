@@ -12,7 +12,8 @@ use gpui_component::{
 use review_core::{Change, Side, fingerprint_blobs};
 use ui_resources::Icons;
 
-use super::find_bar::{FindSource, TextSource};
+use super::find_bar::FindSource;
+use super::find_match::TextSource;
 use super::model::{self, Interdiff};
 use super::{ReviewSource, ReviewView};
 use crate::localization::tr;

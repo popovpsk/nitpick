@@ -1,58 +1,31 @@
-use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
 
-use git_repo::Repo;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, Task,
     Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     diff::{DiffDecoration, DiffLinePosition, DiffLineRange, DiffSide},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Enter, InputEvent, Textarea, TextareaState},
 };
 use review_core::{LineKind, LineMap, Side};
 
-use super::image_preview::read_regular_file;
-use super::since_viewed::is_blob;
+use super::find_match::{
+    FindText, Hit, TextSource, find_hits, hit_lines, query_for, seed_query, start_hit, text_side,
+};
 use super::{FindInFile, ReviewSource, ReviewView};
 use crate::localization::tr;
 
-const TEXT_LIMIT: usize = 16 * 1024 * 1024;
 const LEAD_ROWS: usize = 3;
-
-#[derive(Clone, PartialEq, Eq)]
-pub(super) enum TextSource {
-    None,
-    Blob(String),
-    Disk(PathBuf),
-}
-
-impl TextSource {
-    fn read(&self, repo: &Repo) -> Vec<String> {
-        let bytes = match self {
-            TextSource::None => return Vec::new(),
-            TextSource::Blob(id) => repo.blob(id).map_err(|err| err.to_string()),
-            TextSource::Disk(path) => {
-                read_regular_file(path, TEXT_LIMIT as u64).map_err(|err| err.to_string())
-            }
-        };
-        match bytes {
-            Ok(bytes) if bytes.len() <= TEXT_LIMIT => String::from_utf8_lossy(&bytes)
-                .split('\n')
-                .map(|line| line.strip_suffix('\r').unwrap_or(line).to_lowercase())
-                .collect(),
-            Ok(_) => Vec::new(),
-            Err(err) => {
-                log::warn!("find in file: reading the text failed: {err}");
-                Vec::new()
-            }
-        }
-    }
-}
+const FIELD_ROWS: usize = 6;
+const SCAN_DELAY: Duration = Duration::from_millis(120);
+const INDEX_LIMIT: usize = 256 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(super) struct FindSource {
@@ -63,50 +36,31 @@ pub(super) struct FindSource {
     pub(super) map: LineMap,
 }
 
-struct FindText {
-    key: String,
-    path: SharedString,
-    rows: Vec<LineKind>,
-    shown: [Vec<bool>; 2],
-    old: Vec<String>,
-    new: Vec<String>,
-}
-
-impl FindText {
-    fn line(&self, row: LineKind) -> Option<&str> {
-        match row {
-            LineKind::Context { new, .. } | LineKind::Added { new } => {
-                self.new.get(new as usize - 1).map(String::as_str)
-            }
-            LineKind::Removed { old } => self.old.get(old as usize - 1).map(String::as_str),
-        }
-    }
-
-    fn is_shown(&self, row: LineKind) -> bool {
-        let (side, line) = match row {
-            LineKind::Context { new, .. } | LineKind::Added { new } => (1, new),
-            LineKind::Removed { old } => (0, old),
-        };
-        self.shown[side]
-            .get(line as usize - 1)
-            .copied()
-            .unwrap_or(false)
-    }
+struct FindIndex {
+    generation: u64,
+    texts: Vec<Option<FindText>>,
 }
 
 pub(super) struct FindBar {
-    input: Entity<InputState>,
+    input: Entity<TextareaState>,
     query: String,
+    case: bool,
     text: Option<Rc<FindText>>,
     loading: Option<String>,
-    hits: Vec<usize>,
+    hits: Vec<Hit>,
     current: Option<usize>,
     anchor: Option<DiffLinePosition>,
     jump_on_load: bool,
+    index: Option<Arc<FindIndex>>,
+    indexing: Option<u64>,
+    files: usize,
     count: SharedString,
+    alert: bool,
     decorations: Rc<Vec<DiffDecoration>>,
     _subscription: Subscription,
     _load: Task<()>,
+    _index: Task<()>,
+    _scan: Task<()>,
 }
 
 impl FindBar {
@@ -118,33 +72,6 @@ impl FindBar {
         self.text = None;
         self.loading = None;
         self._load = Task::ready(());
-    }
-}
-
-pub(super) fn seed_query(selected: &str) -> Option<&str> {
-    let text = match selected.strip_suffix('\n') {
-        Some(text) => text.strip_suffix('\r').unwrap_or(text),
-        None => selected,
-    };
-    (!text.contains('\n') && !text.trim().is_empty()).then_some(text)
-}
-
-pub(super) fn start_hit(rows: &[LineKind], hits: &[usize], anchor: Option<(Side, u32)>) -> usize {
-    let at = anchor.and_then(|(side, line)| {
-        rows.iter().position(|row| match side {
-            Side::Old => row.old_line() == Some(line),
-            Side::New => row.new_line() == Some(line),
-        })
-    });
-    at.and_then(|at| hits.iter().position(|&hit| hit >= at))
-        .unwrap_or(0)
-}
-
-pub(super) fn text_side(blob: &str) -> TextSource {
-    if is_blob(blob) {
-        TextSource::Blob(blob.to_string())
-    } else {
-        TextSource::None
     }
 }
 
@@ -202,13 +129,6 @@ impl ReviewView {
         if file.binary {
             return None;
         }
-        let new = match (&self.source, text_side(&file.new_blob)) {
-            (_, TextSource::None) => TextSource::None,
-            (ReviewSource::WorkingTree, _) => {
-                TextSource::Disk(self.repo.root().join(file.new_path.as_ref()))
-            }
-            (_, side) => side,
-        };
         Some(FindSource {
             key: format!(
                 "{}\0{}\0{}",
@@ -216,9 +136,25 @@ impl ReviewView {
             ),
             path: file.path.clone(),
             old: text_side(&file.old_blob),
-            new,
+            new: self.new_text_source(&file.new_blob, file.new_path.as_ref()),
             map: file.shown_map().clone(),
         })
+    }
+
+    fn new_text_source(&self, blob: &str, path: &str) -> TextSource {
+        match (&self.source, text_side(blob)) {
+            (_, TextSource::None) => TextSource::None,
+            (ReviewSource::WorkingTree, _) => TextSource::Disk(self.repo.root().join(path)),
+            (_, side) => side,
+        }
+    }
+
+    pub(super) fn toggle_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.is_some() {
+            self.close_find(window, cx);
+        } else {
+            self.open_find(window, cx);
+        }
     }
 
     pub(super) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -249,7 +185,10 @@ impl ReviewView {
             return;
         }
         let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(tr().find_in_file_placeholder.clone())
+            TextareaState::new(window, cx)
+                .auto_grow(1, FIELD_ROWS)
+                .placeholder(tr().find_in_file_placeholder.clone())
+                .submit_on_enter(true)
         });
         if let Some(seed) = &seed {
             input.update(cx, |state, cx| {
@@ -271,26 +210,48 @@ impl ReviewView {
         self.find = Some(FindBar {
             input,
             query: String::new(),
+            case: self.find_case,
             text: None,
             loading: None,
             hits: Vec::new(),
             current: None,
             jump_on_load: seed.is_some(),
             anchor,
+            index: None,
+            indexing: None,
+            files: 0,
             count: SharedString::default(),
+            alert: false,
             decorations: Rc::default(),
             _subscription: subscription,
             _load: Task::ready(()),
+            _index: Task::ready(()),
+            _scan: Task::ready(()),
         });
         self.sync_find(cx);
+        self.sync_find_index(cx);
         cx.notify();
     }
 
     pub(super) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.take().is_some() {
+            self.set_find_files(Rc::default());
             self.focus_diff(window, cx);
             cx.notify();
         }
+    }
+
+    pub(super) fn toggle_find_case(&mut self, cx: &mut Context<Self>) {
+        self.find_case = !self.find_case;
+        self.run_find(true, cx);
+    }
+
+    fn set_find_files(&mut self, counts: Rc<Vec<usize>>) {
+        if self.find_files.is_empty() && counts.is_empty() {
+            return;
+        }
+        self.find_files = counts;
+        self.rebuild_rows();
     }
 
     pub(super) fn sync_find(&mut self, cx: &mut Context<Self>) {
@@ -326,17 +287,17 @@ impl ReviewView {
         find._load = cx.spawn(async move |this, cx| {
             let text = cx
                 .background_spawn(async move {
-                    FindText {
-                        rows: source.map.rows(),
-                        shown: [
+                    FindText::new(
+                        source.key,
+                        source.path,
+                        source.map.rows(),
+                        [
                             source.map.shown_lines(Side::Old, context, min_folded),
                             source.map.shown_lines(Side::New, context, min_folded),
                         ],
-                        old: source.old.read(&repo),
-                        new: source.new.read(&repo),
-                        key: source.key,
-                        path: source.path,
-                    }
+                        source.old.read(&repo),
+                        source.new.read(&repo),
+                    )
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -355,29 +316,143 @@ impl ReviewView {
         self.run_find(false, cx);
     }
 
-    fn run_find(&mut self, jump: bool, cx: &mut Context<Self>) {
+    pub(super) fn sync_find_index(&mut self, cx: &mut Context<Self>) {
+        let generation = self.install_generation;
         let Some(find) = self.find.as_mut() else {
             return;
         };
-        let query = find.input.read(cx).value().to_lowercase();
-        let changed = query != find.query;
+        if find
+            .index
+            .as_ref()
+            .is_some_and(|index| index.generation == generation)
+            || find.indexing == Some(generation)
+        {
+            return;
+        }
+        let Some(review) = self.review.clone() else {
+            return;
+        };
+        let sources: Vec<Option<FindSource>> = review
+            .files
+            .iter()
+            .map(|file| {
+                (!file.binary).then(|| FindSource {
+                    key: String::new(),
+                    path: file.path.clone(),
+                    old: text_side(&file.old_blob),
+                    new: self.new_text_source(&file.new_blob, file.new_path.as_ref()),
+                    map: file.shown_map().clone(),
+                })
+            })
+            .collect();
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        find.indexing = Some(generation);
+        find.files = 0;
+        find._scan = Task::ready(());
+        let repo = self.repo.clone();
+        find._index = cx.spawn(async move |this, cx| {
+            let texts = cx
+                .background_spawn(async move {
+                    let mut used = 0usize;
+                    let mut texts = Vec::with_capacity(sources.len());
+                    for source in sources {
+                        let text = source.filter(|_| used < INDEX_LIMIT).map(|source| {
+                            let text = FindText::new(
+                                source.key,
+                                source.path,
+                                source.map.rows(),
+                                [Vec::new(), Vec::new()],
+                                source.old.read(&repo),
+                                source.new.read(&repo),
+                            );
+                            used += text.size();
+                            text
+                        });
+                        texts.push(text);
+                    }
+                    if used >= INDEX_LIMIT {
+                        log::info!("find: the review's text is too large to search in full");
+                    }
+                    texts
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(find) = this.find.as_mut() else {
+                    return;
+                };
+                if find.indexing != Some(generation) {
+                    return;
+                }
+                find.indexing = None;
+                find.index = Some(Arc::new(FindIndex { generation, texts }));
+                this.scan_find_files(cx);
+            });
+        });
+    }
+
+    fn scan_find_files(&mut self, cx: &mut Context<Self>) {
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        let (query, case) = (find.query.clone(), find.case);
+        let index = find.index.clone();
+        let Some(index) = index.filter(|_| !query.is_empty()) else {
+            find._scan = Task::ready(());
+            find.files = 0;
+            self.set_find_files(Rc::default());
+            self.refresh_find_view(cx);
+            cx.notify();
+            return;
+        };
+        find._scan = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SCAN_DELAY).await;
+            let scanned = query.clone();
+            let counts = cx
+                .background_spawn(async move {
+                    index
+                        .texts
+                        .iter()
+                        .map(|text| {
+                            text.as_ref()
+                                .map_or(0, |text| find_hits(text, &scanned, case).len())
+                        })
+                        .collect::<Vec<usize>>()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(find) = this.find.as_mut() else {
+                    return;
+                };
+                if find.query != query || find.case != case {
+                    return;
+                }
+                let counts = Rc::new(counts);
+                find.files = counts.iter().filter(|&&count| count > 0).count();
+                this.set_find_files(counts);
+                this.refresh_find_view(cx);
+                cx.notify();
+            });
+        });
+    }
+
+    fn run_find(&mut self, jump: bool, cx: &mut Context<Self>) {
+        let case = self.find_case;
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        let query = query_for(&find.input.read(cx).value(), case);
+        let changed = query != find.query || case != find.case;
         find.query = query;
+        find.case = case;
         let text = find.text.clone();
         if text.is_none() && find.loading.is_some() && jump && changed {
             find.jump_on_load = true;
         }
-        find.hits = match (&text, find.query.is_empty()) {
-            (Some(text), false) => text
-                .rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| {
-                    text.line(**row)
-                        .is_some_and(|line| line.contains(&find.query))
-                })
-                .map(|(ix, _)| ix)
-                .collect(),
-            _ => Vec::new(),
+        find.hits = match &text {
+            Some(text) => find_hits(text, &find.query, case),
+            None => Vec::new(),
         };
         find.current = match &text {
             Some(text) if jump && !find.hits.is_empty() => {
@@ -392,10 +467,14 @@ impl ReviewView {
                     };
                     Some((side, u32::try_from(anchor.line()).ok()?))
                 });
-                Some(start_hit(&text.rows, &find.hits, anchor))
+                let firsts: Vec<usize> = find.hits.iter().map(Hit::first).collect();
+                Some(start_hit(&text.rows, &firsts, anchor))
             }
             _ => None,
         };
+        if changed {
+            self.scan_find_files(cx);
+        }
         self.refresh_find_view(cx);
         if find_jump_target(self).is_some() && jump {
             self.scroll_to_find_hit(cx);
@@ -443,17 +522,9 @@ impl ReviewView {
         if let Some(text) = &find.text {
             let mut old = Vec::new();
             let mut new = Vec::new();
-            for (k, &ix) in find.hits.iter().enumerate() {
-                if Some(k) == find.current {
-                    continue;
-                }
-                match text.rows[ix] {
-                    LineKind::Context { old: o, new: n } => {
-                        old.push(o);
-                        new.push(n);
-                    }
-                    LineKind::Added { new: n } => new.push(n),
-                    LineKind::Removed { old: o } => old.push(o),
+            for (k, hit) in find.hits.iter().enumerate() {
+                if Some(k) != find.current {
+                    hit_lines(text, hit, &mut old, &mut new);
                 }
             }
             push_lines(
@@ -470,12 +541,9 @@ impl ReviewView {
                 new,
                 hit_color,
             );
-            if let Some(&ix) = find.current.and_then(|k| find.hits.get(k)) {
-                let (old, new) = match text.rows[ix] {
-                    LineKind::Context { old, new } => (vec![old], vec![new]),
-                    LineKind::Added { new } => (Vec::new(), vec![new]),
-                    LineKind::Removed { old } => (vec![old], Vec::new()),
-                };
+            if let Some(hit) = find.current.and_then(|k| find.hits.get(k)) {
+                let (mut old, mut new) = (Vec::new(), Vec::new());
+                hit_lines(text, hit, &mut old, &mut new);
                 push_lines(
                     &mut decorations,
                     &text.path,
@@ -493,6 +561,7 @@ impl ReviewView {
             }
         }
         find.decorations = Rc::new(decorations);
+        find.alert = !find.query.is_empty() && find.hits.is_empty() && find.files == 0;
         find.count = match (find.query.is_empty(), find.hits.len(), find.current) {
             (true, _, _) => SharedString::default(),
             (false, 0, _) => tr().no_results.clone(),
@@ -505,14 +574,14 @@ impl ReviewView {
         let find = self.find.as_ref()?;
         let s = tr();
         let theme = cx.theme();
-        let has_hits = !find.hits.is_empty();
+        let can_step = !find.hits.is_empty();
         Some(
             h_flex()
                 .id("find-bar")
                 .absolute()
                 .top_2()
                 .right(px(18.))
-                .w(px(340.))
+                .w(px(360.))
                 .p_1()
                 .gap_1()
                 .items_center()
@@ -528,35 +597,65 @@ impl ReviewView {
                         this.close_find(window, cx);
                     }
                 }))
+                .capture_action(cx.listener(|this, action: &Enter, _, cx| {
+                    if action.shift && !action.secondary {
+                        cx.stop_propagation();
+                        this.step_find(false, cx);
+                    }
+                }))
                 .child(
-                    Input::new(&find.input)
-                        .small()
+                    h_flex()
                         .flex_1()
-                        .prefix(
+                        .min_w_0()
+                        .items_center()
+                        .gap_1()
+                        .pl_2()
+                        .pr_1()
+                        .rounded(theme.radius)
+                        .border_1()
+                        .border_color(theme.input)
+                        .bg(theme.background)
+                        .child(
                             Icon::new(IconName::Search)
                                 .small()
                                 .text_color(theme.muted_foreground),
                         )
-                        .when(!find.count.is_empty(), |input| {
-                            input.suffix(
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Textarea::new(&find.input).small().appearance(false)),
+                        )
+                        .when(!find.count.is_empty(), |field| {
+                            field.child(
                                 div()
+                                    .flex_none()
                                     .text_xs()
                                     .whitespace_nowrap()
-                                    .text_color(if has_hits {
-                                        theme.muted_foreground
-                                    } else {
+                                    .text_color(if find.alert {
                                         theme.danger
+                                    } else {
+                                        theme.muted_foreground
                                     })
                                     .child(find.count.clone()),
                             )
                         }),
                 )
                 .child(
+                    Button::new("find-case")
+                        .ghost()
+                        .xsmall()
+                        .label("Aa")
+                        .selected(self.find_case)
+                        .tooltip(s.find_match_case.clone())
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_find_case(cx))),
+                )
+                .child(
                     Button::new("find-previous")
                         .ghost()
                         .xsmall()
                         .icon(IconName::ChevronUp)
-                        .disabled(!has_hits)
+                        .disabled(!can_step)
                         .tooltip(s.find_previous.clone())
                         .on_click(cx.listener(|this, _, _, cx| this.step_find(false, cx))),
                 )
@@ -565,7 +664,7 @@ impl ReviewView {
                         .ghost()
                         .xsmall()
                         .icon(IconName::ChevronDown)
-                        .disabled(!has_hits)
+                        .disabled(!can_step)
                         .tooltip(s.find_next.clone())
                         .on_click(cx.listener(|this, _, _, cx| this.step_find(true, cx))),
                 )
@@ -585,16 +684,13 @@ impl ReviewView {
 fn find_jump_target(view: &ReviewView) -> Option<(SharedString, LineKind)> {
     let find = view.find.as_ref()?;
     let text = find.text.as_ref()?;
-    let &ix = find.hits.get(find.current?)?;
+    let ix = find.hits.get(find.current?)?.first();
+    let row = *text.rows.get(ix)?;
     let mut anchor = ix;
-    if text.is_shown(text.rows[ix]) {
+    if text.is_shown(row) {
         while anchor > 0 && ix - anchor < LEAD_ROWS && text.is_shown(text.rows[anchor - 1]) {
             anchor -= 1;
         }
     }
     Some((text.path.clone(), text.rows[anchor]))
 }
-
-#[cfg(test)]
-#[path = "find_bar_tests.rs"]
-mod tests;

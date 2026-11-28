@@ -9,6 +9,7 @@ mod diff_panel;
 mod file_actions;
 mod file_search;
 mod find_bar;
+mod find_match;
 mod image_preview;
 pub mod model;
 mod note_actions;
@@ -122,6 +123,7 @@ pub struct TreeRow {
     pub progress: Progress,
     pub comments: usize,
     pub seen_before: bool,
+    pub found: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -382,6 +384,9 @@ pub struct ReviewView {
     header_text: Option<diff_panel::HeaderText>,
     file_search: Option<file_search::FileSearch>,
     find: Option<find_bar::FindBar>,
+    find_case: bool,
+    find_files: Rc<Vec<usize>>,
+    install_generation: u64,
     seen_before: Vec<Option<String>>,
     since_mode: bool,
     interdiff: Option<model::Interdiff>,
@@ -545,6 +550,9 @@ impl ReviewView {
             header_text: None,
             file_search: None,
             find: None,
+            find_case: false,
+            find_files: Rc::default(),
+            install_generation: 0,
             seen_before: Vec::new(),
             since_mode: false,
             interdiff: None,
@@ -806,6 +814,8 @@ impl ReviewView {
                 self.commit_picker.set_review(&review);
                 let review = Rc::new(review);
                 self.review = Some(review.clone());
+                self.install_generation += 1;
+                self.find_files = Rc::default();
                 self.refresh_seen_before(cx);
                 self.apply_hide_rules(cx);
                 self.installed_whitespace = whitespace;
@@ -850,6 +860,7 @@ impl ReviewView {
                 }
                 self.request_blame(cx);
                 self.sync_find(cx);
+                self.sync_find_index(cx);
                 self.sync_agent(cx);
                 self.resume_pending_link(cx);
             }
@@ -1051,6 +1062,15 @@ impl ReviewView {
                     seen_before: file.is_some_and(|f| {
                         !self.viewed.get(f).copied().unwrap_or(false) && self.seen_before(f)
                     }),
+                    found: match file {
+                        Some(f) => self.find_files.get(f).is_some_and(|&n| n > 0),
+                        None if !row.expanded && !self.find_files.is_empty() => self
+                            .tree
+                            .files_under(row.node)
+                            .iter()
+                            .any(|&f| self.find_files.get(f).is_some_and(|&n| n > 0)),
+                        None => false,
+                    },
                 }
             })
             .collect();
